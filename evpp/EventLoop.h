@@ -48,6 +48,7 @@ public:
     // @brief Run loop forever
     void run() {
         if (loop_ == NULL) return;
+        // 避免多次调用
         if (status() == kRunning) return;
         ThreadLocalStorage::set(ThreadLocalStorage::EVENT_LOOP, this);
         setStatus(kRunning);
@@ -62,11 +63,10 @@ public:
             if (is_loop_owner) {
                 hloop_free(&loop_);
             }
-            loop_ = NULL;
-            return;
+        } else {
+            setStatus(kStopping);
+            hloop_stop(loop_);
         }
-        setStatus(kStopping);
-        hloop_stop(loop_);
         loop_ = NULL;
     }
 
