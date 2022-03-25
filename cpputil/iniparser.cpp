@@ -120,6 +120,7 @@ int IniParser::LoadFromFile(const char* filepath) {
     std::string str;
     file.readall(str);
     const char* c_str = str.c_str();
+    // skip utf8 bom header
     unsigned char utf8_bom[3] = { 0xEF, 0xBB, 0xBF };
     if (str.size() >= 3 && memcmp(c_str, utf8_bom, 3) == 0) {
         c_str += 3;

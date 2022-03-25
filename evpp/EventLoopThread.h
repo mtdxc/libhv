@@ -66,6 +66,7 @@ public:
         loop_->stop();
 
         if (wait_thread_stopped) {
+            // 避免在本线程中调用stop(true)，导致死锁
             if (hv_gettid() == loop_tid) return;
             join();
         }
