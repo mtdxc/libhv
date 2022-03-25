@@ -45,6 +45,7 @@ int main(int argc, char* argv[]) {
 
     // runAfter 10s
     loop_threads.loop()->setTimeout(10000, [&loop_threads](TimerID timerID){
+        // stop all thread
         loop_threads.stop(false);
     });
 

@@ -109,6 +109,7 @@ public:
 
     int wait() {
         while (status != STOP) {
+            // 线程全空闲，且没任务
             if (tasks.empty() && idle_thread_num == cur_thread_num) {
                 break;
             }
@@ -162,6 +163,7 @@ protected:
                     });
                     if (status == STOP) return;
                     if (tasks.empty()) {
+                        // 过了max_idle_time, 还没task, 则关闭本线程
                         if (cur_thread_num > min_thread_num) {
                             delThread(std::this_thread::get_id());
                             return;
@@ -203,6 +205,7 @@ protected:
         --idle_thread_num;
         auto iter = threads.begin();
         while (iter != threads.end()) {
+            // 清除已标记的其他线程
             if (iter->status == STOP && now > iter->stop_time) {
                 if (iter->thread->joinable()) {
                     iter->thread->join();
@@ -210,6 +213,7 @@ protected:
                     continue;
                 }
             } else if (iter->id == id) {
+                // 本线程调用，则标记清除
                 iter->status = STOP;
                 iter->stop_time = time(NULL);
             }
@@ -241,6 +245,7 @@ protected:
     std::atomic<int>        idle_thread_num;
     std::list<ThreadData>   threads;
     std::mutex              thread_mutex;
+
     std::queue<Task>        tasks;
     std::mutex              task_mutex;
     std::condition_variable task_cond;
