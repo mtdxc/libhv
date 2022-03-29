@@ -16,6 +16,7 @@ enum websocket_parser_state {
 };
 
 struct websocket_parser;
+// 负责websocket fragment(WS_OP_CONTINUE)的组帧
 class HV_EXPORT WebSocketParser {
 public:
     websocket_parser*                   parser;
