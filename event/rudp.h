@@ -11,7 +11,7 @@
 #if WITH_KCP
 #include "kcp/hkcp.h"
 #endif
-
+// std::map<sockaddr_u, rudp_entry_s>
 typedef struct rudp_s {
     struct rb_root  rb_root;
     hmutex_t        mutex;

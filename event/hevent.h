@@ -152,12 +152,12 @@ struct hio_s {
     haccept_cb  accept_cb;
     hconnect_cb connect_cb;
     // timers
-    int         connect_timeout;    // ms
+    int         connect_timeout;    // ms, call hio_close when timeout
     int         close_timeout;      // ms
     int         read_timeout;       // ms
     int         write_timeout;      // ms
     int         keepalive_timeout;  // ms
-    int         heartbeat_interval; // ms
+    int         heartbeat_interval; // ms, call heartbeat_fn when timeout
     hio_send_heartbeat_fn heartbeat_fn;
     htimer_t*   connect_timer;
     htimer_t*   close_timer;
@@ -258,6 +258,7 @@ void hio_memmove_readbuf(hio_t* io);
         ev->loop->nactives--;\
     }\
 
+// 将事件根据优先级放入对应的pendings队列中，以等待处理
 #define EVENT_PENDING(ev) \
     do {\
         if (!ev->pending) {\
@@ -269,6 +270,7 @@ void hio_memmove_readbuf(hio_t* io);
         }\
     } while(0)
 
+// 添加事件，为事件分配id,loop和设置cb函数
 #define EVENT_ADD(loop, ev, cb) \
     do {\
         ev->loop = loop;\
@@ -277,6 +279,7 @@ void hio_memmove_readbuf(hio_t* io);
         EVENT_ACTIVE(ev);\
     } while(0)
 
+// 事件删除: 当在pending队列时，则等pending调完后，才删除; 否则直接删除对象
 #define EVENT_DEL(ev) \
     do {\
         EVENT_INACTIVE(ev);\
