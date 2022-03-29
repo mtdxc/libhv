@@ -62,8 +62,9 @@ int ResolveAddr(const char* host, sockaddr_u* addr) {
 
     if (inet_pton(AF_INET6, host, &addr->sin6.sin6_addr) == 1) {
         addr->sa.sa_family = AF_INET6; // host is ipv6
+        return 0;
     }
-
+    // resolv host name
     struct addrinfo* ais = NULL;
     int ret = getaddrinfo(host, NULL, NULL, &ais);
     if (ret != 0 || ais == NULL || ais->ai_addr == NULL || ais->ai_addrlen == 0) {
@@ -164,7 +165,7 @@ const char* sockaddr_str(sockaddr_u* addr, char* buf, int len) {
     }
 #ifdef ENABLE_UDS
     else if (addr->sa.sa_family == AF_UNIX) {
-        snprintf(buf, len, "%s", addr->sun.sun_path);
+        strncpy(buf, addr->sun.sun_path, len);
     }
 #endif
     return buf;

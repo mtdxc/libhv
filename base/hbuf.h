@@ -87,7 +87,6 @@ public:
             cleanup_ = false;
         }
     }
-
     void resize(size_t cap) {
         if (cap == len) return;
 
@@ -111,28 +110,36 @@ public:
     }
 
 private:
+    // 内存清理/持有标记，当以内存初始化时，并没拷贝操作；
+    // 而在当copy -> resize时，才重分配内存，并置清理标记(写时复制)
     bool cleanup_;
 };
 
-// VL: Variable-Length
+/*
+VL: Variable-Length
+-------------------------------------
+base                                |
+        offset                     len
+        |-------_size--------|
+*/
 class HVLBuf : public HBuf {
 public:
-    HVLBuf() : HBuf() {_offset = _size = 0;}
+    HVLBuf() : HBuf() {clear();}
     HVLBuf(void* data, size_t len) : HBuf(data, len) {_offset = 0; _size = len;}
-    HVLBuf(size_t cap) : HBuf(cap) {_offset = _size = 0;}
+    HVLBuf(size_t cap) : HBuf(cap) {clear();}
     virtual ~HVLBuf() {}
 
     char* data() { return base + _offset; }
     size_t size() { return _size; }
 
     void push_front(void* ptr, size_t len) {
-        if (len > this->len - _size) {
+        if (len > this->len - _size) { // 空间不够
             size_t newsize = MAX(this->len, len)*2;
             resize(newsize);
         }
 
         if (_offset < len) {
-            // move => end
+            // move => end : 将现有字节全移到尾部，假设之后又要 push_front?
             memmove(base+this->len-_size, data(), _size);
             _offset = this->len-_size;
         }
@@ -217,6 +224,7 @@ public:
                 if (_tail == this->len) _tail = 0;
             }
             else if (_head >= len) {
+                // 判断_head是否有足够内存，避免overwrite
                 ret = base;
                 _tail = len;
             }
@@ -248,8 +256,11 @@ public:
     size_t size() {return _size;}
 
 private:
+    // 记录free的当前位置，回环时置0
     size_t _head;
+    // 记录alloc的当前位置，回环时置0，因此可能<_head
     size_t _tail;
+    // 已分配的大小
     size_t _size;
 };
 #endif
