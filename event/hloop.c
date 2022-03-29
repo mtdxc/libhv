@@ -285,7 +285,6 @@ void hloop_post_event(hloop_t* loop, hevent_t* ev) {
     }
 
     int nwrite = 0;
-    uint64_t count = 1;
     hmutex_lock(&loop->custom_events_mutex);
     if (loop->eventfds[EVENTFDS_WRITE_INDEX] == -1) {
         if (hloop_create_eventfds(loop) != 0) {
@@ -293,6 +292,7 @@ void hloop_post_event(hloop_t* loop, hevent_t* ev) {
         }
     }
 #if defined(OS_UNIX) && HAVE_EVENTFD
+    uint64_t count = 1;
     nwrite = write(loop->eventfds[EVENTFDS_WRITE_INDEX], &count, sizeof(count));
 #elif defined(OS_UNIX) && HAVE_PIPE
     nwrite = write(loop->eventfds[EVENTFDS_WRITE_INDEX], "e", 1);

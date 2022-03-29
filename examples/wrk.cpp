@@ -262,7 +262,7 @@ int main(int argc, char** argv) {
     request = std::make_shared<HttpRequest>();
     request->url = url;
     request->ParseUrl();
-    https = request->scheme == "https";
+    https = request->IsHttps();
     const char* host = request->host.c_str();
     port = request->port;
 
@@ -309,7 +309,6 @@ int main(int argc, char** argv) {
         conns[i] = new connection_t;
 
         EventLoopPtr loop = loop_threads.nextLoop();
-        hloop_t* hloop = loop->loop();
         loop->runInLoop(std::bind(start_connect, loop->loop(), conns[i]));
     }
 
