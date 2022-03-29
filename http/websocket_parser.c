@@ -9,8 +9,6 @@
 #endif
 
 #define SET_STATE(V) parser->state = V
-#define HAS_DATA() (p < end )
-#define CC (*p)
 #define GET_NPARSED() ( (p == end) ? len : (p - data) )
 
 #define NOTIFY_CB(FOR)                                                 \
@@ -61,8 +59,8 @@ size_t websocket_parser_execute(websocket_parser *parser, const websocket_parser
                 parser->offset      = 0;
                 parser->length      = 0;
                 parser->mask_offset = 0;
-                parser->flags       = (websocket_flags) (CC & WS_OP_MASK);
-                if(CC & (1<<7)) {
+                parser->flags       = (websocket_flags) (*p & WS_OP_MASK);
+                if(*p & (1<<7)) {
                     parser->flags |= WS_FIN;
                 }
                 SET_STATE(s_head);
@@ -70,8 +68,8 @@ size_t websocket_parser_execute(websocket_parser *parser, const websocket_parser
                 frame_offset++;
                 break;
             case s_head:
-                parser->length  = (size_t)CC & 0x7F;
-                if(CC & 0x80) {
+                parser->length  = (size_t)*p & 0x7F;
+                if(*p & 0x80) {
                     parser->flags |= WS_HAS_MASK;
                 }
                 if(parser->length >= 126) {
@@ -98,9 +96,9 @@ size_t websocket_parser_execute(websocket_parser *parser, const websocket_parser
                 frame_offset++;
                 break;
             case s_length:
-                while(HAS_DATA() && parser->require) {
+                while(p < end && parser->require) {
                     parser->length <<= 8;
-                    parser->length |= (unsigned char)CC;
+                    parser->length |= (unsigned char)*p;
                     parser->require--;
                     frame_offset++;
                     p++;
@@ -122,8 +120,8 @@ size_t websocket_parser_execute(websocket_parser *parser, const websocket_parser
                 }
                 break;
             case s_mask:
-                while(HAS_DATA() && parser->require) {
-                    parser->mask[4 - parser->require--] = CC;
+                while(p < end && parser->require) {
+                    parser->mask[4 - parser->require--] = *p;
                     frame_offset++;
                     p++;
                 }

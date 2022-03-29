@@ -4,7 +4,7 @@
 extern "C" {
 #endif
 
-
+//#include "hplatform.h"
 #include <sys/types.h>
 #if defined(_WIN32) && !defined(__MINGW32__) && \
   (!defined(_MSC_VER) || _MSC_VER<1600) && !defined(__WINE__)
@@ -21,11 +21,6 @@ typedef unsigned __int64 uint64_t;
 #else
 #include <stdint.h>
 #endif
-
-#define WEBSOCKET_UUID   "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-
-typedef struct websocket_parser websocket_parser;
-typedef struct websocket_parser_settings websocket_parser_settings;
 
 typedef enum websocket_flags {
     // opcodes
@@ -44,10 +39,7 @@ typedef enum websocket_flags {
 #define WS_OP_MASK 0xF
 #define WS_FIN     WS_FINAL_FRAME
 
-typedef int (*websocket_data_cb) (websocket_parser*, const char * at, size_t length);
-typedef int (*websocket_cb) (websocket_parser*);
-
-struct websocket_parser {
+typedef struct websocket_parser {
     uint32_t        state;
     websocket_flags flags;
 
@@ -59,13 +51,16 @@ struct websocket_parser {
     size_t   offset;
 
     void * data;
-};
+} websocket_parser;
 
-struct websocket_parser_settings {
+typedef int (*websocket_data_cb) (websocket_parser*, const char * at, size_t length);
+typedef int (*websocket_cb) (websocket_parser*);
+// websocket parser callback setting
+typedef struct websocket_parser_settings {
     websocket_cb      on_frame_header;
     websocket_data_cb on_frame_body;
     websocket_cb      on_frame_end;
-};
+} websocket_parser_settings;
 
 void websocket_parser_init(websocket_parser *parser);
 void websocket_parser_settings_init(websocket_parser_settings *settings);
