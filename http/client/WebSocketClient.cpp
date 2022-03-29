@@ -43,6 +43,7 @@ int WebSocketClient::open(const char* _url, const http_headers& headers) {
     }
     // ws => http
     http_req_->url = "http" + url.substr(2, -1);
+    // got host and port
     http_req_->ParseUrl();
 
     int connfd = createsocket(http_req_->port, http_req_->host.c_str());
@@ -81,6 +82,7 @@ int WebSocketClient::open(const char* _url, const http_headers& headers) {
             if (http_req_->GetHeader(SEC_WEBSOCKET_VERSION).empty()) {
                 http_req_->headers[SEC_WEBSOCKET_VERSION] = "13";
             }
+
             std::string http_msg = http_req_->Dump(true, true);
             // printf("%s", http_msg.c_str());
             // NOTE: not use WebSocketChannel::send
@@ -175,10 +177,11 @@ int WebSocketClient::open(const char* _url, const http_headers& headers) {
                         if (ping_cnt++ == 3) {
                             hloge("websocket no pong!");
                             channel->close();
-                            return;
                         }
-                        // printf("send ping\n");
-                        channel->sendPing();
+                        else {
+                            // printf("send ping\n");
+                            channel->sendPing();
+                        }
                     });
                 }
                 if (onopen) onopen();
