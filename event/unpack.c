@@ -63,21 +63,24 @@ int hio_unpack_by_delimiter(hio_t* io, void* buf, int readbytes) {
     int handled = 0;
     int i = 0;
     while (remain >= delimiter_bytes) {
+        char match = 1;
         for (i = 0; i < delimiter_bytes; ++i) {
             if (p[i] != delimiter[i]) {
-                goto not_match;
+                match = 0;
+                break;
             }
         }
-match:
-        p += delimiter_bytes;
-        remain -= delimiter_bytes;
-        hio_read_cb(io, (void*)sp, p - sp);
-        handled += p - sp;
-        sp = p;
-        continue;
-not_match:
-        ++p;
-        --remain;
+        if(match){
+            p += delimiter_bytes;
+            remain -= delimiter_bytes;
+            hio_read_cb(io, (void*)sp, p - sp);
+            handled += p - sp;
+            sp = p;
+        }
+        else{
+            ++p;
+            --remain;
+        }
     }
 
     remain = ep - sp;

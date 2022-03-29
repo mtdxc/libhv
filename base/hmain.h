@@ -16,7 +16,7 @@ typedef int (*printf_t)(const char *const fmt, ...);
 
 typedef struct main_ctx_s {
     char    run_dir[MAX_PATH];
-    char    program_name[MAX_PATH];
+    char    program_name[MAX_PATH]; // program filename without ext
 
     char    confile[MAX_PATH]; // default etc/${program}.conf
     char    pidfile[MAX_PATH]; // default logs/${program}.pid
@@ -26,22 +26,22 @@ typedef struct main_ctx_s {
     pid_t   oldpid; // getpid_from_pidfile
 
     // arg
-    int     argc;
-    int     arg_len;
-    char**  os_argv;
-    char**  save_argv;
-    char*   cmdline;
+    int     argc; // count
+    int     arg_len; // cmdline length
+    char**  os_argv; // pass by system, end with NULL
+    char**  save_argv; // copy by main_ctx_init, end with NULL
+    char*   cmdline; // cmdline str   
     // parsed arg
     int     arg_kv_size;
-    char**  arg_kv;
+    char**  arg_kv; // arg_kv[idx]="key=val"
     int     arg_list_size;
-    char**  arg_list;
+    char**  arg_list; // arg_list[idx] = str
 
     // env
-    int     envc;
-    int     env_len;
-    char**  os_envp;
-    char**  save_envp;
+    int     envc; // count
+    int     env_len; // all env str length
+    char**  os_envp; // pass by system
+    char**  save_envp; // copy by main_ctx_init, end with NULL
 
     // signals
     procedure_t     reload_fn;

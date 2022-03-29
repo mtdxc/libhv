@@ -78,20 +78,23 @@ int main_ctx_init(int argc, char** argv) {
     //printf("run_dir=%s\n", g_main_ctx.run_dir);
     strncpy(g_main_ctx.program_name, hv_basename(argv[0]), sizeof(g_main_ctx.program_name));
 #ifdef OS_WIN
-    if (strcmp(g_main_ctx.program_name+strlen(g_main_ctx.program_name)-4, ".exe") == 0) {
-        *(g_main_ctx.program_name+strlen(g_main_ctx.program_name)-4) = '\0';
+    char* pdot = g_main_ctx.program_name + strlen(g_main_ctx.program_name) - 4;
+    if (strcmp(pdot, ".exe") == 0) {
+        *pdot = '\0';
     }
 #endif
     //printf("program_name=%s\n", g_main_ctx.program_name);
     char logdir[MAX_PATH] = {0};
     snprintf(logdir, sizeof(logdir), "%s/logs", g_main_ctx.run_dir);
     hv_mkdir(logdir);
+    // set default config file path
     snprintf(g_main_ctx.confile, sizeof(g_main_ctx.confile), "%s/etc/%s.conf", g_main_ctx.run_dir, g_main_ctx.program_name);
     snprintf(g_main_ctx.pidfile, sizeof(g_main_ctx.pidfile), "%s/logs/%s.pid", g_main_ctx.run_dir, g_main_ctx.program_name);
     snprintf(g_main_ctx.logfile, sizeof(g_main_ctx.logfile), "%s/logs/%s.log", g_main_ctx.run_dir, g_main_ctx.program_name);
     hlog_set_file(g_main_ctx.logfile);
 
     g_main_ctx.pid = getpid();
+    // read and check old pid
     g_main_ctx.oldpid = getpid_from_pidfile();
 #ifdef OS_UNIX
     if (kill(g_main_ctx.oldpid, 0) == -1 && errno == ESRCH) {
@@ -144,6 +147,7 @@ int main_ctx_init(int argc, char** argv) {
         g_main_ctx.env_len += strlen(environ[i]) + 1;
     }
     g_main_ctx.envc = i;
+
     char* envp = NULL;
     SAFE_ALLOC(envp, g_main_ctx.env_len);
     SAFE_ALLOC(g_main_ctx.save_envp, (g_main_ctx.envc + 1) * sizeof(char*));
@@ -471,6 +475,7 @@ void signal_handler(int signo) {
     case SIGINT:
     case SIGNAL_TERMINATE:
         hlogi("killall processes");
+        // ignore child exit signal
         signal(SIGCHLD, SIG_IGN);
         // master send SIGKILL => workers
         for (int i = 0; i < g_main_ctx.worker_processes; ++i) {
@@ -481,7 +486,7 @@ void signal_handler(int signo) {
         exit(0);
         break;
     case SIGCHLD:
-    {
+    {// call when child process exit
         pid_t pid = 0;
         int status = 0;
         while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {

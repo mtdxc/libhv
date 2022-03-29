@@ -124,6 +124,7 @@ public:
         status_changed = true;
         status = stat;
     }
+    Status getStatus() const { return status; }
 
     void setSleepPolicy(SleepPolicy policy, uint32_t ms = 0) {
         sleep_policy = policy;
@@ -170,8 +171,9 @@ public:
 
     virtual void run() {
         while (status != STOP) {
-            while (status == PAUSE) {
+            if (status == PAUSE) {
                 std::this_thread::yield();
+                continue;
             }
 
             doTask();
@@ -184,10 +186,12 @@ public:
     virtual bool doPrepare() {return true;}
     virtual void doTask() {}
     virtual bool doFinish() {return true;}
-
+protected:
     std::thread thread;
     std::atomic<Status> status;
+    std::atomic<bool> status_changed;
     uint32_t dotask_cnt;
+
 protected:
     void sleep() {
         switch (sleep_policy) {
@@ -197,14 +201,13 @@ protected:
         case SLEEP_FOR:
             std::this_thread::sleep_for(std::chrono::milliseconds(sleep_ms));
             break;
-        case SLEEP_UNTIL: {
+        case SLEEP_UNTIL:
             if (status_changed) {
                 status_changed = false;
                 base_tp = std::chrono::steady_clock::now();
             }
             base_tp += std::chrono::milliseconds(sleep_ms);
             std::this_thread::sleep_until(base_tp);
-        }
             break;
         default:    // donothing, go all out.
             break;
@@ -214,7 +217,6 @@ protected:
     SleepPolicy sleep_policy;
     uint32_t    sleep_ms;
     // for SLEEP_UNTIL
-    std::atomic<bool> status_changed;
     std::chrono::steady_clock::time_point base_tp;
 };
 #endif

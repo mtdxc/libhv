@@ -46,7 +46,9 @@ kcp_t* hio_get_kcp(hio_t* io, uint32_t conv, struct sockaddr* addr) {
     rudp_entry_t* rudp = hio_get_rudp(io, addr);
     assert(rudp != NULL);
     kcp_t* kcp = &rudp->kcp;
+    // return exist one
     if (kcp->ikcp != NULL) return kcp;
+    // create new one
     if (io->kcp_setting == NULL) {
         io->kcp_setting = &s_kcp_setting;
     }
@@ -119,7 +121,7 @@ int hio_write_kcp(hio_t* io, const void* buf, size_t len, struct sockaddr* addr)
     return len;
 }
 
-int hio_read_kcp (hio_t* io, void* buf, int readbytes) {
+int hio_read_kcp(hio_t* io, void* buf, int readbytes) {
     IUINT32 conv = ikcp_getconv(buf);
     kcp_t* kcp = hio_get_kcp(io, conv, NULL);
     // printf("hio_read_kcp conv=%u=%u\n", conv, kcp->conv);
