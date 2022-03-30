@@ -10,12 +10,13 @@ class HV_EXPORT HttpResponseWriter : public SocketChannel {
 public:
     HttpResponsePtr response;
     enum State {
-        SEND_BEGIN = 0,
-        SEND_HEADER,
-        SEND_BODY,
-        SEND_CHUNKED,
-        SEND_CHUNKED_END,
-        SEND_END,
+        SEND_BEGIN, // 初始化，什么都没写
+        SEND_HEADER,// 已写出头部
+        SEND_BODY,  // 已写入部分body，可调用多次 WriteBody
+        // content-type=chunked
+        SEND_CHUNKED, // 写入部分chunk，可调用多次 WriteChunked
+        SEND_CHUNKED_END, // 写入最后一个chunk
+        SEND_END, // 已写完，调用End后，如不支持keepalive，则关闭连接
     } state: 8, end: 8;
     HttpResponseWriter(hio_t* io, const HttpResponsePtr& resp)
         : SocketChannel(io)
