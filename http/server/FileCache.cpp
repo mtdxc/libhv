@@ -19,7 +19,6 @@ file_cache_ptr FileCache::Open(const char* filepath, OpenParam* param) {
         if (now - fc->stat_time > stat_interval) {
             modified = fc->is_modified();
             fc->stat_time = now;
-            fc->stat_cnt++;
         }
         if (param->need_read) {
             if (!modified && fc->is_complete()) {
@@ -61,7 +60,6 @@ file_cache_ptr FileCache::Open(const char* filepath, OpenParam* param) {
                 fc->st = st;
                 time(&fc->open_time);
                 fc->stat_time = fc->open_time;
-                fc->stat_cnt = 1;
                 cached_files[filepath] = fc;
             }
             else {
@@ -70,14 +68,16 @@ file_cache_ptr FileCache::Open(const char* filepath, OpenParam* param) {
             }
         }
         if (S_ISREG(fc->st.st_mode)) {
+            // 先返回文件大小
             param->filesize = fc->st.st_size;
             // FILE
             if (param->need_read) {
-                if (fc->st.st_size > param->max_read) {
+                if (param->filesize > param->max_read) 
+                { // 文件太大不适合缓存
                     param->error = ERR_OVER_LIMIT;
                     return NULL;
                 }
-                fc->resize_buf(fc->st.st_size);
+                fc->resize_buf(param->filesize);
                 int nread = read(fd, fc->filebuf.base, fc->filebuf.len);
                 if (nread != fc->filebuf.len) {
                     hloge("Failed to read file: %s", filepath);
@@ -105,7 +105,9 @@ file_cache_ptr FileCache::Open(const char* filepath, OpenParam* param) {
             memcpy(fc->filebuf.base, page.c_str(), page.size());
             fc->content_type = "text/html; charset=utf-8";
         }
+        // 更新lastmodified time字符串
         gmtime_fmt(fc->st.st_mtime, fc->last_modified);
+        // 用修改时间和大小生成etag
         snprintf(fc->etag, sizeof(fc->etag), ETAG_FMT, (size_t)fc->st.st_mtime, (size_t)fc->st.st_size);
     }
     return fc;
