@@ -477,6 +477,7 @@ postprocessor:
     if (status_code >= 100 && status_code < 600) {
         pResp->status_code = (http_status)status_code;
         if (pResp->status_code >= 400 && pResp->body.size() == 0 && pReq->method != HTTP_HEAD) {
+            // ¶¨ÖÆ4XX´íÎóÒ³
             if (service->errorHandler) {
                 customHttpHandler(service->errorHandler);
             } else {
@@ -765,8 +766,6 @@ int HttpHandler::GetSendData(char** data, size_t* len) {
             state = SEND_HEADER;
         case SEND_HEADER:
         {
-            size_t content_length = 0;
-            const char* content = NULL;
             // HEAD
             if (pReq->method == HTTP_HEAD) {
                 if (fc) {
@@ -777,7 +776,8 @@ int HttpHandler::GetSendData(char** data, size_t* len) {
                     pResp->headers["Content-Length"] = "0";
                 }
                 state = SEND_DONE;
-                goto return_nobody;
+                pResp->content_length = 0;
+                goto return_header;
             }
             // File service
             if (fc) {
@@ -791,25 +791,19 @@ int HttpHandler::GetSendData(char** data, size_t* len) {
                 return *len;
             }
             // API service
-            content_length = pResp->ContentLength();
-            content = (const char*)pResp->Content();
-            if (content) {
+            if (const char* content = (const char*)pResp->Content()) {
+                size_t content_length = pResp->ContentLength();
                 if (content_length > (1 << 20)) {
                     state = SEND_BODY;
-                    goto return_header;
                 } else {
                     // NOTE: header+body in one package if <= 1M
                     header = pResp->Dump(true, false);
                     header.append(content, content_length);
                     state = SEND_DONE;
-                    goto return_header;
                 }
             } else {
                 state = SEND_DONE;
-                goto return_header;
             }
-return_nobody:
-            pResp->content_length = 0;
 return_header:
             if (header.empty()) header = pResp->Dump(true, false);
             *data = (char*)header.c_str();

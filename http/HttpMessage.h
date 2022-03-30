@@ -90,16 +90,18 @@ HV_EXPORT extern HttpCookie   NoCookie;
 
 class HV_EXPORT HttpMessage {
 public:
+    // use for http_server's date response header, update by timer every second 
     static char         s_date[32];
-    int                 type;
+    int                 type; // msgtype(request or response), @see http_parser_type
     unsigned short      http_major;
     unsigned short      http_minor;
 
     http_headers        headers;
+    // request Cookie header, response Set-Cookie header
     http_cookies        cookies;
     http_body           body;
 
-    // http_cb
+    // http_cb, if setted will not save data to body
     std::function<void(HttpMessage*, http_parser_state state, const char* data, size_t size)> http_cb;
 
     // structured content
@@ -189,9 +191,7 @@ public:
         return form;
     }
     std::string GetFormData(const char* name, const std::string& defvalue = hv::empty_string) {
-        if (form.empty() && ContentType() == MULTIPART_FORM_DATA) {
-            ParseBody();
-        }
+        auto form = GetForm();
         auto iter = form.find(name);
         return iter == form.end() ? defvalue : iter->second.content;
     }
@@ -235,9 +235,7 @@ public:
         return kv;
     }
     std::string GetUrlEncoded(const char* key, const std::string& defvalue = hv::empty_string) {
-        if (kv.empty() && ContentType() == X_WWW_FORM_URLENCODED) {
-            ParseBody();
-        }
+        auto kv = GetUrlEncoded();
         auto iter = kv.find(key);
         return iter == kv.end() ? defvalue : iter->second;
     }
@@ -331,6 +329,7 @@ public:
             content = data;
             content_length = len;
         } else {
+            // append to end
             content_length = body.size();
             body.resize(content_length + len);
             memcpy((void*)(body.data() + content_length), data, len);
@@ -348,7 +347,7 @@ public:
         file.readall(body);
         return 200;
     }
-
+    // save body to file
     int SaveFile(const char* filepath) {
         HFile file;
         if (file.open(filepath, "wb") != 0) {

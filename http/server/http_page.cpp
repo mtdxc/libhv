@@ -5,19 +5,18 @@
 #define AUTOINDEX_FILENAME_MAXLEN       50
 
 void make_http_status_page(http_status status_code, std::string& page) {
-    char szCode[8];
-    snprintf(szCode, sizeof(szCode), "%d ", status_code);
-    const char* status_message = http_status_str(status_code);
+    char szCode[128];
+    snprintf(szCode, sizeof(szCode), "%d %s", status_code, http_status_str(status_code));
     page += R"(<!DOCTYPE html>
 <html>
 <head>
   <title>)";
-    page += szCode; page += status_message;
+    page += szCode;
     page += R"(</title>
 </head>
 <body>
   <center><h1>)";
-    page += szCode; page += status_message;
+    page += szCode;
     page += R"(</h1></center>
   <hr>
 </body>

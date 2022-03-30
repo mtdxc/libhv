@@ -12,7 +12,7 @@
 #include "WebSocketServer.h"
 #include "EventLoop.h"
 #include "htime.h"
-
+#include "hlog.h"
 using namespace hv;
 
 /*
@@ -50,16 +50,22 @@ public:
 };
 
 int main(int argc, char** argv) {
+    int port = 8000;
     if (argc < 2) {
         printf("Usage: %s port\n", argv[0]);
-        return -10;
+        // return -10;
     }
-    int port = atoi(argv[1]);
+    else {
+        port = atoi(argv[1]);
+    }
+    hlog_set_handler(stdout_logger);
 
     HttpService http;
     http.GET("/ping", [](const HttpContextPtr& ctx) {
         return ctx->send("pong");
     });
+    http.document_root = "html";
+    http.index_of = "/";
 
     WebSocketService ws;
     // ws.setPingInterval(10000);
@@ -92,6 +98,8 @@ int main(int argc, char** argv) {
 
     WebSocketServer server;
     server.port = port;
+    server.worker_processes = 0;
+    server.worker_threads = 1;
 #if TEST_WSS
     server.https_port = port + 1;
     hssl_ctx_opt_t param;
