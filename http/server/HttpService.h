@@ -121,10 +121,13 @@ struct HV_EXPORT HttpService {
     http_path_handlers  pathHandlers;
 
     /* Static file service */
+    // file process order: staticHandler / document_root -> FileCache -[file too largs]-> largeFileHandler
     http_handler    staticHandler;
     http_handler    largeFileHandler;
     std::string     document_root;
     std::string     home_page;
+
+    // 4XX error process order: errorHandler/error_page/make_http_status_page  
     std::string     error_page;
     // nginx: location => root
     std::map<std::string, std::string, std::greater<std::string>> staticDirs;
@@ -191,7 +194,7 @@ struct HV_EXPORT HttpService {
     void Static(const char* path, const char* dir);
     // @retval / => /var/www/html/index.html
     std::string GetStaticFilepath(const char* path);
-
+    // return api_handlers¡¯s keys
     // https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS
     void AllowCORS();
 

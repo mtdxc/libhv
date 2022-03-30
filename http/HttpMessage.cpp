@@ -389,6 +389,7 @@ append:
     if (content_type == MULTIPART_FORM_DATA) {
         auto iter = headers.find("Content-Type");
         if (iter != headers.end()) {
+            // Content-Type: multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW
             const char* boundary = strstr(iter->second.c_str(), "boundary=");
             if (boundary == NULL) {
                 boundary = DEFAULT_MULTIPART_BOUNDARY;
@@ -681,7 +682,7 @@ void HttpRequest::DumpUrl() {
     str = scheme;
     str += "://";
     // host:port
-    if (url.size() != 0 && *url.c_str() != '/') {
+    if (url.size() != 0 && url[0] != '/') {
         // url begin with host
         str += url;
     }
@@ -696,11 +697,11 @@ void HttpRequest::DumpUrl() {
         }
     }
     // /path
-    if (url.size() != 0 && *url.c_str() == '/') {
+    if (url.size() != 0 && url[0] == '/') {
         // url begin with path
         str += url;
     }
-    else if (path.size() > 1 && *path.c_str() == '/') {
+    else if (path.size() > 1 && path[0] == '/') {
         str += path;
     }
     else if (url.size() == 0) {

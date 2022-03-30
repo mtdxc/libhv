@@ -91,7 +91,7 @@ std::string dump_multipart(MultiPart& mp, const char* boundary) {
             const char* suffix = strrchr(form.filename.c_str(), '.');
             if (suffix) {
                 const char* stype = http_content_type_str_by_suffix(++suffix);
-                if (stype && *stype != '\0') {
+                if (stype && stype[0]) {
                     str += "\r\n";
                     str += "Content-Type: ";
                     str += stype;

@@ -11,25 +11,32 @@
 
 #define HTTP_HEADER_MAX_LENGTH      1024        // 1K
 #define FILE_CACHE_MAX_SIZE         (1 << 22)   // 4M
-
+// 文件或目录列表缓存
 typedef struct file_cache_s {
     std::string filepath;
     struct stat st;
     time_t      open_time;
+    // 最后访问时间
     time_t      stat_time;
-    uint32_t    stat_cnt;
+    /*
+    buf(owner): |<HTTP_HEADER_MAX_LENGTH|                              >|
+    filebuf:                            |<          filebuf            >|
+    httpbuf:                 |< http hdr|           filebuf            >|
+    */
     HBuf        buf; // http_header + file_content
     hbuf_t      filebuf;
     hbuf_t      httpbuf;
+
     char        last_modified[64];
     char        etag[64];
     std::string content_type;
 
     file_cache_s() {
-        stat_cnt = 0;
+        last_modified[0] = etag[0] = 0;
     }
 
     bool is_modified() {
+        // 判断前后两次的修改时间是否相同
         time_t mtime = st.st_mtime;
         stat(filepath.c_str(), &st);
         return mtime != st.st_mtime;
@@ -45,7 +52,7 @@ typedef struct file_cache_s {
         filebuf.base = buf.base + HTTP_HEADER_MAX_LENGTH;
         filebuf.len = filesize;
     }
-
+    // 更新http头部
     void prepend_header(const char* header, int len) {
         if (len > HTTP_HEADER_MAX_LENGTH) return;
         httpbuf.base = filebuf.base - len;
@@ -62,16 +69,23 @@ class FileCache {
 public:
     FileCacheMap    cached_files;
     std::mutex      mutex_;
+    // 用于判断文件是否修改，要重新读
     int             stat_interval;
+    // 判断文件缓存是否过期，太久没访问/Open的文件会过期
     int             expired_time;
 
     FileCache();
 
     struct OpenParam {
+        // [in] 是否重读文件
         bool need_read;
+        // [in] 缓存文件的最大尺寸：64M
         int  max_read;
+        // [in] url path, 用于生成文件列表页面标题: Index of Path
         const char* path;
+        // [out] 文件实际大小
         size_t  filesize;
+        // [out] 出错是的错误码
         int  error;
 
         OpenParam() {
@@ -85,6 +99,7 @@ public:
     file_cache_ptr Open(const char* filepath, OpenParam* param);
     bool Close(const char* filepath);
     bool Close(const file_cache_ptr& fc);
+    // 删除过期的文件缓存(LRU)
     void RemoveExpiredFileCache();
 
 protected:
