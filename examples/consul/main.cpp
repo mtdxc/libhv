@@ -43,25 +43,20 @@ int main(int argc, char* argv[]) {
     if (strcmp(subcmd, "register") == 0) {
         int ret = register_service(&node, &service, &health);
         printf("register_service retval=%d\n", ret);
-        goto discover;
     }
     else if (strcmp(subcmd, "deregister") == 0) {
         int ret = deregister_service(&node, &service);
         printf("deregister_service retval=%d\n", ret);
-        goto discover;
     }
-    else if (strcmp(subcmd, "discover") == 0) {
-discover:
-        std::vector<consul_service_t> services;
-        discover_services(&node, ServiceName, services);
-        for (auto& service : services) {
-            printf("name=%s ip=%s port=%d\n", service.name, service.ip, service.port);
-        }
-    }
-    else {
+    else if (strcmp(subcmd, "discover")) {
         printf("subcmd error!\n");
         return -20;
     }
-
+//discover:
+    std::vector<consul_service_t> services;
+    discover_services(&node, ServiceName, services);
+    for (auto& service : services) {
+        printf("name=%s ip=%s port=%d\n", service.name, service.ip, service.port);
+    }
     return 0;
 }

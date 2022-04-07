@@ -3,7 +3,7 @@
 
 #include <vector>
 #include <string.h>
-
+// consul server addr
 typedef struct consul_node_s {
     // node
     char ip[64];
