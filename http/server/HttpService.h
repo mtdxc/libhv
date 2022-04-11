@@ -112,7 +112,7 @@ struct HV_EXPORT HttpService {
 
     // options
     int keepalive_timeout;
-
+    int limit_rate = 0; // file download speed limit(KB/s, <=0 no limit)
     HttpService() {
         // base_url = DEFAULT_BASE_URL;
 

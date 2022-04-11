@@ -190,30 +190,38 @@ int HttpHandler::defaultStaticHandler() {
     if (req_path[1] == '\0') {
         filepath += service->home_page;
     }
-    bool is_dir = filepath.c_str()[filepath.size()-1] == '/';
+    bool is_dir = filepath[filepath.size()-1] == '/';
     bool is_index_of = false;
     if (service->index_of.size() != 0 && hv_strstartswith(req_path, service->index_of.c_str())) {
         is_index_of = true;
     }
-    if (!is_dir || is_index_of) {
-        FileCache::OpenParam param;
-        bool has_range = req->headers.find("Range") != req->headers.end();
-        param.need_read = !(req->method == HTTP_HEAD || has_range);
-        param.path = req_path;
-        fc = files->Open(filepath.c_str(), &param);
-        if (fc == NULL) {
-            status_code = HTTP_STATUS_NOT_FOUND;
-            if (param.error == ERR_OVER_LIMIT) {
-                if (service->largeFileHandler) {
-                    status_code = customHttpHandler(service->largeFileHandler);
-                }
-            }
-        }
-    } else {
-        status_code = HTTP_STATUS_NOT_FOUND;
+    if (is_dir && !is_index_of) { // unsupport dir without index
+        return HTTP_STATUS_NOT_FOUND;
     }
 
-    if (fc) {
+    FileCache::OpenParam param;
+	bool has_range = req->headers.find("Range") != req->headers.end();
+    if (has_range) {
+        if (service->largeFileHandler) 
+            status_code = customHttpHandler(service->largeFileHandler);
+        else
+            status_code = writer->ResponseFile(filepath.c_str(), req.get(), service->limit_rate);
+        return status_code;
+    }
+
+    param.need_read = req->method != HTTP_HEAD;
+    param.path = req_path;
+    fc = files->Open(filepath.c_str(), &param);
+    if (fc == NULL) {
+        status_code = HTTP_STATUS_NOT_FOUND;
+        if (param.error == ERR_OVER_LIMIT) {
+            if (service->largeFileHandler) 
+                status_code = customHttpHandler(service->largeFileHandler);
+            else
+                status_code = writer->ResponseFile(filepath.c_str(), NULL, service->limit_rate);
+        }
+    }
+    else {
         // Not Modified
         auto iter = req->headers.find("if-not-match");
         if (iter != req->headers.end() &&
@@ -238,6 +246,7 @@ int HttpHandler::defaultErrorHandler() {
     if (service->error_page.size() != 0) {
         std::string filepath = service->document_root + '/' + service->error_page;
         FileCache::OpenParam param;
+        // load error page from file cache..
         fc = files->Open(filepath.c_str(), &param);
     }
     // status page
@@ -286,8 +295,6 @@ int HttpHandler::GetSendData(char** data, size_t* len) {
             state = SEND_HEADER;
         case SEND_HEADER:
         {
-            int content_length = 0;
-            const char* content = NULL;
             // HEAD
             if (pReq->method == HTTP_HEAD) {
                 if (fc) {
@@ -298,34 +305,11 @@ int HttpHandler::GetSendData(char** data, size_t* len) {
                     pResp->headers["Content-Length"] = "0";
                 }
                 state = SEND_DONE;
-                goto return_nobody;
+                pResp->content_length = 0;
+                goto return_header;
             }
             // File service
             if (fc) {
-                long from, to, total;
-                int nread;
-                // Range:
-                if (pReq->GetRange(from, to)) {
-                    HFile file;
-                    if (file.open(fc->filepath.c_str(), "rb") != 0) {
-                        pResp->status_code = HTTP_STATUS_NOT_FOUND;
-                        state = SEND_DONE;
-                        goto return_nobody;
-                    }
-                    total = file.size();
-                    if (to == 0 || to >= total) to = total - 1;
-                    pResp->content_length = to - from + 1;
-                    nread = file.readrange(body, from, to);
-                    if (nread != pResp->content_length) {
-                        pResp->status_code = HTTP_STATUS_INTERNAL_SERVER_ERROR;
-                        state = SEND_DONE;
-                        goto return_nobody;
-                    }
-                    pResp->status_code = HTTP_STATUS_PARTIAL_CONTENT;
-                    pResp->SetRange(from, to, total);
-                    state = SEND_BODY;
-                    goto return_header;
-                }
                 // FileCache
                 // NOTE: no copy filebuf, more efficient
                 header = pResp->Dump(true, false);
@@ -336,25 +320,19 @@ int HttpHandler::GetSendData(char** data, size_t* len) {
                 return *len;
             }
             // API service
-            content_length = pResp->ContentLength();
-            content = (const char*)pResp->Content();
-            if (content) {
+            if (const char* content = (const char*)pResp->Content()) {
+                int content_length = pResp->ContentLength();
                 if (content_length > (1 << 20)) {
                     state = SEND_BODY;
-                    goto return_header;
                 } else {
                     // NOTE: header+body in one package if <= 1M
                     header = pResp->Dump(true, false);
                     header.append(content, content_length);
                     state = SEND_DONE;
-                    goto return_header;
                 }
             } else {
                 state = SEND_DONE;
-                goto return_header;
             }
-return_nobody:
-            pResp->content_length = 0;
 return_header:
             if (header.empty()) header = pResp->Dump(true, false);
             *data = (char*)header.c_str();
@@ -376,7 +354,7 @@ return_header:
         case SEND_DONE:
         {
             // NOTE: remove file cache if > 16M
-            if (fc && fc->filebuf.len > (1 << 24)) {
+            if (fc && fc->filebuf.len > FILE_CACHE_MAX_SIZE) {
                 files->Close(fc);
             }
             fc = NULL;

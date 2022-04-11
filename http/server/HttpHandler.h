@@ -16,6 +16,7 @@ public:
         HTTP_V2,
         WEBSOCKET,
     } protocol;
+
     enum State {
         WANT_RECV,
         HANDLE_BEGIN,
@@ -60,6 +61,8 @@ public:
         service = NULL;
         files = NULL;
         ws_service = NULL;
+        last_send_ping_time = 0;
+        last_recv_pong_time = 0;
     }
 
     ~HttpHandler() {
@@ -73,15 +76,19 @@ public:
         if (parser == NULL) {
             return false;
         }
-        protocol = http_version == 1 ? HTTP_V1 : HTTP_V2;
         req.reset(new HttpRequest);
         resp.reset(new HttpResponse);
         if (http_version == 2) {
+            protocol = HTTP_V2;
             resp->http_major = req->http_major = 2;
             resp->http_minor = req->http_minor = 0;
         }
+        else if(http_version == 1) {
+            protocol = HTTP_V1;
+        }
         parser->InitRequest(req.get());
         if (io) {
+            // shared resp object with HttpResponseWriter
             writer.reset(new hv::HttpResponseWriter(io, resp));
             writer->status = hv::SocketChannel::CONNECTED;
         }
