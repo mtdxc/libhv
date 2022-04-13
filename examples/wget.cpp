@@ -10,7 +10,7 @@ using namespace hv;
 
 typedef std::function<void(size_t received_bytes, size_t total_bytes)> wget_progress_cb;
 
-static int wget(const char* url, const char* filepath, wget_progress_cb progress_cb = NULL, bool use_range = true) {
+static int wget(const char* url, const char* filepath, int range_bytes = 0, wget_progress_cb progress_cb = NULL) {
     int ret = 0;
     HttpClient cli;
     HttpRequest req;
@@ -31,16 +31,16 @@ static int wget(const char* url, const char* filepath, wget_progress_cb progress
     }
 
     // use Range?
-    int range_bytes = 1 << 20; // 1M
+    bool use_range = false;
     long from = 0, to = 0;
     size_t content_length = hv::from_string<size_t>(resp.GetHeader("Content-Length"));
-    if (use_range) {
-        use_range = false;
+    if (range_bytes) {
         std::string accept_ranges = resp.GetHeader("Accept-Ranges");
         // use Range if server accept_ranges and content_length > 1M
         if (resp.status_code == 200 &&
             accept_ranges == "bytes" &&
             content_length > range_bytes) {
+            printf("wget use_range range_bytes=%d content_length=%d\n", range_bytes, content_length);
             use_range = true;
         }
     }
@@ -128,13 +128,14 @@ error:
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        printf("Usage: %s [--use_range] url [filepath]\n", argv[0]);
+        printf("Usage: %s [--range 1024] url [filepath]\n", argv[0]);
         return -10;
     }
     int idx = 1;
-    bool use_range = false;
-    if (strcmp(argv[idx], "--use_range") == 0) {
-        use_range = true;
+    int range_bytes = 0;
+    if (strcmp(argv[idx], "--range") == 0) {
+        ++idx;
+        range_bytes = 1024 * atoi(argv[idx]);
         ++idx;
     }
     const char* url = argv[idx++];
@@ -150,7 +151,7 @@ int main(int argc, char** argv) {
 
     unsigned int start_time = gettick_ms();
     int last_progress = 0;
-    wget(url, filepath, [&last_progress](size_t received_bytes, size_t total_bytes) {
+    wget(url, filepath, range_bytes, [&last_progress](size_t received_bytes, size_t total_bytes) {
         // print progress
         if (total_bytes == 0) {
             printf("\rprogress: %lu/? = ?", (unsigned long)received_bytes);
@@ -162,7 +163,7 @@ int main(int argc, char** argv) {
             }
         }
         fflush(stdout);
-    }, use_range);
+    });
     unsigned int end_time = gettick_ms();
     unsigned int cost_time = end_time - start_time;
     printf("\ncost time %u ms\n", cost_time);
