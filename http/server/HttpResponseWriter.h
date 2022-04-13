@@ -3,7 +3,7 @@
 
 #include "Channel.h"
 #include "HttpMessage.h"
-
+#include "hfile.h"
 namespace hv {
 
 class HV_EXPORT HttpResponseWriter : public SocketChannel {
@@ -24,7 +24,7 @@ public:
         , state(SEND_BEGIN)
         , end(SEND_BEGIN)
     {}
-    ~HttpResponseWriter() {}
+    ~HttpResponseWriter() { endFile(); }
 
     // Begin -> End
     // Begin -> WriteResponse -> End
@@ -35,6 +35,7 @@ public:
 
     int Begin() {
         state = end = SEND_BEGIN;
+        endFile();
         return 0;
     }
 
@@ -92,6 +93,16 @@ public:
     int End(const std::string& str) {
         return End(str.c_str(), str.size());
     }
+
+    int ResponseFile(const char* path, HttpRequest* req, int speed);
+
+private:
+    HFile file;
+    bool wait_writable;
+    void endFile();
+
+    void writeFile(int maxSize);
+
 };
 
 }
