@@ -533,6 +533,7 @@ int HttpHandler::defaultRequestHandler() {
     return status_code;
 }
 
+#define USE_RESPONSE_FILE 1
 int HttpHandler::defaultStaticHandler() {
     // file service
     std::string path = req->Path();
@@ -557,10 +558,13 @@ int HttpHandler::defaultStaticHandler() {
 
     int status_code = HTTP_STATUS_OK;
     // Range:
-    bool has_range = false;
+    bool has_range = req->headers.find("Range") != req->headers.end();
     long from, to = 0;
     if (req->GetRange(from, to)) {
         has_range = true;
+#ifdef USE_RESPONSE_FILE
+        return writer->ResponseFile(filepath.c_str(), req.get(), service->limit_rate);
+#endif
         if (openFile(filepath.c_str()) != 0) {
             return HTTP_STATUS_NOT_FOUND;
         }
@@ -605,7 +609,11 @@ int HttpHandler::defaultStaticHandler() {
             if (service->largeFileHandler) {
                 status_code = customHttpHandler(service->largeFileHandler);
             } else {
+#ifdef USE_RESPONSE_FILE
+                status_code = writer->ResponseFile(filepath.c_str(), NULL, service->limit_rate);
+#else
                 status_code = defaultLargeFileHandler(filepath);
+#endif
             }
         } else {
             status_code = HTTP_STATUS_NOT_FOUND;
