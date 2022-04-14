@@ -180,10 +180,10 @@ http_client_test: prepare
 	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS) util cpputil evpp http http/client" SRCS="examples/http_client_test.cpp"
 
 websocket_server_test: prepare
-	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS) util cpputil evpp http http/server" SRCS="examples/websocket_server_test.cpp"
+	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS) util cpputil evpp http http/server" SRCS="examples/websocket_server_test.cpp examples/protoo.cpp"
 
 websocket_client_test: prepare
-	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS) util cpputil evpp http http/client" SRCS="examples/websocket_client_test.cpp"
+	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS) util cpputil evpp http http/client" SRCS="examples/websocket_client_test.cpp examples/protoo.cpp"
 
 mqtt_sub: prepare
 	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS) mqtt" SRCS="examples/mqtt/mqtt_sub.c"
