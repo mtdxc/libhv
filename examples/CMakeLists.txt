@@ -111,7 +111,7 @@ if(WITH_HTTP_SERVER)
     target_link_libraries(http_server_test ${HV_LIBRARIES})
 
     # websocket_server_test
-    add_executable(websocket_server_test websocket_server_test.cpp)
+    add_executable(websocket_server_test websocket_server_test.cpp protoo.cpp)
     target_link_libraries(websocket_server_test ${HV_LIBRARIES})
 
     list(APPEND EXAMPLES http_server_test websocket_server_test)
@@ -146,7 +146,7 @@ if(WITH_HTTP_CLIENT)
     target_link_libraries(http_client_test ${HV_LIBRARIES})
 
     # websocket_client_test
-    add_executable(websocket_client_test websocket_client_test.cpp)
+    add_executable(websocket_client_test websocket_client_test.cpp protoo.cpp)
     target_link_libraries(websocket_client_test ${HV_LIBRARIES})
 
     list(APPEND EXAMPLES ${CURL_TARGET_NAME} wget consul http_client_test websocket_client_test)
