@@ -13,6 +13,24 @@
 #include "WebSocketClient.h"
 
 using namespace hv;
+#include "protoo.h"
+class ProtooClient : public WebSocketClient, public Protoo
+{
+public:
+    ProtooClient() {
+        onopen = []() {
+        };
+        onclose = [this]() {
+            Protoo::clearRequests();
+        };
+        onmessage = [this](const std::string& msg) {
+            Protoo::recvMsg(msg);
+        };
+        sendMsg = [this](const std::string& msg){
+            send(msg);
+        };
+    }
+};
 
 class MyWebSocketClient : public WebSocketClient {
 public:

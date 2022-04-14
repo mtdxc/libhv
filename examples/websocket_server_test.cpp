@@ -29,6 +29,27 @@ using namespace hv;
 #define TEST_WSS 0
 
 using namespace hv;
+#include "protoo.h"
+void testProtoo(){
+    WebSocketService ws;
+    ws.onopen = [](const WebSocketChannelPtr& channel, const HttpRequestPtr& req) {
+        printf("onopen: GET %s\n", req->url.c_str());
+        Protoo* ctx = channel->newContext<Protoo>();
+        ctx->sendMsg = [channel](const std::string& msg){
+            channel->send(msg);
+        };
+    };
+    ws.onmessage = [](const WebSocketChannelPtr& channel, const std::string& msg) {
+        Protoo* ctx = channel->getContext<Protoo>();
+        ctx->recvMsg(msg);
+    };
+    ws.onclose = [](const WebSocketChannelPtr& channel) {
+        printf("onclose\n");
+        Protoo* ctx = channel->getContext<Protoo>();
+        ctx->clearRequests();
+        channel->deleteContext<Protoo>();
+    };
+}
 
 class MyContext {
 public:
