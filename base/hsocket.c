@@ -134,7 +134,7 @@ int sockaddr_set_ipport(sockaddr_u* addr, const char* host, int port) {
     return 0;
 }
 
-socklen_t sockaddr_len(sockaddr_u* addr) {
+socklen_t sockaddr_len(const sockaddr_u* addr) {
     if (addr->sa.sa_family == AF_INET) {
         return sizeof(struct sockaddr_in);
     }
@@ -190,6 +190,31 @@ int sockaddr_compare(const sockaddr_u* addr1, const sockaddr_u* addr2) {
     return memcmp(addr1, addr2, sizeof(sockaddr_u));
 }
 
+uint64_t sockaddr_hash(const sockaddr_u* addr, char care_port) {
+    uint64_t ret = 0, *p = NULL;
+    switch (addr->sa.sa_family) {
+    case AF_INET:
+        ret = addr->sin.sin_addr.s_addr;
+        if (care_port)
+            ret |= addr->sin.sin_port;
+        break;
+    case AF_INET6:
+        p = (uint64_t*)&(addr->sin6.sin6_addr);
+        ret = p[0] | p[1];
+        if (care_port)
+            ret |= addr->sin6.sin6_port;
+        break;
+    default:
+        p = (uint64_t*)addr;
+        for (size_t i = 0; i < sizeof(sockaddr_u); i += 8) {
+            ret |= *p;
+            p++;
+        }
+        break;
+    }
+    return ret;
+}
+
 static int sockaddr_bind(sockaddr_u* localaddr, int type) {
     // socket -> setsockopt -> bind
 #ifdef SOCK_CLOEXEC
@@ -208,7 +233,7 @@ static int sockaddr_bind(sockaddr_u* localaddr, int type) {
 
     if (localaddr->sa.sa_family == AF_INET6) {
         ip_v6only(sockfd, 0);
-    }
+        }
 
     if (bind(sockfd, &localaddr->sa, sockaddr_len(localaddr)) < 0) {
         perror("bind");
