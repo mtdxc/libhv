@@ -61,8 +61,17 @@ add_executable(jsonrpc_server jsonrpc/jsonrpc_server.c jsonrpc/cJSON.c)
 target_compile_definitions(jsonrpc_server PRIVATE CJSON_HIDE_SYMBOLS)
 target_link_libraries(jsonrpc_server ${HV_LIBRARIES})
 
+set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 if(WITH_EVPP)
     include_directories(../cpputil ../evpp)
+
+    file(GLOB evpp_test_list ../evpp/*_test.cpp)
+    foreach (TEST_SRC ${evpp_test_list})
+        get_filename_component(TEST_EXE_NAME ${TEST_SRC} NAME_WE)
+        add_executable(${TEST_EXE_NAME} ${TEST_SRC})
+        target_link_libraries(${TEST_EXE_NAME} ${HV_LIBRARIES})
+        SET_PROPERTY(TARGET ${TEST_EXE_NAME} PROPERTY FOLDER "evpp")
+    endforeach()
 
     # hmain_test
     add_executable(hmain_test hmain_test.cpp)
@@ -158,4 +167,7 @@ if(WITH_MQTT)
     list(APPEND EXAMPLES mqtt_sub mqtt_pub mqtt_client_test)
 endif()
 
+foreach (TEST_SRC ${EXAMPLES})
+SET_PROPERTY(TARGET ${TEST_SRC} PROPERTY FOLDER "examples")
+endforeach()
 add_custom_target(examples DEPENDS ${EXAMPLES})
