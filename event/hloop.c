@@ -942,7 +942,7 @@ hio_t* hio_create_socket(hloop_t* loop, const char* host, int port, hio_type_e t
     hio_t* io = NULL;
     if (side == HIO_SERVER_SIDE) {
         so_reuseaddr(sockfd, 1);
-        // so_reuseport(sockfd, 1);
+        so_reuseport(sockfd, 1);
         if (bind(sockfd, &addr.sa, sockaddr_len(&addr)) < 0) {
             perror("bind");
             closesocket(sockfd);
@@ -1008,4 +1008,30 @@ hio_t* hloop_create_udp_server(hloop_t* loop, const char* host, int port) {
 
 hio_t* hloop_create_udp_client(hloop_t* loop, const char* host, int port) {
     return hio_create_socket(loop, host, port, HIO_TYPE_UDP, HIO_CLIENT_SIDE);
+}
+
+int hio_accept_udp_fd(hio_t* server) {
+    sockaddr_u* localAddr = (sockaddr_u*)hio_localaddr(server);
+    int addrlen = sockaddr_len(localAddr);
+    int sockfd = socket(localAddr->sa.sa_family, SOCK_DGRAM, 0);
+    if (sockfd < 0) {
+        perror("socket");
+        return INVALID_SOCKET;
+    }
+
+    so_reuseaddr(sockfd, 1);
+    so_reuseport(sockfd, 1);
+
+    if (bind(sockfd, (struct sockaddr*)localAddr, addrlen) < 0) {
+        perror("bind");
+        closesocket(sockfd);
+        return INVALID_SOCKET;
+    }
+    struct sockaddr* peerAddr = hio_peeraddr(server);
+    if (connect(sockfd, peerAddr, addrlen) < 0) {
+        perror("connect");
+        closesocket(sockfd);
+        return INVALID_SOCKET;
+    }
+    return sockfd;
 }
