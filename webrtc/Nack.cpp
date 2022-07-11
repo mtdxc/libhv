@@ -9,9 +9,8 @@
  */
 
 #include "Nack.h"
-
-//using namespace std;
-using namespace toolkit;
+#include "htime.h"
+#define getCurrentMillisecond gettick_ms
 using namespace mediakit;
 
 static constexpr uint32_t kMaxNackMS = 5 * 1000;
@@ -252,7 +251,7 @@ uint64_t NackContext::reSendNack() {
             continue;
         }
         auto inc = *it - pid;
-        if (inc > (ssize_t)FCI_NACK::kBitSize) {
+        if (inc > FCI_NACK::kBitSize) {
             //新的nack包
             doNack(FCI_NACK(pid, vec), false);
             pid = -1;

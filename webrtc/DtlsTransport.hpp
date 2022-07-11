@@ -26,9 +26,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 #include <map>
 #include <string>
 #include <vector>
-#include "Poller/Timer.h"
-#include "Poller/EventPoller.h"
-using namespace toolkit;
+#include "EventLoop.h"
 
 namespace RTC
 {
@@ -173,7 +171,7 @@ namespace RTC
 		static std::vector<SrtpCryptoSuiteMapEntry> srtpCryptoSuites;
 
 	public:
-		DtlsTransport(EventPoller::Ptr poller, Listener* listener);
+		DtlsTransport(hv::EventLoopPtr poller, Listener* listener);
 		~DtlsTransport();
 
 	public:
@@ -228,14 +226,14 @@ namespace RTC
 
 	private:
 		DtlsEnvironment::Ptr env;
-		EventPoller::Ptr poller;
+        hv::EventLoopPtr poller;
 		// Passed by argument.
 		Listener* listener{ nullptr };
 		// Allocated by this.
 		SSL* ssl{ nullptr };
 		BIO* sslBioFromNetwork{ nullptr }; // The BIO from which ssl reads.
 		BIO* sslBioToNetwork{ nullptr };   // The BIO in which ssl writes.
-		Timer::Ptr timer;
+        hv::TimerID timer;
 		// Others.
 		DtlsState state{ DtlsState::NEW };
 		Role localRole{ Role::NONE };

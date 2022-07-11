@@ -122,7 +122,7 @@ namespace RTC
 	public:
 		using Ptr = std::shared_ptr<SctpAssociationImp>;
 		template<typename ... ARGS>
-		SctpAssociationImp(toolkit::EventPoller::Ptr poller, ARGS &&...args) : SctpAssociation(std::forward<ARGS>(args)...) {
+		SctpAssociationImp(EventPoller::Ptr poller, ARGS &&...args) : SctpAssociation(std::forward<ARGS>(args)...) {
 			_poller = std::move(poller);
 		}
 
@@ -134,7 +134,7 @@ namespace RTC
 		void OnUsrSctpReceiveSctpNotification(union sctp_notification* notification, size_t len) override;
 
 	private:
-		toolkit::EventPoller::Ptr _poller;
+		EventPoller::Ptr _poller;
 	};
 } // namespace RTC
 

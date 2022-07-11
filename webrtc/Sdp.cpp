@@ -9,22 +9,27 @@
  */
 
 #include "Sdp.h"
-#include "Rtsp/Rtsp.h"
+#include "Rtsp.h"
 #include <unordered_set>
 #include <cinttypes>
-
+#include "hlog.h"
+#include "hstring.h"
+using hv::split;
+using hv::trim;
+using StrCaseCompare = hv::StringCaseLess;
 using namespace std;
-using namespace toolkit;
 using namespace mediakit;
 
 namespace RTC {
 #define RTC_FIELD "rtc."
 const string kPreferredCodecA = RTC_FIELD"preferredCodecA";
 const string kPreferredCodecV = RTC_FIELD"preferredCodecV";
+/*
 static onceToken token([]() {
     mINI::Instance()[kPreferredCodecA] = "PCMU,PCMA,opus,mpeg4-generic";
     mINI::Instance()[kPreferredCodecV] = "H264,H265,AV1X,VP9,VP8";
 });
+*/
 }
 
 using onCreateSdpItem = function<SdpItem::Ptr(const string &key, const string &value)>;
@@ -171,12 +176,12 @@ const char* getRtpDirectionString(RtpDirection val){
 
 //////////////////////////////////////////////////////////////////////////////////////////
 
-string RtcSdpBase::toString() const {
-    _StrPrinter printer;
+std::string RtcSdpBase::toString() const {
+    std::stringstream printer;
     for (auto &item : items) {
         printer << item->getKey() << "=" << item->toString() << "\r\n";
     }
-    return std::move(printer);
+    return printer.str();
 }
 
 RtpDirection RtcSdpBase::getDirection() const{
@@ -266,7 +271,7 @@ string RtcSessionSdp::getRepeatTimes() const {
 void RtcSessionSdp::parse(const string &str) {
     static auto flag = registerAllItem();
     RtcSdpBase *media = nullptr;
-    auto lines = split(str, "\n");
+    auto lines = split(str, '\n');
     for(auto &line : lines){
         trim(line);
         if(line.size() < 3 || line[1] != '='){
@@ -296,13 +301,13 @@ void RtcSessionSdp::parse(const string &str) {
 }
 
 string RtcSessionSdp::toString() const {
-    _StrPrinter printer;
+    std::stringstream printer;
     printer << RtcSdpBase::toString();
     for (auto &media : medias) {
         printer << media.toString();
     }
 
-    return std::move(printer);
+    return printer.str();
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////
@@ -321,7 +326,7 @@ string SdpTime::toString() const {
 }
 
 void SdpOrigin::parse(const string &str) {
-    auto vec = split(str, " ");
+    auto vec = split(str, ' ');
     CHECK_SDP(vec.size() == 6);
     username = vec[0];
     id = vec[1];
@@ -339,7 +344,7 @@ string SdpOrigin::toString() const {
 }
 
 void SdpConnection::parse(const string &str) {
-    auto vec = split(str, " ");
+    auto vec = split(str, ' ');
     CHECK_SDP(vec.size() == 3);
     nettype = vec[0];
     addrtype = vec[1];
@@ -354,7 +359,7 @@ string SdpConnection::toString() const {
 }
 
 void SdpBandwidth::parse(const string &str) {
-    auto vec = split(str, ":");
+    auto vec = split(str, ' ');
     CHECK_SDP(vec.size() == 2);
     bwtype = vec[0];
     bandwidth = atoi(vec[1].data());
@@ -368,7 +373,7 @@ string SdpBandwidth::toString() const {
 }
 
 void SdpMedia::parse(const string &str) {
-    auto vec = split(str, " ");
+    auto vec = split(str, ' ');
     CHECK_SDP(vec.size() >= 4);
     type = getTrackType(vec[0]);
     CHECK_SDP(type != TrackInvalid);
@@ -419,7 +424,7 @@ string SdpAttr::toString() const {
 }
 
 void SdpAttrGroup::parse(const string &str)  {
-    auto vec = split(str, " ");
+    auto vec = split(str, ' ');
     CHECK_SDP(vec.size() >= 2);
     type = vec[0];
     vec.erase(vec.begin());
@@ -438,7 +443,7 @@ string SdpAttrGroup::toString() const  {
 }
 
 void SdpAttrMsidSemantic::parse(const string &str)  {
-    auto vec = split(str, " ");
+    auto vec = split(str, ' ');
     CHECK_SDP(vec.size() >= 1);
     msid = vec[0];
     token = vec.size() > 1 ? vec[1] : "";
@@ -455,7 +460,7 @@ string SdpAttrMsidSemantic::toString() const  {
 }
 
 void SdpAttrRtcp::parse(const string &str)  {
-    auto vec = split(str, " ");
+    auto vec = split(str, ' ');
     CHECK_SDP(vec.size() == 4);
     port = atoi(vec[0].data());
     nettype = vec[1];
@@ -471,7 +476,7 @@ string SdpAttrRtcp::toString() const  {
 }
 
 void SdpAttrIceOption::parse(const string &str){
-    auto vec = split(str, " ");
+    auto vec = split(str, ' ');
     for (auto &v : vec) {
         if (!strcasecmp(v.data(), "trickle")) {
             trickle = true;
@@ -498,7 +503,7 @@ string SdpAttrIceOption::toString() const{
 }
 
 void SdpAttrFingerprint::parse(const string &str)  {
-    auto vec = split(str, " ");
+    auto vec = split(str, ' ');
     CHECK_SDP(vec.size() == 2);
     algorithm = vec[0];
     hash = vec[1];
@@ -587,7 +592,7 @@ void SdpAttrFmtp::parse(const string &str)  {
     auto pos = str.find(' ');
     CHECK_SDP(pos != string::npos);
     pt = atoi(str.substr(0, pos).data());
-    auto vec = split(str.substr(pos + 1), ";");
+    auto vec = split(str.substr(pos + 1), ';');
     for (auto &item : vec) {
         trim(item);
         auto pos = item.find('=');
@@ -639,7 +644,7 @@ string SdpAttrSSRC::toString() const  {
 }
 
 void SdpAttrSSRCGroup::parse(const string &str) {
-    auto vec = split(str, " ");
+    auto vec = split(str, ' ');
     CHECK_SDP(vec.size() >= 3);
     type = std::move(vec[0]);
     CHECK(isFID() || isSIM());
@@ -697,7 +702,7 @@ void SdpAttrCandidate::parse(const string &str)  {
         auto remain = str.substr(pos + type.size());
         trim(remain);
         if (!remain.empty()) {
-            auto vec = split(remain, " ");
+            auto vec = split(remain, ' ');
             string key;
             for (auto &item : vec) {
                 if (key.empty()) {
@@ -730,10 +735,10 @@ void SdpAttrSimulcast::parse(const string &str) {
     //a=simulcast:send/recv [rid=]q;h;f
     //a=simulcast: recv h;m;l
     //
-    auto vec = split(str, " ");
+    auto vec = split(str, ' ');
     CHECK_SDP(vec.size() == 2);
     direction = vec[0];
-    rids = split(vec[1], ";");
+    rids = split(vec[1], ';');
 }
 
 string SdpAttrSimulcast::toString() const {
@@ -753,7 +758,7 @@ string SdpAttrSimulcast::toString() const {
 }
 
 void SdpAttrRid::parse(const string &str) {
-    auto vec = split(str, " ");
+    auto vec = split(str, ' ');
     CHECK(vec.size() >= 2);
     rid = vec[0];
     direction = vec[1];
@@ -1411,7 +1416,7 @@ void RtcConfigure::RtcTrackConfigure::enableREMB(bool enable){
 
 static std::vector<CodecId> toCodecArray(const string &str){
     std::vector<CodecId> ret;
-    auto vec = split(str, ",");
+    auto vec = split(str, ',');
     for (auto &s : vec) {
         auto codec = getCodecId(trim(s));
         if (codec != CodecInvalid) {
@@ -1434,10 +1439,11 @@ void RtcConfigure::RtcTrackConfigure::setDefaultSetting(TrackType type){
     switch (type) {
         case TrackAudio: {
             //此处调整偏好的编码格式优先级
+#if 0
             GET_CONFIG_FUNC(std::vector<CodecId>, s_preferred_codec, RTC::kPreferredCodecA, toCodecArray);
             CHECK(!s_preferred_codec.empty(), "rtc音频偏好codec不能为空");
             preferred_codec = s_preferred_codec;
-
+#endif
             rtcp_fb = {SdpConst::kTWCCRtcpFb, SdpConst::kRembRtcpFb};
             extmap = {
                     {RtpExtType::ssrc_audio_level,            RtpDirection::sendrecv},
@@ -1453,10 +1459,11 @@ void RtcConfigure::RtcTrackConfigure::setDefaultSetting(TrackType type){
         }
         case TrackVideo: {
             //此处调整偏好的编码格式优先级
+#if 0
             GET_CONFIG_FUNC(vector<CodecId>, s_preferred_codec, RTC::kPreferredCodecV, toCodecArray);
             CHECK(!s_preferred_codec.empty(), "rtc视频偏好codec不能为空");
             preferred_codec = s_preferred_codec;
-
+#endif
             rtcp_fb = {SdpConst::kTWCCRtcpFb, SdpConst::kRembRtcpFb, "nack", "ccm fir", "nack pli"};
             extmap = {
                     {RtpExtType::abs_send_time,               RtpDirection::sendrecv},
@@ -1645,7 +1652,7 @@ RETRY:
     }
     for (auto &codec : configure.preferred_codec) {
         if (offer_media.ice_lite && configure.ice_lite) {
-            WarnL << "answer sdp配置为ice_lite模式，与offer sdp中的ice_lite模式冲突";
+            LOGW("answer sdp配置为ice_lite模式，与offer sdp中的ice_lite模式冲突");
             continue;
         }
         const RtcCodecPlan *selected_plan = nullptr;

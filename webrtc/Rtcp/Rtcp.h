@@ -13,12 +13,14 @@
 
 #include <stdint.h>
 #include <vector>
-#include "Util/util.h"
-#include "Network/Buffer.h"
-#include "Common/macros.h"
+#include <memory>
+//#include "Util/util.h"
+#include "Buffer.hpp"
+#include "macros.h"
+#include "htime.h"
 
 namespace mediakit {
-
+std::string hexdump(const void* buf, size_t len);
 #if defined(_WIN32)
 #pragma pack(push, 1)
 #endif // defined(_WIN32)
@@ -196,7 +198,7 @@ public:
      * @param rtcp rtcp包对象智能指针
      * @return Buffer对象
      */
-    static toolkit::Buffer::Ptr toBuffer(std::shared_ptr<RtcpHeader> rtcp);
+    static Buffer::Ptr toBuffer(std::shared_ptr<RtcpHeader> rtcp);
 
     /**
      * 打印rtcp相关字段详情(调用派生类的dumpString函数)

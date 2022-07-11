@@ -14,8 +14,8 @@
 #include <stdint.h>
 #include <map>
 #include <string>
-#include "Common/macros.h"
-#include "Rtsp/Rtsp.h"
+#include "macros.h"
+#include "Rtsp.h"
 
 
 #define RTP_EXT_MAP(XX) \

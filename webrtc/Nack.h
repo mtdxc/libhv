@@ -15,7 +15,7 @@
 #include <map>
 #include <deque>
 #include <unordered_map>
-#include "Rtsp/Rtsp.h"
+#include "Rtsp.h"
 #include "Rtcp/RtcpFCI.h"
 
 class NackList {

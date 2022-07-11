@@ -22,10 +22,6 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 #include "SrtpSession.hpp"
 #include <cstring> // std::memset(), std::memcpy()
 #include "logger.h"
-#include "Util/util.h"
-#include "Util/logger.h"
-
-using namespace toolkit;
 
 namespace RTC
 {
@@ -71,7 +67,10 @@ namespace RTC
         return (code != srtp_err_status_ok);
     }
 
-    INSTANCE_IMP(DepLibSRTP);
+    DepLibSRTP& DepLibSRTP::Instance() {
+        static DepLibSRTP instance;
+        return instance;
+    }
 
     DepLibSRTP::DepLibSRTP(){
         MS_TRACE();
@@ -240,7 +239,7 @@ namespace RTC
 
 		if (DepLibSRTP::IsError(err))
 		{
-            WarnL << "srtp_protect() failed:" << DepLibSRTP::GetErrorString(err);
+            LOGW("srtp_protect() failed: %s", DepLibSRTP::GetErrorString(err));
             return false;
 		}
 
@@ -256,7 +255,7 @@ namespace RTC
 
 		if (DepLibSRTP::IsError(err))
 		{
-            WarnL << "srtp_unprotect() failed:" << DepLibSRTP::GetErrorString(err);
+            LOGW("srtp_unprotect() failed: %s", DepLibSRTP::GetErrorString(err));
 			return false;
 		}
 
@@ -271,7 +270,7 @@ namespace RTC
 
 		if (DepLibSRTP::IsError(err))
 		{
-            WarnL << "srtp_protect_rtcp() failed:" << DepLibSRTP::GetErrorString(err);
+            LOGW("srtp_protect_rtcp() failed: %s", DepLibSRTP::GetErrorString(err));
 			return false;
 		}
 
@@ -287,7 +286,7 @@ namespace RTC
 
 		if (DepLibSRTP::IsError(err))
 		{
-            WarnL << "srtp_unprotect_rtcp() failed:" << DepLibSRTP::GetErrorString(err);
+            LOGW("srtp_unprotect_rtcp() failed: %s", DepLibSRTP::GetErrorString(err));
 			return false;
 		}
 

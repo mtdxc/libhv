@@ -10,7 +10,7 @@
 
 #include "TwccContext.h"
 #include "Rtcp/RtcpFCI.h"
-
+#include "logger.h"
 using namespace mediakit;
 
 enum class ExtSeqStatus : int {
@@ -35,7 +35,7 @@ void TwccContext::onRtp(uint32_t ssrc, uint16_t twcc_ext_seq, uint64_t stamp_ms)
 
     auto result = _rtp_recv_status.emplace(twcc_ext_seq, stamp_ms);
     if (!result.second) {
-        WarnL << "recv same twcc ext seq:" << twcc_ext_seq;
+        LOGW("recv same twcc ext seq: %s", twcc_ext_seq);
         return;
     }
 
@@ -70,12 +70,12 @@ int TwccContext::checkSeqStatus(uint16_t twcc_ext_seq) const {
     }
     if (delta < -0xFF00) {
         //回环
-        TraceL << "rtp twcc ext seq looped:" << max << " -> " << twcc_ext_seq;
+        LOGD("rtp twcc ext seq looped: %u->%u", max, twcc_ext_seq);
         return (int) ExtSeqStatus::looped;
     }
     if (delta > 0xFF00) {
         //回环后收到前面大的乱序的包，无法处理，丢弃
-        TraceL << "rtp twcc ext seq jumped after looped:" << max << " -> " << twcc_ext_seq;
+        LOGD("rtp twcc ext seq jumped after looped: %u->%u", max, twcc_ext_seq);
         return (int) ExtSeqStatus::jumped;
     }
     auto min = _rtp_recv_status.begin()->first;
@@ -84,7 +84,7 @@ int TwccContext::checkSeqStatus(uint16_t twcc_ext_seq) const {
         return (int) ExtSeqStatus::normal;
     }
     //seq莫名的大幅增加或减少，无法处理，丢弃
-    TraceL << "rtp twcc ext seq jumped:" << max << " -> " << twcc_ext_seq;
+    LOGD("rtp twcc ext seq jumped:  %u->%u", max, twcc_ext_seq);
     return (int) ExtSeqStatus::jumped;
 }
 

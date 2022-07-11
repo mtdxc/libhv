@@ -17,8 +17,10 @@
 #include <vector>
 #include "RtpExt.h"
 #include "assert.h"
-#include "Extension/Frame.h"
-#include "Common/Parser.h"
+#include "Frame.h"
+#include "hstring.h"
+
+//#include "Common/Parser.h"
 
 //https://datatracker.ietf.org/doc/rfc4566/?include_text=1
 //https://blog.csdn.net/aggresss/article/details/109850434
@@ -392,7 +394,7 @@ class SdpAttrFmtp : public SdpItem {
 public:
     //fmtp:96 level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42e01f
     uint8_t pt;
-    std::map<std::string/*key*/, std::string/*value*/, mediakit::StrCaseCompare> fmtp;
+    std::map<std::string/*key*/, std::string/*value*/, hv::StringCaseLess> fmtp;
     void parse(const std::string &str) override;
     std::string toString() const override;
     const char* getKey() const override { return "fmtp";}
@@ -639,7 +641,7 @@ public:
     //rtcp feedback
     std::set<std::string> rtcp_fb;
     // pt/codec format parameters
-    std::map<std::string/*key*/, std::string/*value*/, mediakit::StrCaseCompare> fmtp;
+    std::map<std::string/*key*/, std::string/*value*/, hv::StringCaseLess> fmtp;
 
     std::string getFmtp(const char *key) const;
 };

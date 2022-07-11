@@ -9,8 +9,9 @@
  */
 
 #include "RtcpContext.h"
-#include "Util/logger.h"
-using namespace toolkit;
+#include "logger.h"
+#include "htime.h"
+#define getCurrentMillisecond gettick_ms
 
 namespace mediakit {
 

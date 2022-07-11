@@ -83,7 +83,7 @@ std::string getTupleString(RTC::TransportTuple* tuple) {
 static void translateIPFromEnv(std::vector<std::string> &v) {
     for (auto iter = v.begin(); iter != v.end();) {
         if (start_with(*iter, "$")) {
-            auto ip = toolkit::getEnv(*iter);
+            auto ip = getEnv(*iter);
             if (ip.empty()) {
                 iter = v.erase(iter);
             } else {
@@ -196,7 +196,7 @@ void WebRtcTransport::OnDtlsTransportApplicationDataReceived(const RTC::DtlsTran
 #ifdef ENABLE_SCTP
     _sctp->ProcessSctpData(data, len);
 #else
-    InfoL << hexdump(data, len);
+    InfoL << mediakit::hexdump(data, len);
 #endif
 }
 

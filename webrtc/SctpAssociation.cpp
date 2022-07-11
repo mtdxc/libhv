@@ -94,7 +94,7 @@ inline static int onSendSctpData(void *addr, void *data, size_t len, uint8_t /*t
 inline static void sctpDebug(const char *format, ...) {
     va_list ap;
     va_start(ap, format);
-    toolkit::LoggerWrapper::printLogV(toolkit::getLogger(), toolkit::LTrace, __FILE__, __FUNCTION__, __LINE__, format, ap);
+    LoggerWrapper::printLogV(getLogger(), LTrace, __FILE__, __FUNCTION__, __LINE__, format, ap);
     va_end(ap);
 }
 

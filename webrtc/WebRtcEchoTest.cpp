@@ -8,10 +8,10 @@
  * may be found in the AUTHORS file in the root of the source tree.
  */
 
-#include "Util/logger.h"
+#include "logger.h"
 #include "WebRtcEchoTest.h"
 
-WebRtcEchoTest::Ptr WebRtcEchoTest::create(const EventPoller::Ptr &poller) {
+WebRtcEchoTest::Ptr WebRtcEchoTest::create(const EventPollerPtr &poller) {
     WebRtcEchoTest::Ptr ret(new WebRtcEchoTest(poller), [](WebRtcEchoTest *ptr) {
         ptr->onDestory();
         delete ptr;

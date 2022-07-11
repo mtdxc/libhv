@@ -13,6 +13,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <map>
 #include "Rtcp.h"
 
 namespace mediakit {
@@ -53,7 +54,7 @@ public:
      * @param rtcp_ssrc rtcp的ssrc
      * @return rtcp包
      */
-    virtual toolkit::Buffer::Ptr createRtcpSR(uint32_t rtcp_ssrc);
+    virtual Buffer::Ptr createRtcpSR(uint32_t rtcp_ssrc);
 
     /**
      * 创建RR rtcp包
@@ -61,7 +62,7 @@ public:
      * @param rtp_ssrc rtp的ssrc
      * @return rtcp包
      */
-    virtual toolkit::Buffer::Ptr createRtcpRR(uint32_t rtcp_ssrc, uint32_t rtp_ssrc);
+    virtual Buffer::Ptr createRtcpRR(uint32_t rtcp_ssrc, uint32_t rtp_ssrc);
 
     /**
      * 上次结果与本次结果间应收包数
@@ -85,7 +86,7 @@ protected:
 
 class RtcpContextForSend : public RtcpContext {
 public:
-    toolkit::Buffer::Ptr createRtcpSR(uint32_t rtcp_ssrc) override;
+    Buffer::Ptr createRtcpSR(uint32_t rtcp_ssrc) override;
     void onRtcp(RtcpHeader *rtcp) override;
 
     /**
@@ -108,7 +109,7 @@ public:
     size_t geLostInterval() override;
     void onRtcp(RtcpHeader *rtcp) override;
     void onRtp(uint16_t seq, uint32_t stamp, uint64_t ntp_stamp_ms, uint32_t sample_rate, size_t bytes) override;
-    toolkit::Buffer::Ptr createRtcpRR(uint32_t rtcp_ssrc, uint32_t rtp_ssrc) override;
+    Buffer::Ptr createRtcpRR(uint32_t rtcp_ssrc, uint32_t rtp_ssrc) override;
 
 private:
     //时间戳抖动值

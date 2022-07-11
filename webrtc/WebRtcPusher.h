@@ -42,7 +42,7 @@ protected:
     // 获取丢包率
     int getLossRate(mediakit::MediaSource &sender,mediakit::TrackType type) override;
     // 获取MediaSource归属线程
-    toolkit::EventPoller::Ptr getOwnerPoller(mediakit::MediaSource &sender) override;
+    EventPoller::Ptr getOwnerPoller(mediakit::MediaSource &sender) override;
 
 private:
     WebRtcPusher(const EventPoller::Ptr &poller, const mediakit::RtspMediaSourceImp::Ptr &src,
