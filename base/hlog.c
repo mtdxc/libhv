@@ -5,7 +5,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include <time.h>
-
+#include "hthread.h"
 //#include "hmutex.h"
 #ifdef _WIN32
 #include <windows.h>
@@ -377,6 +377,12 @@ int logger_print(logger_t* logger, int level, const char* fmt, ...) {
                 case 'Z':
                     len += i2a(us, buf + len, 6);
                     break;
+                case 't':
+                    len += sprintf(buf + len, "%ld", hv_gettid());
+                    break;
+                case 'p':
+                    len += sprintf(buf + len, "%ld", hv_getpid());
+                    break;
                 case 'l':
                     buf[len++] = *plevel;
                     break;
@@ -404,9 +410,9 @@ int logger_print(logger_t* logger, int level, const char* fmt, ...) {
             ++p;
         }
     } else {
-        len += snprintf(buf + len, bufsize - len, "%04d-%02d-%02d %02d:%02d:%02d.%03d %s ",
+        len += snprintf(buf + len, bufsize - len, "%04d-%02d-%02d %02d:%02d:%02d.%03d %ld %s ",
             year, month, day, hour, min, sec, us/1000,
-            plevel);
+            hv_gettid(), plevel);
 
         va_list ap;
         va_start(ap, fmt);
