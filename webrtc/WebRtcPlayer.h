@@ -12,12 +12,12 @@
 #define ZLMEDIAKIT_WEBRTCPLAYER_H
 
 #include "WebRtcTransport.h"
-
+#include "Rtsp/RtspMediaSourceImp.h"
 class WebRtcPlayer : public WebRtcTransportImp {
 public:
     using Ptr = std::shared_ptr<WebRtcPlayer>;
     ~WebRtcPlayer() override = default;
-    static Ptr create(const EventPoller::Ptr &poller, const mediakit::RtspMediaSource::Ptr &src, const mediakit::MediaInfo &info);
+    static Ptr create(const hv::EventLoopPtr &poller, const mediakit::RtspMediaSource::Ptr &src, const mediakit::MediaInfo &info);
 
 protected:
     ///////WebRtcTransportImp override///////
@@ -27,7 +27,7 @@ protected:
     void onRecvRtp(MediaTrack &track, const std::string &rid, mediakit::RtpPacket::Ptr rtp) override {};
 
 private:
-    WebRtcPlayer(const EventPoller::Ptr &poller, const mediakit::RtspMediaSource::Ptr &src, const mediakit::MediaInfo &info);
+    WebRtcPlayer(const hv::EventLoopPtr &poller, const mediakit::RtspMediaSource::Ptr &src, const mediakit::MediaInfo &info);
 
 private:
     //媒体相关元数据

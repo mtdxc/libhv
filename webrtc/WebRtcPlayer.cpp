@@ -12,7 +12,7 @@
 
 using namespace mediakit;
 
-WebRtcPlayer::Ptr WebRtcPlayer::create(const EventPoller::Ptr &poller,
+WebRtcPlayer::Ptr WebRtcPlayer::create(const hv::EventLoopPtr &poller,
                                        const RtspMediaSource::Ptr &src,
                                        const MediaInfo &info) {
     WebRtcPlayer::Ptr ret(new WebRtcPlayer(poller, src, info), [](WebRtcPlayer *ptr) {
@@ -23,7 +23,7 @@ WebRtcPlayer::Ptr WebRtcPlayer::create(const EventPoller::Ptr &poller,
     return ret;
 }
 
-WebRtcPlayer::WebRtcPlayer(const EventPoller::Ptr &poller,
+WebRtcPlayer::WebRtcPlayer(const hv::EventLoopPtr &poller,
                            const RtspMediaSource::Ptr &src,
                            const MediaInfo &info) : WebRtcTransportImp(poller) {
     _media_info = info;

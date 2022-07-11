@@ -34,7 +34,7 @@ namespace RTC
 
         static bool IsError(srtp_err_status_t code);
         static const char *GetErrorString(srtp_err_status_t code);
-        static DepLibSRTP &Instance();
+        static Ptr Instance();
 
     private:
         DepLibSRTP();

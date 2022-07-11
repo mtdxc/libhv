@@ -18,14 +18,68 @@
 #include "StunPacket.hpp"
 #include "Sdp.h"
 #include "EventLoop.h"
-//#include "Network/Socket.h"
-//#include "Network/Session.h"
-#include "Rtsp/RtspMediaSourceImp.h"
 #include "Rtcp/RtcpContext.h"
 #include "Rtcp/RtcpFCI.h"
 #include "Nack.h"
 #include "TwccContext.h"
 #include "SctpAssociation.hpp"
+#include "Channel.h"
+#include "TimeTicker.h"
+#include "Buffer.hpp"
+using mediakit::Buffer;
+
+//错误类型枚举
+typedef enum {
+    Err_success = 0, //成功
+    Err_eof, //eof
+    Err_timeout, //超时
+    Err_refused,//连接被拒绝
+    Err_dns,//dns解析失败
+    Err_shutdown,//主动关闭
+    Err_other = 0xFF,//其他错误
+} ErrCode;
+
+//错误信息类
+class SockException : public std::exception {
+public:
+    SockException(ErrCode code = Err_success, const std::string &msg = "", int custom_code = 0) {
+        _msg = msg;
+        _code = code;
+        _custom_code = custom_code;
+    }
+
+    //重置错误
+    void reset(ErrCode code, const std::string &msg, int custom_code = 0) {
+        _msg = msg;
+        _code = code;
+        _custom_code = custom_code;
+    }
+
+    //错误提示
+    const char *what() const noexcept override {
+        return _msg.c_str();
+    }
+
+    //错误代码
+    ErrCode getErrCode() const {
+        return _code;
+    }
+
+    //用户自定义错误代码
+    int getCustomCode() const {
+        return _custom_code;
+    }
+
+    //判断是否真的有错
+    operator bool() const {
+        return _code != Err_success;
+    }
+
+private:
+    ErrCode _code;
+    int _custom_code = 0;
+    std::string _msg;
+};
 
 //RTC配置项目
 namespace RTC {
@@ -43,23 +97,6 @@ public:
     virtual const std::string &getIdentifier() const = 0;
 };
 
-class WebRtcException : public WebRtcInterface {
-public:
-    WebRtcException(const SockException &ex) : _ex(ex) {};
-    ~WebRtcException() override = default;
-    // 这边用来重抛异常
-    std::string getAnswerSdp(const std::string &offer) override {
-        throw _ex;
-    }
-    const std::string &getIdentifier() const override {
-        static std::string s_null;
-        return s_null;
-    }
-
-private:
-    SockException _ex;
-};
-
 class WebRtcTransport : public WebRtcInterface, 
     public RTC::DtlsTransport::Listener, 
     public RTC::IceServer::Listener, 
@@ -69,7 +106,7 @@ class WebRtcTransport : public WebRtcInterface,
     public std::enable_shared_from_this<WebRtcTransport> {
 public:
     using Ptr = std::shared_ptr<WebRtcTransport>;
-    WebRtcTransport(const EventPoller::Ptr &poller);
+    WebRtcTransport(const hv::EventLoopPtr &poller);
     ~WebRtcTransport() override = default;
 
     /**
@@ -112,7 +149,7 @@ public:
     void sendRtpPacket(const char *buf, int len, bool flush, void *ctx = nullptr);
     void sendRtcpPacket(const char *buf, int len, bool flush, void *ctx = nullptr);
 
-    const EventPoller::Ptr& getPoller() const;
+    const hv::EventLoopPtr& getPoller() const;
 
 protected:
     ////  dtls相关的回调 ////
@@ -187,14 +224,14 @@ protected:
 
 private:
     std::string _identifier;
-    EventPoller::Ptr _poller;
+    hv::EventLoopPtr _poller;
     std::shared_ptr<RTC::IceServer> _ice_server;
     std::shared_ptr<RTC::DtlsTransport> _dtls_transport;
     std::shared_ptr<RTC::SrtpSession> _srtp_session_send;
     std::shared_ptr<RTC::SrtpSession> _srtp_session_recv;
     Ticker _ticker;
     //循环池
-    ResourcePool<BufferRaw> _packet_pool;
+    // ResourcePool<BufferRaw> _packet_pool;
 
 #ifdef ENABLE_SCTP
     RTC::SctpAssociationImp::Ptr _sctp;
@@ -253,8 +290,8 @@ public:
     using Ptr = std::shared_ptr<WebRtcTransportImp>;
     ~WebRtcTransportImp() override;
 
-    void setSession(Session::Ptr session);
-    const Session::Ptr& getSession() const;
+    void setSession(hv::SocketChannelPtr session);
+    const hv::SocketChannelPtr& getSession() const { return _selected_session; }
 
     uint64_t getBytesUsage() const;
     uint64_t getDuration() const;
@@ -270,7 +307,7 @@ protected:
     // rtp包经排序和nack后的数据回调
     virtual void onRecvRtp(MediaTrack &track, const std::string &rid, mediakit::RtpPacket::Ptr rtp) = 0;
 
-    WebRtcTransportImp(const EventPoller::Ptr &poller);
+    WebRtcTransportImp(const hv::EventLoopPtr&poller);
 
     void onSendSockData(Buffer::Ptr buf, bool flush = true, RTC::TransportTuple *tuple = nullptr) override;
 
@@ -308,16 +345,16 @@ private:
     //保持自我强引用
     Ptr _self;
     //检测超时的定时器
-    Timer::Ptr _timer;
+    hv::TimerID _timer;
     //刷新计时器
     Ticker _alive_ticker;
     //pli rtcp计时器
     Ticker _pli_ticker;
 
     //当前选中的udp链接
-    Session::Ptr _selected_session;
+    hv::SocketChannelPtr _selected_session;
     //链接迁移前后使用过的udp链接
-    std::unordered_map<Session *, std::weak_ptr<Session> > _history_sessions;
+    std::unordered_map<hv::SocketChannel*, std::weak_ptr<hv::SocketChannel> > _history_sessions;
     
     //twcc rtcp发送上下文对象
     TwccContext _twcc_ctx;
@@ -330,48 +367,4 @@ private:
     std::unordered_map<uint32_t/*ssrc*/, MediaTrack::Ptr> _ssrc_to_track;
     //根据接收rtp的pt获取相关信息
     std::unordered_map<uint8_t/*pt*/, std::unique_ptr<WrappedMediaTrack>> _pt_to_track;
-};
-
-class WebRtcTransportManager {
-public:
-    friend class WebRtcTransportImp;
-    static WebRtcTransportManager &Instance();
-    WebRtcTransportImp::Ptr getItem(const std::string &key);
-
-private:
-    WebRtcTransportManager() = default;
-    void addItem(const std::string &key, const WebRtcTransportImp::Ptr &ptr);
-    void removeItem(const std::string &key);
-
-private:
-    mutable std::mutex _mtx;
-    std::unordered_map<std::string, std::weak_ptr<WebRtcTransportImp> > _map;
-};
-
-// 抽象通过http传递的参数
-class WebRtcArgs {
-public:
-    WebRtcArgs() = default;
-    virtual ~WebRtcArgs() = default;
-
-    virtual variant operator[](const std::string &key) const = 0;
-};
-
-class WebRtcPluginManager {
-public:
-    using onCreateRtc = std::function<void(const WebRtcInterface &rtc)>;
-    using Plugin = std::function<void(Session &sender, const std::string &offer, const WebRtcArgs &args, const onCreateRtc &cb)>;
-
-    static WebRtcPluginManager &Instance();
-
-    void registerPlugin(const std::string &type, Plugin cb);
-    // 抽象出http接口，给出 offer sdp，创建 WebRtcInterface, 然后响应 answer sdp
-    void getAnswerSdp(Session &sender, const std::string &type, const std::string &offer, const WebRtcArgs &args, const onCreateRtc &cb);
-
-private:
-    WebRtcPluginManager() = default;
-
-private:
-    mutable std::mutex _mtx_creator;
-    std::unordered_map<std::string, Plugin> _map_creator;
 };

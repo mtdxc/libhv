@@ -14,6 +14,7 @@
 #include <cinttypes>
 #include "hlog.h"
 #include "hstring.h"
+#include "iniparser.h"
 using hv::split;
 using hv::trim;
 using StrCaseCompare = hv::StringCaseLess;
@@ -24,12 +25,6 @@ namespace RTC {
 #define RTC_FIELD "rtc."
 const string kPreferredCodecA = RTC_FIELD"preferredCodecA";
 const string kPreferredCodecV = RTC_FIELD"preferredCodecV";
-/*
-static onceToken token([]() {
-    mINI::Instance()[kPreferredCodecA] = "PCMU,PCMA,opus,mpeg4-generic";
-    mINI::Instance()[kPreferredCodecV] = "H264,H265,AV1X,VP9,VP8";
-});
-*/
 }
 
 using onCreateSdpItem = function<SdpItem::Ptr(const string &key, const string &value)>;
@@ -273,7 +268,7 @@ void RtcSessionSdp::parse(const string &str) {
     RtcSdpBase *media = nullptr;
     auto lines = split(str, '\n');
     for(auto &line : lines){
-        trim(line);
+        line = trim(line);
         if(line.size() < 3 || line[1] != '='){
             continue;
         }
@@ -359,7 +354,7 @@ string SdpConnection::toString() const {
 }
 
 void SdpBandwidth::parse(const string &str) {
-    auto vec = split(str, ' ');
+    auto vec = split(str, ':');
     CHECK_SDP(vec.size() == 2);
     bwtype = vec[0];
     bandwidth = atoi(vec[1].data());
@@ -443,7 +438,7 @@ string SdpAttrGroup::toString() const  {
 }
 
 void SdpAttrMsidSemantic::parse(const string &str)  {
-    auto vec = split(str, ' ');
+    auto vec = split(trim(str), ' ');
     CHECK_SDP(vec.size() >= 1);
     msid = vec[0];
     token = vec.size() > 1 ? vec[1] : "";
@@ -594,7 +589,7 @@ void SdpAttrFmtp::parse(const string &str)  {
     pt = atoi(str.substr(0, pos).data());
     auto vec = split(str.substr(pos + 1), ';');
     for (auto &item : vec) {
-        trim(item);
+        item = trim(item);
         auto pos = item.find('=');
         if(pos == string::npos){
             fmtp.emplace(std::make_pair(item, ""));
@@ -1439,11 +1434,10 @@ void RtcConfigure::RtcTrackConfigure::setDefaultSetting(TrackType type){
     switch (type) {
         case TrackAudio: {
             //此处调整偏好的编码格式优先级
-#if 0
-            GET_CONFIG_FUNC(std::vector<CodecId>, s_preferred_codec, RTC::kPreferredCodecA, toCodecArray);
+            std::string val = IniParser::Instance().Get<std::string>(RTC::kPreferredCodecA, "", "PCMU,PCMA,opus,mpeg4-generic");
+            std::vector<CodecId> s_preferred_codec = toCodecArray(val);
             CHECK(!s_preferred_codec.empty(), "rtc音频偏好codec不能为空");
             preferred_codec = s_preferred_codec;
-#endif
             rtcp_fb = {SdpConst::kTWCCRtcpFb, SdpConst::kRembRtcpFb};
             extmap = {
                     {RtpExtType::ssrc_audio_level,            RtpDirection::sendrecv},
@@ -1459,11 +1453,10 @@ void RtcConfigure::RtcTrackConfigure::setDefaultSetting(TrackType type){
         }
         case TrackVideo: {
             //此处调整偏好的编码格式优先级
-#if 0
-            GET_CONFIG_FUNC(vector<CodecId>, s_preferred_codec, RTC::kPreferredCodecV, toCodecArray);
+            std::string val = IniParser::Instance().Get<std::string>(RTC::kPreferredCodecV, "", "H264,H265,AV1X,VP9,VP8");
+            std::vector<CodecId> s_preferred_codec = toCodecArray(val);
             CHECK(!s_preferred_codec.empty(), "rtc视频偏好codec不能为空");
             preferred_codec = s_preferred_codec;
-#endif
             rtcp_fb = {SdpConst::kTWCCRtcpFb, SdpConst::kRembRtcpFb, "nack", "ccm fir", "nack pli"};
             extmap = {
                     {RtpExtType::abs_send_time,               RtpDirection::sendrecv},

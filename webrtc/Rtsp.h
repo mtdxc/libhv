@@ -16,7 +16,7 @@
 #include <sstream>
 #include <memory>
 #include <unordered_map>
-//#include "Common/config.h"
+#include "macros.h"
 #include "Frame.h"
 
 namespace mediakit {

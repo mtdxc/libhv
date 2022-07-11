@@ -12,7 +12,7 @@
 
 using namespace mediakit;
 
-WebRtcPusher::Ptr WebRtcPusher::create(const EventPoller::Ptr &poller,
+WebRtcPusher::Ptr WebRtcPusher::create(const hv::EventLoopPtr &poller,
                                        const RtspMediaSourceImp::Ptr &src,
                                        const std::shared_ptr<void> &ownership,
                                        const MediaInfo &info,
@@ -25,7 +25,7 @@ WebRtcPusher::Ptr WebRtcPusher::create(const EventPoller::Ptr &poller,
     return ret;
 }
 
-WebRtcPusher::WebRtcPusher(const EventPoller::Ptr &poller,
+WebRtcPusher::WebRtcPusher(const hv::EventLoopPtr &poller,
                            const RtspMediaSourceImp::Ptr &src,
                            const std::shared_ptr<void> &ownership,
                            const MediaInfo &info,
@@ -134,7 +134,7 @@ void WebRtcPusher::onDestory() {
         _push_src_ownership = nullptr;
         //延时10秒注销流
         auto push_src = std::move(_push_src);
-        getPoller()->doDelayTask(_continue_push_ms, [push_src]() { return 0; });
+        getPoller()->setTimeout(_continue_push_ms, [push_src](hv::TimerID tid) { return 0; });
     }
 }
 
@@ -148,6 +148,6 @@ int WebRtcPusher::getLossRate(MediaSource &sender,mediakit::TrackType type){
     return WebRtcTransportImp::getLossRate(type);
 }
 
-EventPoller::Ptr WebRtcPusher::getOwnerPoller(mediakit::MediaSource &sender) {
+hv::EventLoopPtr WebRtcPusher::getOwnerPoller(mediakit::MediaSource &sender) {
     return getPoller();
 }

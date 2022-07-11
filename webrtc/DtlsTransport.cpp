@@ -120,9 +120,9 @@ namespace RTC
 	};
 	// clang-format on
 
-    DtlsTransport::DtlsEnvironment& DtlsTransport::DtlsEnvironment::Instance()
+    DtlsTransport::DtlsEnvironment::Ptr DtlsTransport::DtlsEnvironment::Instance()
     {
-        static DtlsTransport::DtlsEnvironment instance;
+        static Ptr instance(new DtlsTransport::DtlsEnvironment());
         return instance;
     }
 
@@ -513,7 +513,7 @@ namespace RTC
 	DtlsTransport::DtlsTransport(hv::EventLoopPtr poller,Listener* listener) : poller(std::move(poller)), listener(listener)
 	{
 		MS_TRACE();
-		env = DtlsEnvironment::Instance().shared_from_this();
+		env = DtlsEnvironment::Instance();
 
 		/* Set SSL. */
 		this->ssl = SSL_new(env->sslCtx);

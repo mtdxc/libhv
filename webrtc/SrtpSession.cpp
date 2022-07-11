@@ -67,8 +67,8 @@ namespace RTC
         return (code != srtp_err_status_ok);
     }
 
-    DepLibSRTP& DepLibSRTP::Instance() {
-        static DepLibSRTP instance;
+    DepLibSRTP::Ptr DepLibSRTP::Instance() {
+        static Ptr instance(new DepLibSRTP());
         return instance;
     }
 
@@ -140,7 +140,7 @@ namespace RTC
 
 	SrtpSession::SrtpSession(Type type, CryptoSuite cryptoSuite, uint8_t* key, size_t keyLen)
 	{
-        _env = DepLibSRTP::Instance().shared_from_this();
+        _env = DepLibSRTP::Instance();
 		MS_TRACE();
 
 		srtp_policy_t policy; // NOLINT(cppcoreguidelines-pro-type-member-init)

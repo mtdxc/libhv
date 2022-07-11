@@ -4,7 +4,7 @@
 #ifdef ENABLE_SCTP
 #include <usrsctp.h>
 #include "Utils.hpp"
-#include "Poller/EventPoller.h"
+#include "EventLoop.h"
 
 namespace RTC
 {
@@ -122,7 +122,7 @@ namespace RTC
 	public:
 		using Ptr = std::shared_ptr<SctpAssociationImp>;
 		template<typename ... ARGS>
-		SctpAssociationImp(EventPoller::Ptr poller, ARGS &&...args) : SctpAssociation(std::forward<ARGS>(args)...) {
+		SctpAssociationImp(hv::EventLoopPtr poller, ARGS &&...args) : SctpAssociation(std::forward<ARGS>(args)...) {
 			_poller = std::move(poller);
 		}
 
@@ -134,7 +134,7 @@ namespace RTC
 		void OnUsrSctpReceiveSctpNotification(union sctp_notification* notification, size_t len) override;
 
 	private:
-		EventPoller::Ptr _poller;
+		hv::EventLoopPtr _poller;
 	};
 } // namespace RTC
 

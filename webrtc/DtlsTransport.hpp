@@ -81,7 +81,7 @@ namespace RTC
 		public:
 			using Ptr = std::shared_ptr<DtlsEnvironment>;
 			~DtlsEnvironment();
-			static DtlsEnvironment& Instance();
+			static Ptr Instance();
 
 		private:
 			DtlsEnvironment();

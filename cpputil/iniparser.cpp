@@ -91,6 +91,11 @@ public:
     std::string &comment;
 };
 
+IniParser& IniParser::Instance() {
+    static IniParser gIni;
+    return gIni;
+}
+
 IniParser::IniParser() {
     _comment = DEFAULT_INI_COMMENT;
     _delim = DEFAULT_INI_DELIM;

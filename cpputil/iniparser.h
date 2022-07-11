@@ -15,12 +15,14 @@ class HV_EXPORT IniParser {
 public:
     IniParser();
     ~IniParser();
+	
+	static IniParser& Instance();
 
     int LoadFromFile(const char* filepath);
     int LoadFromMem(const char* data);
     int Unload();
     int Reload();
-
+	
     std::string DumpString();
     int Save();
     int SaveAs(const char* filepath);
@@ -30,11 +32,21 @@ public:
 
     // T = [bool, int, float]
     template<typename T>
-    T Get(const std::string& key, const std::string& section = "", T defvalue = 0);
+    T Get(const std::string& key, const std::string& section = "", T defvalue = 0) {
+        std::string str = GetValue(key, section);
+        if (str.empty()) return defvalue;
+        std::istringstream stm(str);
+        T ret; stm >> ret;
+        return ret;
+    }
 
     // T = [bool, int, float]
     template<typename T>
-    void Set(const std::string& key, const T& value, const std::string& section = "");
+    void Set(const std::string& key, const T& value, const std::string& section = "") {
+        std::stringstream stm;
+        stm << value;
+        SetValue(key, stm.str(), section);
+    }
 
 protected:
     void DumpString(IniNode* pNode, std::string& str);
@@ -47,4 +59,7 @@ private:
     IniNode* root_;
 };
 
+#define GET_CONFIG(type, arg, key)   \
+    static type arg = IniParser::Instance().Get<type>(key);                                                               
+//LISTEN_RELOAD_KEY(arg, key, { RELOAD_KEY(arg, key); });
 #endif // HV_INI_PARSER_H_
