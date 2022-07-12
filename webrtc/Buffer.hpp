@@ -18,8 +18,7 @@
 #include <stdexcept>
 #include <type_traits>
 #include <functional>
-//#include "Util/util.h"
-//#include "Util/ResourcePool.h"
+#include "Util/util.h"
 
 namespace mediakit {
 
@@ -29,21 +28,8 @@ template <typename T> struct is_pointer<std::shared_ptr<T const> > : public std:
 template <typename T> struct is_pointer<T*> : public std::true_type {};
 template <typename T> struct is_pointer<const T*> : public std::true_type {};
 
-//禁止拷贝基类
-class noncopyable {
-protected:
-    noncopyable() {}
-    ~noncopyable() {}
-private:
-    //禁止拷贝
-    noncopyable(const noncopyable &that) = delete;
-    noncopyable(noncopyable &&that) = delete;
-    noncopyable &operator=(const noncopyable &that) = delete;
-    noncopyable &operator=(noncopyable &&that) = delete;
-};
-
 //缓存基类
-class Buffer : public noncopyable {
+class Buffer : public toolkit::noncopyable {
 public:
     using Ptr = std::shared_ptr<Buffer>;
 
@@ -64,7 +50,7 @@ public:
 
 private:
     //对象个数统计
-    //ObjectStatistic<Buffer> _statistic;
+    ObjectStatistic<Buffer> _statistic;
 };
 
 /*
@@ -214,7 +200,7 @@ private:
     size_t _capacity = 0;
     char *_data = nullptr;
     //对象个数统计
-    //ObjectStatistic<BufferRaw> _statistic;
+    ObjectStatistic<BufferRaw> _statistic;
 };
 
 class BufferLikeString : public Buffer {
@@ -465,7 +451,7 @@ private:
     size_t _erase_tail;
     std::string _str;
     //对象个数统计
-    //ObjectStatistic<BufferLikeString> _statistic;
+    ObjectStatistic<BufferLikeString> _statistic;
 };
 
 }//namespace toolkit

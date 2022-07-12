@@ -16,7 +16,7 @@
 #include <functional>
 #include "Buffer.hpp"
 #include <list>
-#include "Stamp.h"
+#include "Common/Stamp.h"
 
 namespace mediakit{
 

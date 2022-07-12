@@ -8,14 +8,12 @@
  * may be found in the AUTHORS file in the root of the source tree.
  */
 
+#include "util.h"
 #include "NoticeCenter.h"
 
 namespace toolkit {
 
-NoticeCenter::Ptr NoticeCenter::Instance(){
-    static Ptr instance(new NoticeCenter);
-    return instance;
-}
+INSTANCE_IMP(NoticeCenter)
 
 } /* namespace toolkit */
 

@@ -9,7 +9,7 @@
  */
 
 #include "WebRtcPusher.h"
-
+#include "Util/NoticeCenter.h"
 using namespace mediakit;
 
 WebRtcPusher::Ptr WebRtcPusher::create(const hv::EventLoopPtr &poller,
@@ -44,7 +44,7 @@ bool WebRtcPusher::close(MediaSource &sender, bool force) {
     }
     std::string err = StrPrinter << "close media:" << sender.getUrl() << " " << force;
     std::weak_ptr<WebRtcPusher> weak_self = std::static_pointer_cast<WebRtcPusher>(shared_from_this());
-    getPoller()->async([weak_self, err]() {
+    getPoller()->runInLoop([weak_self, err]() {
         auto strong_self = weak_self.lock();
         if (strong_self) {
             strong_self->onShutdown(SockException(Err_shutdown, err));
@@ -71,8 +71,8 @@ std::string WebRtcPusher::getOriginUrl(MediaSource &sender) const {
     return _media_info._full_url;
 }
 
-std::shared_ptr<SockInfo> WebRtcPusher::getOriginSock(MediaSource &sender) const {
-    return std::static_pointer_cast<SockInfo>(getSession());
+std::shared_ptr<hv::SocketChannel> WebRtcPusher::getOriginSock(MediaSource &sender) const {
+    return std::static_pointer_cast<hv::SocketChannel>(getSession());
 }
 
 void WebRtcPusher::onRecvRtp(MediaTrack &track, const std::string &rid, RtpPacket::Ptr rtp) {
@@ -124,8 +124,8 @@ void WebRtcPusher::onDestory() {
     if (getSession()) {
         WarnL << "RTC推流器(" << _media_info.shortUrl() << ")结束推流,耗时(s):" << duration;
         if (bytes_usage >= iFlowThreshold * 1024) {
-            NoticeCenter::Instance().emitEvent(Broadcast::kBroadcastFlowReport, _media_info, bytes_usage, duration,
-                                               false, static_cast<SockInfo &>(*getSession()));
+            toolkit::NoticeCenter::Instance().emitEvent(Broadcast::kBroadcastFlowReport, _media_info, bytes_usage, duration,
+                                               false, *getSession());
         }
     }
 

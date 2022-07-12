@@ -59,7 +59,4 @@ private:
     IniNode* root_;
 };
 
-#define GET_CONFIG(type, arg, key)   \
-    static type arg = IniParser::Instance().Get<type>(key);                                                               
-//LISTEN_RELOAD_KEY(arg, key, { RELOAD_KEY(arg, key); });
 #endif // HV_INI_PARSER_H_

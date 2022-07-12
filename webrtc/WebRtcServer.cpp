@@ -14,6 +14,7 @@
 #include "hstring.h"
 #include "hbase.h"
 #include "iniparser.h"
+#include "Common/config.h"
 #define SK_APP "rtc"
 
 using namespace mediakit;

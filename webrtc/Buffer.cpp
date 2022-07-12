@@ -11,12 +11,11 @@
 #include <cstdlib>
 #include "Buffer.hpp"
 
+StatisticImp(mediakit::Buffer)
+StatisticImp(mediakit::BufferRaw)
+StatisticImp(mediakit::BufferLikeString)
+
 namespace mediakit {
-
-//StatisticImp(Buffer)
-//StatisticImp(BufferRaw)
-//StatisticImp(BufferLikeString)
-
 BufferRaw::Ptr BufferRaw::create() {
     return Ptr(new BufferRaw);
 }

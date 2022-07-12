@@ -315,7 +315,7 @@ public:
         for (auto &pr : _dispatcher_map) {
             auto &second = pr.second;
             //切换线程后触发onRead事件
-            pr.first->async([second, in, is_key]() { second->write(std::move(const_cast<T &>(in)), is_key); }, false);
+            pr.first->queueInLoop([second, in, is_key]() { second->write(std::move(const_cast<T &>(in)), is_key); });
         }
         _storage->write(std::move(in), is_key);
     }
@@ -354,7 +354,7 @@ public:
         for (auto &pr : _dispatcher_map) {
             auto &second = pr.second;
             //切换线程后清空缓存
-            pr.first->async([second]() { second->clearCache(); }, false);
+            pr.first->queueInLoop([second]() { second->clearCache(); });
         }
     }
 

@@ -90,7 +90,7 @@ class NoticeCenter : public std::enable_shared_from_this<NoticeCenter> {
 public:
     using Ptr = std::shared_ptr<NoticeCenter>;
 
-    static Ptr Instance();
+    static NoticeCenter &Instance();
 
     template<typename ...ArgsType>
     int emitEvent(const std::string &strEvent, ArgsType &&...args) {

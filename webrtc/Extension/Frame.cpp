@@ -19,11 +19,9 @@
 //#include "Common/Parser.h"
 #include "hstring.h"
 #include "logger.h"
-
+StatisticImp(mediakit::Frame);
+StatisticImp(mediakit::FrameImp);
 namespace mediakit{
-    //StatisticImp(mediakit::Frame);
-    //StatisticImp(mediakit::FrameImp);
-
 std::string Frame::dump() const{
     char line[256];
     sprintf(line, "%s pts:%" PRIu32 " dts:%" PRIu32 " size:%3d %s%s", 
