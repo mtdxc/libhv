@@ -16,7 +16,7 @@
 #include <functional>
 #include "Buffer.hpp"
 #include <list>
-//#include "Common/Stamp.h"
+#include "Stamp.h"
 
 namespace mediakit{
 
@@ -534,7 +534,7 @@ private:
     FrameImp::Ptr _buffer;
 };
 
-/* 该类实现frame级别的时间戳覆盖
+// 该类实现frame级别的时间戳覆盖
 class FrameStamp : public Frame{
 public:
     typedef std::shared_ptr<FrameStamp> Ptr;
@@ -585,7 +585,6 @@ private:
     int64_t _pts;
     Frame::Ptr _frame;
 };
-*/
 
 /**
  * 该对象可以把Buffer对象转换成可缓存的Frame对象
