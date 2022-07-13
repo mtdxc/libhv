@@ -7,13 +7,14 @@
 
 #include "hloop.h"
 #include "hsocket.h"
-
+#include "EventLoopThreadPool.h"
 #include "Buffer.h"
 
 namespace hv {
 
 class Channel {
 public:
+    typedef std::shared_ptr<Channel> Ptr;
     Channel(hio_t* io = NULL) {
         io_ = io;
         fd_ = -1;
@@ -198,6 +199,8 @@ private:
 
 class SocketChannel : public Channel {
 public:
+    typedef std::shared_ptr<SocketChannel> Ptr;
+
     std::function<void()>   onconnect; // only for TcpClient
     std::function<void()>   heartbeat;
 
@@ -309,6 +312,22 @@ public:
         return SOCKADDR_STR(addr, buf);
     }
 
+    EventLoopPtr getPoller() {
+        return EventLoopThreadPool::Instance()->findLoop(io_);
+    }
+    typedef std::function<void()> Task;
+    void async(Task task) {
+        hevent_t ev = { 0 };
+        ev.userdata = new Task(task);
+        //ev.event_type = (hevent_type_e)(HEVENT_TYPE_CUSTOM + 1);
+        ev.cb = [](hevent_t* ev) {
+            if (Task* task = (Task*)ev->userdata) {
+                (*task)();
+                delete task;
+            }
+        };
+        hloop_post_event(hevent_loop(io_), &ev);
+    }
 private:
     static void on_connect(hio_t* io) {
         SocketChannel* channel = (SocketChannel*)hio_context(io);

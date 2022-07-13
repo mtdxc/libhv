@@ -17,7 +17,7 @@ namespace hv {
 
 class EventLoop : public Status {
 public:
-
+    typedef std::shared_ptr<EventLoop> Ptr;
     typedef std::function<void()> Functor;
 
     // New an EventLoop using an existing hloop_t object,
@@ -158,6 +158,13 @@ public:
         postEvent([fn](Event* ev) {
             if (fn) fn();
         });
+    }
+
+    void async(Functor fn, bool may_sync = true) {
+        if (may_sync)
+            runInLoop(std::move(fn));
+        else
+            queueInLoop(std::move(fn));
     }
 
     void postEvent(EventCallback cb) {

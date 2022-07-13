@@ -15,7 +15,14 @@ class TcpServerEventLoopTmpl {
 public:
     typedef std::shared_ptr<TSocketChannel> TSocketChannelPtr;
 
-    TcpServerEventLoopTmpl(EventLoopPtr loop = NULL) {
+    TcpServerEventLoopTmpl(EventLoopPtr loop = NULL, bool new_worker = true) {
+        owner_worker = new_worker;
+        if (owner_worker) {
+            worker_threads = new EventLoopThreadPool;
+        }
+        else {
+            worker_threads = EventLoopThreadPool::Instance();
+        }
         acceptor_loop = loop ? loop : std::make_shared<EventLoop>();
         listenfd = -1;
         tls = false;
@@ -25,13 +32,16 @@ public:
     }
 
     virtual ~TcpServerEventLoopTmpl() {
+        if (owner_worker && worker_threads) 
+            delete worker_threads;
+        worker_threads = nullptr;
     }
-
+    EventLoopThreadPool* loops() { return worker_threads; }
     EventLoopPtr loop(int idx = -1) {
-        return worker_threads.loop(idx);
+        return worker_threads->loop(idx);
     }
     EventLoopPtr nextLoop(sockaddr_u* addr) {
-        return worker_threads.nextLoop(load_balance, addr);
+        return worker_threads->nextLoop(load_balance, addr);
     }
     //@retval >=0 listenfd, <0 error
     int createsocket(int port, const char* host = "0.0.0.0") {
@@ -56,7 +66,7 @@ public:
 
     // NOTE: totalThreadNum = 1 acceptor_thread + N worker_threads (N can be 0)
     void setThreadNum(int num) {
-        worker_threads.setThreadNum(num);
+        worker_threads->setThreadNum(num);
     }
 
     int startAccept() {
@@ -71,15 +81,15 @@ public:
 
     // start thread-safe
     void start(bool wait_threads_started = true) {
-        if (worker_threads.threadNum() > 0) {
-            worker_threads.start(wait_threads_started);
+        if (worker_threads->threadNum() > 0) {
+            worker_threads->start(wait_threads_started);
         }
         acceptor_loop->runInLoop(std::bind(&TcpServerEventLoopTmpl::startAccept, this));
     }
     // stop thread-safe
     void stop(bool wait_threads_stopped = true) {
-        if (worker_threads.threadNum() > 0) {
-            worker_threads.stop(wait_threads_stopped);
+        if (owner_worker && worker_threads->threadNum() > 0) {
+            worker_threads->stop(wait_threads_stopped);
         }
     }
 
@@ -229,15 +239,16 @@ private:
     std::mutex                              mutex_;
 
     EventLoopPtr            acceptor_loop;
-    EventLoopThreadPool     worker_threads;
+    EventLoopThreadPool*    worker_threads;
+    bool owner_worker;
 };
 
 template<class TSocketChannel = SocketChannel>
 class TcpServerTmpl : private EventLoopThread, public TcpServerEventLoopTmpl<TSocketChannel> {
 public:
-    TcpServerTmpl(EventLoopPtr loop = NULL)
+    TcpServerTmpl(EventLoopPtr loop = NULL, bool new_worker = true)
         : EventLoopThread()
-        , TcpServerEventLoopTmpl<TSocketChannel>(EventLoopThread::loop())
+        , TcpServerEventLoopTmpl<TSocketChannel>(EventLoopThread::loop(), new_worker)
     {}
     virtual ~TcpServerTmpl() {
         stop(true);
