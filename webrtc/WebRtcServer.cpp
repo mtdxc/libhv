@@ -80,7 +80,7 @@ static std::string getUserName(void* buf, int len) {
 }
 
 //////////////////////////////////////////////////////////////////////////////////
-WebRtcServer::WebRtcServer() : _udp(NULL, false), _rtmp(NULL, false){
+WebRtcServer::WebRtcServer() : _udp(NULL, false), _rtmp(NULL, false), _rtsp(NULL, false){
 }
 
 WebRtcServer::~WebRtcServer() {
@@ -98,10 +98,12 @@ void WebRtcServer::start()
     startUdp();
     startHttp();
     startRtmp();
+    startRtsp();
 }
 
 void WebRtcServer::stop()
 {
+    _rtsp.stop();
     _rtmp.stop();
     websocket_server_stop(&_http);
     _udp.stop();
@@ -534,15 +536,6 @@ void WebRtcSession::onRecv(hv::Buffer* buf) {
 WebRtcSession::WebRtcSession(hio_t* io) : hv::SocketChannel(io)
 {
     _peer_addr = hio_peeraddr(io);
-    this->onconnect = []() {
-    };
-
-    this->onclose = [this]() {
-    };
-
-    this->onread = [this](hv::Buffer* buf) {
-        onRecv(buf);
-    };
 }
 
 void WebRtcServer::startUdp()
@@ -603,6 +596,40 @@ void WebRtcServer::startRtmp()
     };
     _rtmp.setLoadBalance(LB_LeastConnections);
     _rtmp.start();
+}
+
+void WebRtcServer::startRtsp()
+{
+    GET_CONFIG(uint16_t, port, ::Rtsp::kPort);
+    if (port <= 0) return;
+    int listenfd = _rtsp.createsocket(port);
+    if (listenfd < 0) {
+        return;
+    }
+    LOGI("listen rtmp on %d", port);
+    _rtsp.onConnection = [](const std::shared_ptr<RtspSession>& session) {
+        if (session->isConnected()) {
+            std::weak_ptr<RtspSession> weak_ptr = session;
+            hv::setInterval(10000, [weak_ptr](hv::TimerID tId) {
+                if (auto ptr = weak_ptr.lock()) {
+                    ptr->onManager();
+                }
+                else {
+                    hv::killTimer(tId);
+                }
+                });
+        }
+        else {
+            session->onError(SockException(Err_eof, "socket closed"));
+        }
+    };
+    _rtsp.onMessage = [](const std::shared_ptr<RtspSession>& session, hv::Buffer* buf) {
+        auto buffer = BufferRaw::create();
+        buffer->assign((char*)buf->data(), buf->size());
+        session->onRecv(buffer);
+    };
+    _rtsp.setLoadBalance(LB_LeastConnections);
+    _rtsp.start();
 }
 
 //////////////////////////////////////////////////////////////////////////

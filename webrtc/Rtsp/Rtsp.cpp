@@ -156,7 +156,7 @@ void SdpParser::load(const string &sdp) {
 
         auto lines = hv::split(sdp, '\n');
         for (auto &line : lines) {
-            trim(line);
+            line = trim(line);
             if (line.size() < 2 || line[1] != '=') {
                 continue;
             }
