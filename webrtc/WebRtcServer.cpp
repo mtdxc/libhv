@@ -13,6 +13,7 @@
 #include "WebRtcTransport.h"
 #include "hstring.h"
 #include "hbase.h"
+#include <stdio.h>
 #include "Common/config.h"
 using toolkit::mINI;
  //RTC配置项目
@@ -79,6 +80,7 @@ void WebRtcServer::stop()
 {
     websocket_server_stop(&_http);
     _udp.stop();
+    EventLoopThreadPool::Instance()->stop();
 }
 
 void WebRtcServer::detect_local_ip()
@@ -563,8 +565,18 @@ int main(int argc, char** argv) {
 
     WebRtcServer::Instance().start();
 
-    printf("press any key to exit\n");
-    getchar();
+    char line[256];
+    printf("press quit key to exit\n");
+    while (fgets(line, 256, stdin))
+    {
+        if(!strcasecmp(line, "quit\n"))
+            break;
+        else if (!strcasecmp(line, "count\n")) {
+            getStatisticJson([](hv::Json& val) {
+                printf("%s\n", val.dump().c_str());
+            });
+        }
+    }
     
     WebRtcServer::Instance().stop();
 }
