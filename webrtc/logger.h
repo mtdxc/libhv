@@ -2,7 +2,7 @@
 #include "hlog.h"
 #include "htime.h"
 #include <stdexcept>
-#define PrintLog(level, ...) logger_print(hlog, level, ##__VA_ARGS__)
+#define PrintLog(level, ...) logger_print(hlog, level, __FILENAME__, __LINE__, ##__VA_ARGS__)
 #define PrintT(...) PrintLog(LOG_LEVEL_DEBUG, ##__VA_ARGS__)
 #define PrintD(...) PrintLog(LOG_LEVEL_DEBUG, ##__VA_ARGS__)
 #define PrintI(...) PrintLog(LOG_LEVEL_INFO, ##__VA_ARGS__)
@@ -82,7 +82,7 @@ private:
 };
 
 //用法: DebugL << 1 << "+" << 2 << '=' << 3;
-#define WriteL(level) LogContextCapture(hlog, level, __FILE__, __FUNCTION__, __LINE__)
+#define WriteL(level) LogContextCapture(hlog, level, __FILENAME__, __FUNCTION__, __LINE__)
 #define TraceL WriteL(LOG_LEVEL_DEBUG)
 #define DebugL WriteL(LOG_LEVEL_DEBUG)
 #define InfoL WriteL(LOG_LEVEL_INFO)

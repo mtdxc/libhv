@@ -55,7 +55,7 @@ LogContextCapture::~LogContextCapture() {
 
 LogContextCapture &LogContextCapture::operator<<(std::ostream &(*f)(std::ostream &)) {
     if (_ctx) {
-        logger_print(_logger, _ctx->_level, "%s", _ctx->str().c_str());
+        logger_print(_logger, _ctx->_level, _ctx->_file.c_str(), _ctx->_line, "%s", _ctx->str().c_str());
         _ctx.reset();
     }
     return *this;
