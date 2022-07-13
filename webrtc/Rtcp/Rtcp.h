@@ -14,7 +14,8 @@
 #include <stdint.h>
 #include <vector>
 #include "Util/util.h"
-#include "Network/Buffer.h"
+#include <memory>
+#include "Buffer.hpp"
 #include "Common/macros.h"
 
 namespace mediakit {
@@ -196,7 +197,7 @@ public:
      * @param rtcp rtcp包对象智能指针
      * @return Buffer对象
      */
-    static toolkit::Buffer::Ptr toBuffer(std::shared_ptr<RtcpHeader> rtcp);
+    static Buffer::Ptr toBuffer(std::shared_ptr<RtcpHeader> rtcp);
 
     /**
      * 打印rtcp相关字段详情(调用派生类的dumpString函数)

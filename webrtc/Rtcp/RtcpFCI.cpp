@@ -9,10 +9,9 @@
  */
 
 #include "RtcpFCI.h"
-#include "Util/logger.h"
-
+#include "logger.h"
+#include "hplatform.h"
 using namespace std;
-using namespace toolkit;
 
 namespace mediakit {
 
@@ -44,7 +43,9 @@ uint8_t FCI_SLI::getPicID() const {
 }
 
 string FCI_SLI::dumpString() const {
-    return StrPrinter << "First:" << getFirst() << ", Number:" << getNumber() << ", PictureID:" << (int)getPicID();
+    std::stringstream stm;
+    stm << "First:" << getFirst() << ", Number:" << getNumber() << ", PictureID:" << (int)getPicID();
+    return stm.str();
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -66,7 +67,9 @@ uint32_t FCI_FIR::getReserved() const{
 }
 
 string FCI_FIR::dumpString() const {
-    return StrPrinter << "ssrc:" << getSSRC() << ", seq_number:" << (int)getSeq() << ", reserved:" << getReserved();
+    std::stringstream stm;
+    stm << "ssrc:" << getSSRC() << ", seq_number:" << (int)getSeq() << ", reserved:" << getReserved();
+    return stm.str();
 }
 
 FCI_FIR::FCI_FIR(uint32_t ssrc, uint8_t seq_number, uint32_t reserved) {
@@ -149,12 +152,12 @@ vector<uint32_t> FCI_REMB::getSSRC() {
 }
 
 string FCI_REMB::dumpString() const {
-    _StrPrinter printer;
+    std::stringstream printer;
     printer << "bitrate:" << getBitRate() << ", ssrc:";
     for (auto &ssrc : ((FCI_REMB *) this)->getSSRC()) {
         printer << ssrc << " ";
     }
-    return std::move(printer);
+    return std::move(printer.str());
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -199,7 +202,7 @@ vector<bool> FCI_NACK::getBitArray() const {
 }
 
 string FCI_NACK::dumpString() const {
-    _StrPrinter printer;
+    std::stringstream printer;
     auto pid = getPid();
     printer << "pid:" << pid << ",blp:" << getBlp() << ",dropped rtp seq:";
     for (auto flag : getBitArray()) {
@@ -208,7 +211,7 @@ string FCI_NACK::dumpString() const {
         }
         ++pid;
     }
-    return std::move(printer);
+    return printer.str();
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -257,9 +260,9 @@ uint16_t RunLengthChunk::getRunLength() const {
 }
 
 string RunLengthChunk::dumpString() const{
-    _StrPrinter printer;
+    std::stringstream printer;
     printer << "run length chunk, symbol:" << (int)symbol << ", run length:" << getRunLength();
-    return std::move(printer);
+    return printer.str();
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -337,13 +340,13 @@ vector<SymbolStatus> StatusVecChunk::getSymbolList() const {
 }
 
 string StatusVecChunk::dumpString() const {
-    _StrPrinter printer;
+    std::stringstream printer;
     printer << "status vector chunk, symbol:" << (int) symbol << ", symbol list:";
     auto vec = getSymbolList();
     for (auto &item : vec) {
         printer << (int) item << " ";
     }
-    return std::move(printer);
+    return printer.str();
 }
 
 ///////////////////////////////////////////////////////
@@ -465,13 +468,13 @@ FCI_TWCC::TwccPacketStatus FCI_TWCC::getPacketChunkList(size_t total_size) const
 }
 
 string FCI_TWCC::dumpString(size_t total_size) const {
-    _StrPrinter printer;
+    std::stringstream printer;
     auto map = getPacketChunkList(total_size);
     printer << "twcc fci, base_seq:" << getBaseSeq() << ", pkt_status_count:" << getPacketCount() << ", ref time:" << getReferenceTime() << ", fb count:" << (int)fb_pkt_count << "\n";
     for (auto &pr : map) {
         printer << "rtp seq:" << pr.first <<", packet status:" << (int)(pr.second.first) << ", delta:" << pr.second.second << "\n";
     }
-    return std::move(printer);
+    return printer.str();
 }
 
 static void appendDeltaString(string &delta_str, FCI_TWCC::TwccPacketStatus &status, int count){

@@ -17,7 +17,7 @@ class WebRtcEchoTest : public WebRtcTransportImp {
 public:
     using Ptr = std::shared_ptr<WebRtcEchoTest>;
     ~WebRtcEchoTest() override = default;
-    static Ptr create(const EventPoller::Ptr &poller);
+    static Ptr create(const hv::EventLoopPtr &poller);
 
 protected:
     ///////WebRtcTransportImp override///////
@@ -33,7 +33,7 @@ protected:
     void onBeforeEncryptRtcp(const char *buf, int &len, void *ctx) override {};
 
 private:
-    WebRtcEchoTest(const EventPoller::Ptr &poller);
+    WebRtcEchoTest(const hv::EventLoopPtr &poller);
 };
 
 #endif //ZLMEDIAKIT_WEBRTCECHOTEST_H

@@ -9,10 +9,10 @@
  */
 
 #include "WebRtcPlayer.h"
-
+#include "Util/NoticeCenter.h"
 using namespace mediakit;
-
-WebRtcPlayer::Ptr WebRtcPlayer::create(const EventPoller::Ptr &poller,
+using namespace toolkit;
+WebRtcPlayer::Ptr WebRtcPlayer::create(const hv::EventLoopPtr &poller,
                                        const RtspMediaSource::Ptr &src,
                                        const MediaInfo &info) {
     WebRtcPlayer::Ptr ret(new WebRtcPlayer(poller, src, info), [](WebRtcPlayer *ptr) {
@@ -23,7 +23,7 @@ WebRtcPlayer::Ptr WebRtcPlayer::create(const EventPoller::Ptr &poller,
     return ret;
 }
 
-WebRtcPlayer::WebRtcPlayer(const EventPoller::Ptr &poller,
+WebRtcPlayer::WebRtcPlayer(const hv::EventLoopPtr &poller,
                            const RtspMediaSource::Ptr &src,
                            const MediaInfo &info) : WebRtcTransportImp(poller) {
     _media_info = info;
@@ -44,10 +44,10 @@ void WebRtcPlayer::onStartWebRTC() {
                 return;
             }
             size_t i = 0;
-            pkt->for_each([&](const RtpPacket::Ptr &rtp) {
+            for(auto rtp : *pkt) {
                 // TraceL << getIdentifier() << " send " << rtp->dump() << " i:"<<i;
                 strongSelf->onSendRtp(rtp, ++i == pkt->size());
-            });
+            }
         });
         _reader->setDetachCB([weak_self]() {
             if (auto strongSelf = weak_self.lock()) {
@@ -70,7 +70,7 @@ void WebRtcPlayer::onDestory() {
         WarnL << "RTC播放器(" << _media_info.shortUrl() << ")结束播放,耗时(s):" << duration;
         if (bytes_usage >= iFlowThreshold * 1024) {
             NoticeCenter::Instance().emitEvent(Broadcast::kBroadcastFlowReport, _media_info, bytes_usage, duration,
-                                               true, static_cast<SockInfo &>(*getSession()));
+                                               true, *getSession());
         }
     }
 }

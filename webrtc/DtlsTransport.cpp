@@ -506,7 +506,7 @@ namespace RTC
 
 	/* Instance methods. */
 
-	DtlsTransport::DtlsTransport(EventPoller::Ptr poller,Listener* listener) : poller(std::move(poller)), listener(listener)
+	DtlsTransport::DtlsTransport(hv::EventLoopPtr poller,Listener* listener) : poller(std::move(poller)), listener(listener)
 	{
 		MS_TRACE();
 		env = DtlsEnvironment::Instance().shared_from_this();
@@ -592,7 +592,11 @@ namespace RTC
 		}
 
 		// Close the DTLS timer.
-		this->timer = nullptr;
+        if (timer) {
+            poller->killTimer(timer);
+            timer = 0;
+        }
+
 	}
 
 	void DtlsTransport::Dump() const
@@ -819,7 +823,10 @@ namespace RTC
 		MS_WARN_TAG(dtls, "resetting DTLS transport");
 
 		// Stop the DTLS timer.
-		this->timer = nullptr;
+        if (timer) {
+            poller->killTimer(timer);
+            timer = 0;
+        }
 
 		// We need to reset the SSL instance so we need to "shutdown" it, but we
 		// don't want to send a Close Alert to the peer, so just don't call
@@ -893,7 +900,11 @@ namespace RTC
 			this->handshakeDone    = true;
 
 			// Stop the timer.
-			this->timer = nullptr;
+            if (timer) {
+                poller->killTimer(timer);
+                timer = 0;
+            }
+
 
 			// Process the handshake just once (ignore if DTLS renegotiation).
 			if (!wasHandshakeDone && this->remoteFingerprint.algorithm != FingerprintAlgorithm::NONE)
@@ -982,13 +993,13 @@ namespace RTC
 			MS_DEBUG_DEV("DTLS timer set in %" PRIu64 "ms", timeoutMs);
 
 			std::weak_ptr<DtlsTransport> weak_self = shared_from_this();
-			this->timer = std::make_shared<Timer>(timeoutMs / 1000.0f, [weak_self](){
+            this->timer = poller->setTimeout(timeoutMs, [weak_self](hv::TimerID tid){
 				auto strong_self = weak_self.lock();
 				if(strong_self){
 					strong_self->OnTimer();
 				}
 				return true;
-			}, this->poller);
+			});
 
 			return true;
 		}

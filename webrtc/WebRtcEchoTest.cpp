@@ -8,10 +8,10 @@
  * may be found in the AUTHORS file in the root of the source tree.
  */
 
-#include "Util/logger.h"
+#include "logger.h"
 #include "WebRtcEchoTest.h"
 
-WebRtcEchoTest::Ptr WebRtcEchoTest::create(const EventPoller::Ptr &poller) {
+WebRtcEchoTest::Ptr WebRtcEchoTest::create(const hv::EventLoopPtr &poller) {
     WebRtcEchoTest::Ptr ret(new WebRtcEchoTest(poller), [](WebRtcEchoTest *ptr) {
         ptr->onDestory();
         delete ptr;
@@ -20,7 +20,7 @@ WebRtcEchoTest::Ptr WebRtcEchoTest::create(const EventPoller::Ptr &poller) {
     return ret;
 }
 
-WebRtcEchoTest::WebRtcEchoTest(const EventPoller::Ptr &poller) : WebRtcTransportImp(poller) {}
+WebRtcEchoTest::WebRtcEchoTest(const hv::EventLoopPtr &poller) : WebRtcTransportImp(poller) {}
 
 void WebRtcEchoTest::onRtcConfigure(RtcConfigure &configure) const {
     WebRtcTransportImp::onRtcConfigure(configure);

@@ -12,6 +12,7 @@
 #include "Rtsp/Rtsp.h"
 #include <unordered_set>
 #include <cinttypes>
+#include "Common/config.h"
 
 using namespace std;
 using namespace toolkit;

@@ -9,10 +9,10 @@
  */
 
 #include "WebRtcPusher.h"
-
+#include "Util/NoticeCenter.h"
 using namespace mediakit;
-
-WebRtcPusher::Ptr WebRtcPusher::create(const EventPoller::Ptr &poller,
+using namespace toolkit;
+WebRtcPusher::Ptr WebRtcPusher::create(const hv::EventLoopPtr &poller,
                                        const RtspMediaSourceImp::Ptr &src,
                                        const std::shared_ptr<void> &ownership,
                                        const MediaInfo &info,
@@ -25,7 +25,7 @@ WebRtcPusher::Ptr WebRtcPusher::create(const EventPoller::Ptr &poller,
     return ret;
 }
 
-WebRtcPusher::WebRtcPusher(const EventPoller::Ptr &poller,
+WebRtcPusher::WebRtcPusher(const hv::EventLoopPtr &poller,
                            const RtspMediaSourceImp::Ptr &src,
                            const std::shared_ptr<void> &ownership,
                            const MediaInfo &info,
@@ -71,8 +71,8 @@ std::string WebRtcPusher::getOriginUrl(MediaSource &sender) const {
     return _media_info._full_url;
 }
 
-std::shared_ptr<SockInfo> WebRtcPusher::getOriginSock(MediaSource &sender) const {
-    return std::static_pointer_cast<SockInfo>(getSession());
+std::shared_ptr<hv::SocketChannel> WebRtcPusher::getOriginSock(MediaSource &sender) const {
+    return std::static_pointer_cast<hv::SocketChannel>(getSession());
 }
 
 void WebRtcPusher::onRecvRtp(MediaTrack &track, const std::string &rid, RtpPacket::Ptr rtp) {
@@ -125,7 +125,7 @@ void WebRtcPusher::onDestory() {
         WarnL << "RTC推流器(" << _media_info.shortUrl() << ")结束推流,耗时(s):" << duration;
         if (bytes_usage >= iFlowThreshold * 1024) {
             NoticeCenter::Instance().emitEvent(Broadcast::kBroadcastFlowReport, _media_info, bytes_usage, duration,
-                                               false, static_cast<SockInfo &>(*getSession()));
+                                               false, *getSession());
         }
     }
 
@@ -134,7 +134,7 @@ void WebRtcPusher::onDestory() {
         _push_src_ownership = nullptr;
         //延时10秒注销流
         auto push_src = std::move(_push_src);
-        getPoller()->doDelayTask(_continue_push_ms, [push_src]() { return 0; });
+        getPoller()->setTimeout(_continue_push_ms, [push_src](hv::TimerID tid) { return 0; });
     }
 }
 
@@ -148,6 +148,6 @@ int WebRtcPusher::getLossRate(MediaSource &sender,mediakit::TrackType type){
     return WebRtcTransportImp::getLossRate(type);
 }
 
-toolkit::EventPoller::Ptr WebRtcPusher::getOwnerPoller(mediakit::MediaSource &sender) {
+hv::EventLoopPtr WebRtcPusher::getOwnerPoller(mediakit::MediaSource &sender) {
     return getPoller();
 }
