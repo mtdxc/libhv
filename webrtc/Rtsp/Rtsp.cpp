@@ -20,6 +20,8 @@ using hv::trim;
 using std::string;
 using std::runtime_error;
 
+StatisticImp(mediakit::RtpPacket);
+
 namespace mediakit {
 
 int RtpPayload::getClockRate(int pt) {
@@ -431,7 +433,6 @@ std::string RtpHeader::dump(size_t rtp_size) const {
 }
 
 ///////////////////////////////////////////////////////////////////////
-
 RtpHeader *RtpPacket::getHeader() {
     //需除去rtcp over tcp 4个字节长度
     return (RtpHeader *) (data() + RtpPacket::kRtpTcpHeaderSize);

@@ -113,8 +113,194 @@ WebRtcTransportPtr WebRtcServer::getItem(const std::string &key) {
     return ret;
 }
 
+using namespace mediakit;
+#ifdef ENABLE_MEM_DEBUG
+extern uint64_t getTotalMemUsage();
+extern uint64_t getTotalMemBlock();
+extern uint64_t getThisThreadMemUsage();
+extern uint64_t getThisThreadMemBlock();
+extern std::vector<size_t> getBlockTypeSize();
+extern uint64_t getTotalMemBlockByType(int type);
+extern uint64_t getThisThreadMemBlockByType(int type);
+#endif
+
+#include "Rtmp/Rtmp.h"
+#include "Common/MultiMediaSourceMuxer.h"
+void getStatisticJson(const std::function<void(hv::Json &val)> &cb) {
+    hv::Json val;
+    val["MediaSource"] = ObjectStatistic<MediaSource>::count();
+    val["MultiMediaSourceMuxer"] = ObjectStatistic<MultiMediaSourceMuxer>::count();
+    /*
+    val["TcpServer"] = ObjectStatistic<TcpServer>::count();
+    val["TcpSession"] = ObjectStatistic<TcpSession>::count();
+    val["UdpServer"] = ObjectStatistic<UdpServer>::count();
+    val["UdpSession"] = ObjectStatistic<UdpSession>::count();
+    val["TcpClient"] = ObjectStatistic<TcpClient>::count();
+    val["Socket"] = ObjectStatistic<Socket>::count());
+    */
+    val["FrameImp"] = ObjectStatistic<FrameImp>::count();
+    val["Frame"] = ObjectStatistic<Frame>::count();
+
+    val["Buffer"] = ObjectStatistic<Buffer>::count();
+    val["BufferRaw"] = ObjectStatistic<BufferRaw>::count();
+    val["BufferLikeString"] = ObjectStatistic<BufferLikeString>::count();
+    //val["BufferList"] = ObjectStatistic<BufferList>::count();
+
+    val["RtpPacket"] = ObjectStatistic<RtpPacket>::count();
+    val["RtmpPacket"] = ObjectStatistic<RtmpPacket>::count();
+#ifdef ENABLE_MEM_DEBUG
+    auto bytes = getTotalMemUsage();
+    val["totalMemUsage"] = bytes;
+    val["totalMemUsageMB"] = (int)(bytes / 1024 / 1024);
+    val["totalMemBlock"] = getTotalMemBlock();
+    static auto block_type_size = getBlockTypeSize();
+    {
+        int i = 0;
+        string str;
+        size_t last = 0;
+        for (auto sz : block_type_size) {
+            str.append(std::to_string(last) + "~" + std::to_string(sz) + ":" + std::to_string(getTotalMemBlockByType(i++)) + ";");
+            last = sz;
+        }
+        str.pop_back();
+        val["totalMemBlockTypeCount"] = str;
+    }
+
+    auto thread_size = EventPollerPool::Instance().getExecutorSize() + WorkThreadPool::Instance().getExecutorSize();
+    std::shared_ptr<std::vector<Value> > thread_mem_info = std::make_shared<std::vector<Value> >(thread_size);
+
+    std::shared_ptr<void> finished(nullptr, [thread_mem_info, cb, obj](void *) {
+        for (auto &val : *thread_mem_info) {
+            (*obj)["threadMem"].append(val);
+        }
+        //触发回调
+        cb(*obj);
+    });
+
+    auto pos = 0;
+    auto lam0 = [&](TaskExecutor &executor) {
+        auto &val = (*thread_mem_info)[pos++];
+        executor.async([finished, &val]() {
+            auto bytes = getThisThreadMemUsage();
+            val["threadName"] = getThreadName();
+            val["threadMemUsage"] = bytes;
+            val["threadMemUsageMB"] = (bytes / 1024 / 1024);
+            val["threadMemBlock"] = getThisThreadMemBlock();
+            {
+                int i = 0;
+                string str;
+                size_t last = 0;
+                for (auto sz : block_type_size) {
+                    str.append(std::to_string(last) + "~" + std::to_string(sz) + ":" + std::to_string(getThisThreadMemBlockByType(i++)) + ";");
+                    last = sz;
+                }
+                str.pop_back();
+                val["threadMemBlockTypeCount"] = str;
+            }
+            });
+    };
+    auto lam1 = [lam0](const TaskExecutor::Ptr &executor) {
+        lam0(*executor);
+    };
+    EventPollerPool::Instance().for_each(lam1);
+    WorkThreadPool::Instance().for_each(lam1);
+#else
+    cb(val);
+#endif
+}
+
+template<typename Args, typename First>
+bool checkArgs(Args &args, const First &first) {
+    return !args->GetString(first).empty();
+}
+
+template<typename Args, typename First, typename ...KeyTypes>
+bool checkArgs(Args &args, const First &first, const KeyTypes &...keys) {
+    return checkArgs(args, first) && checkArgs(args, keys...);
+}
+
+//检查http url中或body中或http header参数是否为空的宏
+#define CHECK_ARGS(...)  \
+    if(!checkArgs(req, ##__VA_ARGS__)){ \
+        throw SockException(Err_refused, "缺少必要参数:" #__VA_ARGS__); \
+    }
+
+//检查http参数中是否附带secret密钥的宏，127.0.0.1的ip不检查密钥
+#define CHECK_SECRET() \
+    if(req->client_addr.ip != "127.0.0.1"){ \
+        if(api_secret != req->GetString("secret")){ \
+            throw SockException(Err_refused, "secret错误"); \
+        } \
+    }
+
+void SockInfoToJson(hv::Json& val, toolkit::SockInfo* info) {
+    val["local_addr"] = info->localaddr();
+    val["peer_addr"] = info->peeraddr();
+    //val["identifier"] = info->getIdentifier();
+}
+
+hv::Json makeMediaSourceJson(MediaSource &media) {
+    hv::Json item;
+    item["schema"] = media.getSchema();
+    item[VHOST_KEY] = media.getVhost();
+    item["app"] = media.getApp();
+    item["stream"] = media.getId();
+    item["createStamp"] = media.getCreateStamp();
+    item["aliveSecond"] = media.getAliveSecond();
+    item["bytesSpeed"] = media.getBytesSpeed();
+    item["readerCount"] = media.readerCount();
+    item["totalReaderCount"] = media.totalReaderCount();
+    item["originType"] = (int)media.getOriginType();
+    item["originTypeStr"] = getOriginTypeString(media.getOriginType());
+    item["originUrl"] = media.getOriginUrl();
+    item["isRecordingMP4"] = media.isRecording(Recorder::type_mp4);
+    item["isRecordingHLS"] = media.isRecording(Recorder::type_hls);
+    auto originSock = media.getOriginSock();
+    if (originSock) {
+        SockInfoToJson(item["originSock"], originSock.get());
+    }
+    else {
+        item["originSock"] = nullptr;
+    }
+
+    //getLossRate有线程安全问题；使用getMediaInfo接口才能获取丢包率；getMediaList接口将忽略丢包率
+    auto current_thread = media.getOwnerPoller()->isInLoopThread();
+    for (auto &track : media.getTracks(false)) {
+        hv::Json obj;
+        auto codec_type = track->getTrackType();
+        obj["codec_id"] = track->getCodecId();
+        obj["codec_id_name"] = track->getCodecName();
+        obj["ready"] = track->ready();
+        obj["codec_type"] = codec_type;
+        if (current_thread) {
+            obj["loss"] = media.getLossRate(codec_type);
+        }
+        switch (codec_type) {
+        case TrackAudio: {
+            auto audio_track = std::dynamic_pointer_cast<AudioTrack>(track);
+            obj["sample_rate"] = audio_track->getAudioSampleRate();
+            obj["channels"] = audio_track->getAudioChannel();
+            obj["sample_bit"] = audio_track->getAudioSampleBit();
+            break;
+        }
+        case TrackVideo: {
+            auto video_track = std::dynamic_pointer_cast<VideoTrack>(track);
+            obj["width"] = video_track->getVideoWidth();
+            obj["height"] = video_track->getVideoHeight();
+            obj["fps"] = round(video_track->getVideoFps());
+            break;
+        }
+        default:
+            break;
+        }
+        item["tracks"].push_back(obj);
+    }
+    return item;
+}
+
 void WebRtcServer::startHttp()
-{    
+{
+    GET_CONFIG(std::string, api_secret, "api.secret");
     int port = 80;
     static HttpService http;
     http.document_root = mINI::Instance()[RTC::kDocRoot];
@@ -124,6 +310,81 @@ void WebRtcServer::startHttp()
     http.POST("/index/api/webrtc", [this](const HttpRequestPtr& req, const HttpResponseWriterPtr& writer) {
         onRtcOfferReq(req, writer);
     });
+    http.GET("/index/api/getStatistic", [this](const HttpRequestPtr& req, const HttpResponseWriterPtr& writer) {
+        getStatisticJson([writer](const hv::Json &data) mutable {
+            HttpResponse resp;
+            resp.Json(data);
+            writer->WriteResponse(&resp);
+        });
+    });
+    http.GET("/paths", [](HttpRequest* req, HttpResponse* resp) {
+        return resp->Json(http.Paths());
+    });
+    http.Any("/index/api/getServerConfig", [](HttpRequest* req, HttpResponse* resp) -> int {
+        CHECK_SECRET();
+        hv::Json val;
+        for (auto &pr : mINI::Instance()) {
+            val[pr.first] = pr.second;
+        }
+        return resp->Json(val);
+    });
+
+    http.GET("/index/api/getMediaList", [](HttpRequest* req, HttpResponse* resp) -> int {
+        CHECK_SECRET();
+        hv::Json val;
+        //获取所有MediaSource列表
+        MediaSource::for_each_media([&](const MediaSource::Ptr &media) {
+            val["data"].push_back(makeMediaSourceJson(*media));
+        }, req->GetString("schema"), req->GetString("vhost"), req->GetString("app"), req->GetString("stream"));
+        return resp->Json(val);
+    });
+
+    //测试url http://127.0.0.1/index/api/isMediaOnline?schema=rtsp&vhost=__defaultVhost__&app=live&stream=obs
+    http.GET("/index/api/isMediaOnline", [](HttpRequest* req, HttpResponse* resp) -> int {
+        CHECK_SECRET();
+        CHECK_ARGS("schema", "vhost", "app", "stream");
+        hv::Json val;
+        val["online"] = (bool)(MediaSource::find(req->GetString("schema"), req->GetString("vhost"), req->GetString("app"), req->GetString("stream")));
+        return resp->Json(val);
+    });
+
+    //测试url http://127.0.0.1/index/api/getMediaInfo?schema=rtsp&vhost=__defaultVhost__&app=live&stream=obs
+    http.Any("/index/api/getMediaInfo", [this](const HttpRequestPtr& req, const HttpResponseWriterPtr& writer) {
+        CHECK_SECRET();
+        CHECK_ARGS("schema", "vhost", "app", "stream");
+        auto src = MediaSource::find(req->GetString("schema"), req->GetString("vhost"), req->GetString("app"), req->GetString("stream"));
+        if (!src) {
+            throw SockException(Err_other, "can not find the stream");
+        }
+        src->getOwnerPoller()->async([=]() mutable {
+            auto val = makeMediaSourceJson(*src);
+            val["code"] = 0;
+            writer->End(val.dump());
+        });
+    });
+
+    //主动关断流，包括关断拉流、推流
+    //测试url http://127.0.0.1/index/api/close_stream?schema=rtsp&vhost=__defaultVhost__&app=live&stream=obs&force=1
+    http.Any("/index/api/close_stream", [this](const HttpRequestPtr& req, const HttpResponseWriterPtr& writer) {
+        CHECK_SECRET();
+        CHECK_ARGS("schema", "vhost", "app", "stream");
+        //踢掉推流器
+        auto src = MediaSource::find(req->GetString("schema"), req->GetString("vhost"), req->GetString("app"), req->GetString("stream"));
+        if (!src) {
+            throw SockException(Err_other, "can not find the stream");
+        }
+
+        bool force = req->Get<bool>("force");
+        src->getOwnerPoller()->async([=]() mutable {
+            bool flag = src->close(force);
+            hv::Json val;
+            val["result"] = flag ? 0 : -1;
+            val["msg"] = flag ? "success" : "close failed";
+            val["code"] = flag ? 0 : -1;
+            writer->End(val.dump());
+        });
+    });
+
 
     static WebSocketService ws;
 #if 0
@@ -283,6 +544,7 @@ void WebRtcServer::startUdp()
 
     _udp.start();
 }
+
 //////////////////////////////////////////////////////////////////////////
 int main(int argc, char** argv) {
     char path[200];
