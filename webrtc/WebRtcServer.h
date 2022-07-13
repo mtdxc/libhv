@@ -14,6 +14,8 @@
 
 #include "Socket.h"
 #include "UdpServer2.h"
+#include "TcpServer.h"
+#include "Rtmp/RtmpSession.h"
 #include "http/server/WebSocketServer.h"
 class WebRtcInterface;
 class WebRtcTransportImp;
@@ -66,6 +68,7 @@ private:
     void onRtcOfferReq(const HttpRequestPtr& req, const HttpResponseWriterPtr& writer);
 
     void startUdp();
+    void startRtmp();
     void addItem(const std::string &key, const WebRtcTransportPtr &ptr) {
         std::lock_guard<std::mutex> lck(_mtx);
         _map[key] = ptr;
@@ -79,6 +82,7 @@ private:
 
     std::string _local_ip;
     hv::UdpServerTmpl2<WebRtcSession> _udp;
+    hv::TcpServerTmpl<mediakit::RtmpSession> _rtmp;
     websocket_server_t _http;
     mutable std::mutex _mtx_creator;
     std::unordered_map<std::string, Plugin> _map_creator;

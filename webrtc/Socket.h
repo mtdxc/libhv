@@ -91,5 +91,10 @@ public:
     }
 };
 }
+#define TraceP(ptr) TraceL << ptr->peeraddr()
+#define DebugP(ptr) DebugL << ptr->peeraddr()
+#define InfoP(ptr) InfoL << ptr->peeraddr()
+#define WarnP(ptr) WarnL << ptr->peeraddr()
+#define ErrorP(ptr) ErrorL << ptr->peeraddr()
 
 #endif

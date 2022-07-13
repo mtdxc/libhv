@@ -16,17 +16,19 @@
 #include <stdio.h>
 #include "Common/config.h"
 using toolkit::mINI;
+using std::string;
+
  //RTC配置项目
 namespace RTC {
 #define RTC_FIELD "rtc."
 //rtp和rtcp接受超时时间
-const std::string kDocRoot = RTC_FIELD"docRoot";
+const string kDocRoot = RTC_FIELD"docRoot";
 //服务器外网ip
-const std::string kHttpPort = RTC_FIELD"httpPort";
+const string kHttpPort = RTC_FIELD"httpPort";
 //设置remb比特率，非0时关闭twcc并开启remb。该设置在rtc推流时有效，可以控制推流画质
-const std::string kHttpsPort = RTC_FIELD"httpsPort";
-const std::string kCertFile = RTC_FIELD"certFile";
-const std::string kKeyFile = RTC_FIELD"keyFile";
+const string kHttpsPort = RTC_FIELD"httpsPort";
+const string kCertFile = RTC_FIELD"certFile";
+const string kKeyFile = RTC_FIELD"keyFile";
 
 static onceToken token([]() {
     mINI::Instance()[kDocRoot] = "html";
@@ -36,7 +38,28 @@ static onceToken token([]() {
     mINI::Instance()[kHttpsPort] = 443;
 });
 }//namespace RTC
+////////////RTSP服务器配置///////////
+namespace Rtsp {
+#define RTSP_FIELD "rtsp."
+const string kPort = RTSP_FIELD"port";
+const string kSSLPort = RTSP_FIELD"sslport";
+onceToken token1([]() {
+    mINI::Instance()[kPort] = 554;
+    mINI::Instance()[kSSLPort] = 332;
+    }, nullptr);
 
+} //namespace Rtsp
+
+////////////RTMP服务器配置///////////
+namespace Rtmp {
+#define RTMP_FIELD "rtmp."
+const string kPort = RTMP_FIELD"port";
+const string kSSLPort = RTMP_FIELD"sslport";
+onceToken token1([]() {
+    mINI::Instance()[kPort] = 1935;
+    mINI::Instance()[kSSLPort] = 19350;
+    }, nullptr);
+} //namespace RTMP
 using namespace mediakit;
 using toolkit::mINI;
 static std::string getUserName(void* buf, int len) {
@@ -57,7 +80,7 @@ static std::string getUserName(void* buf, int len) {
 }
 
 //////////////////////////////////////////////////////////////////////////////////
-WebRtcServer::WebRtcServer() : _udp(NULL, false){
+WebRtcServer::WebRtcServer() : _udp(NULL, false), _rtmp(NULL, false){
 }
 
 WebRtcServer::~WebRtcServer() {
@@ -74,10 +97,12 @@ void WebRtcServer::start()
 {
     startUdp();
     startHttp();
+    startRtmp();
 }
 
 void WebRtcServer::stop()
 {
+    _rtmp.stop();
     websocket_server_stop(&_http);
     _udp.stop();
     EventLoopThreadPool::Instance()->stop();
@@ -89,7 +114,7 @@ void WebRtcServer::detect_local_ip()
     sockaddr_set_ipport(&remoteAddr, "8.8.8.8", 1234);
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
     connect(fd, (sockaddr*)&remoteAddr, sockaddr_len(&remoteAddr));
-    int len = sizeof(localAddr);
+    socklen_t len = sizeof(localAddr);
     getsockname(fd, (sockaddr*)&localAddr, &len);
     char ip[32];
     this->_local_ip = sockaddr_ip(&localAddr, ip, 32);
@@ -541,10 +566,43 @@ void WebRtcServer::startUdp()
     _udp.onMessage = [this](const std::shared_ptr<WebRtcSession> & session, hv::Buffer* buf) {
         session->onRecv(buf);
     };
-    _udp.setThreadNum(4);
     _udp.setLoadBalance(LB_LeastConnections);
 
     _udp.start();
+}
+
+void WebRtcServer::startRtmp()
+{
+    GET_CONFIG(uint16_t, port, ::Rtmp::kPort);
+    if (port <= 0) return;
+    int listenfd = _rtmp.createsocket(port);
+    if (listenfd < 0) {
+        return;
+    }
+    LOGI("listen rtmp on %d", port);
+    _rtmp.onConnection = [](const std::shared_ptr<RtmpSession>& session) {
+        if (session->isConnected()) {
+            std::weak_ptr<RtmpSession> weak_ptr = session;
+            hv::setInterval(10000, [weak_ptr](hv::TimerID tId) {
+                if (auto ptr = weak_ptr.lock()) {
+                    ptr->onManager();
+                }
+                else {
+                    hv::killTimer(tId);
+                }
+            });
+        }
+        else {
+            session->onError(SockException(Err_eof,"socket closed"));
+        }
+    };
+    _rtmp.onMessage = [](const std::shared_ptr<RtmpSession>& session, hv::Buffer* buf) {
+        auto buffer = BufferRaw::create();
+        buffer->assign((char*)buf->data(), buf->size());
+        session->onRecv(buffer);
+    };
+    _rtmp.setLoadBalance(LB_LeastConnections);
+    _rtmp.start();
 }
 
 //////////////////////////////////////////////////////////////////////////
