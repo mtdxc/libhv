@@ -13,10 +13,12 @@
 #include "WebRtcTransport.h"
 #include "hstring.h"
 #include "hbase.h"
-#include <stdio.h>
+#include <string>
+#include <iostream>
 #include "Common/config.h"
 using toolkit::mINI;
-using std::string;
+using namespace std;
+using namespace mediakit;
 
  //RTC配置项目
 namespace RTC {
@@ -46,7 +48,7 @@ const string kSSLPort = RTSP_FIELD"sslport";
 onceToken token1([]() {
     mINI::Instance()[kPort] = 554;
     mINI::Instance()[kSSLPort] = 332;
-    }, nullptr);
+}, nullptr);
 
 } //namespace Rtsp
 
@@ -58,10 +60,9 @@ const string kSSLPort = RTMP_FIELD"sslport";
 onceToken token1([]() {
     mINI::Instance()[kPort] = 1935;
     mINI::Instance()[kSSLPort] = 19350;
-    }, nullptr);
+}, nullptr);
 } //namespace RTMP
-using namespace mediakit;
-using toolkit::mINI;
+
 static std::string getUserName(void* buf, int len) {
     if (!RTC::StunPacket::IsStun((const uint8_t *) buf, len)) {
         return "";
@@ -646,14 +647,9 @@ void WebRtcServer::startRtsp()
 
 //////////////////////////////////////////////////////////////////////////
 int main(int argc, char** argv) {
-    char path[200];
-    char* cfgPath = get_executable_path(path, sizeof(path));
+    const char* cfgPath = nullptr;
     if (argc > 1) {
         cfgPath = argv[1];
-    }
-    else {
-        char* dot = strrchr(path, '.');
-        strcpy(dot, ".ini");
     }
     mediakit::loadIniConfig(cfgPath);
 
@@ -662,15 +658,23 @@ int main(int argc, char** argv) {
 
     WebRtcServer::Instance().start();
 
-    char line[256];
+    std::string line, cmd;
+    std::vector<std::string> cmds;
     printf("press quit key to exit\n");
-    while (fgets(line, 256, stdin))
+    while (getline(cin, line))
     {
-        if(!strcasecmp(line, "quit\n"))
+        cmds = hv::split(line);
+        if (cmds.empty()) {
+            continue;
+        }
+        cmd = cmds[0];
+        if (cmd == "quit" || cmd == "q") {
+            cout << "use quit app" << endl;
             break;
-        else if (!strcasecmp(line, "count\n")) {
+        }
+        else if (cmd == "count" || cmd == "c") {
             getStatisticJson([](hv::Json& val) {
-                printf("%s\n", val.dump().c_str());
+                cout << val.dump() << endl;
             });
         }
     }
