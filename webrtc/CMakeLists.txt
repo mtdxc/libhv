@@ -1,8 +1,3 @@
-include_directories(libsrtp/include)
-set(ENABLE_OPENSSL ON CACHE INTERNAL "")
-set(TEST_APPS OFF CACHE INTERNAL "")
-add_subdirectory(libsrtp)
-unset(TEST_APPS)
 
 function(set_file_group prefix)
     message(STATUS "set_file_group " ${prefix} " " ${ARGC})
@@ -34,4 +29,4 @@ set_file_group(${RTC_Root} ${RTC_SRCS})
 # aux_source_directory(. RTC_SRCS)
 
 add_executable(rtc_server ${RTC_SRCS})
-target_link_libraries(rtc_server srtp2 ${HV_LIBRARIES})
+target_link_libraries(rtc_server srtp2 ap4 ${HV_LIBRARIES})

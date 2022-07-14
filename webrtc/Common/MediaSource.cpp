@@ -69,7 +69,7 @@ MediaSource::MediaSource(const string &schema, const string &vhost, const string
     _app = app;
     _stream_id = stream_id;
     _create_stamp = time(NULL);
-    //_default_poller = EventPollerPool::Instance().getPoller();
+    _default_poller = hv::EventLoopThreadPool::Instance()->loop();
 }
 
 MediaSource::~MediaSource() {

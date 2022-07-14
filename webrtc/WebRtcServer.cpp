@@ -7,7 +7,6 @@
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
-
 #include "IceServer.hpp"
 #include "WebRtcServer.h"
 #include "WebRtcTransport.h"
@@ -16,6 +15,7 @@
 #include <string>
 #include <iostream>
 #include "Common/config.h"
+#include "AP4.h"
 using toolkit::mINI;
 using namespace std;
 using namespace mediakit;
@@ -651,6 +651,7 @@ int main(int argc, char** argv) {
     if (argc > 1) {
         cfgPath = argv[1];
     }
+    AP4::Initialize();
     mediakit::loadIniConfig(cfgPath);
 
     hlog_set_level(LOG_LEVEL_DEBUG);
@@ -680,4 +681,5 @@ int main(int argc, char** argv) {
     }
     
     WebRtcServer::Instance().stop();
+    AP4::Terminate();
 }
