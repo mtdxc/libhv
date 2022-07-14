@@ -3,6 +3,7 @@
 #include <iostream>
 #include "hstring.h"
 #include "WebRtcServer.h"
+#include "Ap4.h"
 using namespace std;
 
 int main(int argc, char** argv) {
@@ -10,6 +11,7 @@ int main(int argc, char** argv) {
     if (argc > 1) {
         cfg = argv[1];
     }
+    AP4::Initialize();
     WebRtcServer::Instance().start(cfg);
 
     std::string line, cmd;
@@ -36,4 +38,5 @@ int main(int argc, char** argv) {
     }
 
     WebRtcServer::Instance().stop();
+    AP4::Terminate();
 }

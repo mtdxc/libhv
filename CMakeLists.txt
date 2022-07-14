@@ -267,6 +267,11 @@ if (BUILD_WEBRTC AND OpenSSL_FOUND)
     add_subdirectory(3rdpart/libsrtp)
     unset(TEST_APPS)
 
+    include_directories(3rdpart/Bento4/Source/C++/Core)
+    #set(BUILD_APPS OFF CACHE INTERNAL "")
+    add_subdirectory(3rdpart/Bento4)
+    #unset(BUILD_APPS)
+
     add_subdirectory(webrtc)
 endif()
 
