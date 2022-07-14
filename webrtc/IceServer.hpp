@@ -19,9 +19,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 #ifndef MS_RTC_ICE_SERVER_HPP
 #define MS_RTC_ICE_SERVER_HPP
 
-#include "StunPacket.hpp"
 #include "logger.h"
-#include "Utils.hpp"
 #include <list>
 #include <string>
 #include <functional>
@@ -31,6 +29,7 @@ using _TransportTuple = struct sockaddr;
 
 namespace RTC
 {
+    class StunPacket;
 	using TransportTuple = _TransportTuple;
 	class IceServer
 	{

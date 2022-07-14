@@ -11,6 +11,7 @@
 #include <string>
 #include <memory>
 #include <Util/util.h>
+#include "Utils.hpp"
 
 /* Static. */
 static constexpr size_t SctpMtu{ 1200 };

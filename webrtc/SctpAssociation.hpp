@@ -3,7 +3,6 @@
 
 #ifdef ENABLE_SCTP
 #include <usrsctp.h>
-#include "Utils.hpp"
 #include "EventLoop.h"
 
 namespace RTC

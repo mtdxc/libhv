@@ -19,7 +19,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 #ifndef MS_RTC_SRTP_SESSION_HPP
 #define MS_RTC_SRTP_SESSION_HPP
 
-#include "Utils.hpp"
+#include <stdint.h>
 #include <srtp.h>
 #include <vector>
 #include <memory>
@@ -68,10 +68,7 @@ namespace RTC
 		bool DecryptSrtp(uint8_t* data, int* len);
 		bool EncryptRtcp(uint8_t* data, int* len);
 		bool DecryptSrtcp(uint8_t* data, int* len);
-		void RemoveStream(uint32_t ssrc)
-		{
-			srtp_remove_stream(this->session, uint32_t{ htonl(ssrc) });
-		}
+		void RemoveStream(uint32_t ssrc);
 
 	private:
 		// Allocated by this.

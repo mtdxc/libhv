@@ -18,7 +18,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 #define MS_CLASS "RTC::DtlsTransport"
 // #define MS_LOG_DEV_LEVEL 3
-
+#include <inttypes.h>
 #include "DtlsTransport.hpp"
 #include "logger.h"
 #include <openssl/asn1.h>

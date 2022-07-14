@@ -135,49 +135,13 @@ public:
     }
 
     //分配内存大小
-    void setCapacity(size_t capacity) {
-        if (_data) {
-            do {
-                if (capacity > _capacity) {
-                    //请求的内存大于当前内存，那么重新分配
-                    break;
-                }
-
-                if (_capacity < 2 * 1024) {
-                    //2K以下，不重复开辟内存，直接复用
-                    return;
-                }
-
-                if (2 * capacity > _capacity) {
-                    //如果请求的内存大于当前内存的一半，那么也复用
-                    return;
-                }
-            } while (false);
-
-            delete[] _data;
-        }
-        _data = new char[capacity];
-        _capacity = capacity;
-    }
+    void setCapacity(size_t capacity);
 
     //设置有效数据大小
-    virtual void setSize(size_t size) {
-        if (size > _capacity) {
-            throw std::invalid_argument("Buffer::setSize out of range");
-        }
-        _size = size;
-    }
+    virtual void setSize(size_t size);
 
     //赋值数据
-    void assign(const char *data, size_t size = 0) {
-        if (size <= 0) {
-            size = strlen(data);
-        }
-        setCapacity(size + 1);
-        memcpy(_data, data, size);
-        _data[size] = '\0';
-        setSize(size);
-    }
+    void assign(const char *data, size_t size = 0);
 
     size_t getCapacity() const override {
         return _capacity;
@@ -208,244 +172,49 @@ class BufferLikeString : public Buffer {
 public:
     ~BufferLikeString() override = default;
 
-    BufferLikeString() {
-        _erase_head = 0;
-        _erase_tail  = 0;
-    }
+    BufferLikeString();
+    BufferLikeString(std::string str);
+    BufferLikeString(const char *str);
+    BufferLikeString(BufferLikeString &&that);
+    BufferLikeString(const BufferLikeString &that);
 
-    BufferLikeString(std::string str) {
-        _str = std::move(str);
-        _erase_head = 0;
-        _erase_tail  = 0;
-    }
+    BufferLikeString &operator=(std::string str);
+    BufferLikeString &operator=(const char *str);
+    BufferLikeString &operator=(BufferLikeString &&that);
+    BufferLikeString &operator=(const BufferLikeString &that);
 
-    BufferLikeString &operator=(std::string str) {
-        _str = std::move(str);
-        _erase_head = 0;
-        _erase_tail  = 0;
-        return *this;
-    }
+    char *data() const override;
+    size_t size() const override;
 
-    BufferLikeString(const char *str) {
-        if(str)
-            _str = str;
-        _erase_head = 0;
-        _erase_tail  = 0;
-    }
+    BufferLikeString &erase(size_t pos = 0, size_t n = std::string::npos);
+    BufferLikeString &append(const BufferLikeString &str);
+    BufferLikeString &append(const std::string &str);
+    BufferLikeString &append(const char *data);
+    BufferLikeString &append(const char *data, size_t len);
 
-    BufferLikeString &operator=(const char *str) {
-        if(str)
-            _str = str;
-        _erase_head = 0;
-        _erase_tail  = 0;
-        return *this;
-    }
+    void push_back(char c);
 
-    BufferLikeString(BufferLikeString &&that) {
-        _str = std::move(that._str);
-        _erase_head = that._erase_head;
-        _erase_tail = that._erase_tail;
-        that._erase_head = 0;
-        that._erase_tail = 0;
-    }
+    BufferLikeString &insert(size_t pos, const char *s, size_t n);
+    BufferLikeString &assign(const char *data);
+    BufferLikeString &assign(const char *data, size_t len);
 
-    BufferLikeString &operator=(BufferLikeString &&that) {
-        _str = std::move(that._str);
-        _erase_head = that._erase_head;
-        _erase_tail = that._erase_tail;
-        that._erase_head = 0;
-        that._erase_tail = 0;
-        return *this;
-    }
+    void clear();
 
-    BufferLikeString(const BufferLikeString &that) {
-        _str = that._str;
-        _erase_head = that._erase_head;
-        _erase_tail = that._erase_tail;
-    }
+    char &operator[](size_t pos);
+    const char &operator[](size_t pos) const;
 
-    BufferLikeString &operator=(const BufferLikeString &that) {
-        _str = that._str;
-        _erase_head = that._erase_head;
-        _erase_tail = that._erase_tail;
-        return *this;
-    }
+    size_t capacity() const;
 
-    char *data() const override {
-        return (char *) _str.data() + _erase_head;
-    }
+    void reserve(size_t size);
 
-    size_t size() const override {
-        return _str.size() - _erase_tail - _erase_head;
-    }
+    void resize(size_t size, char c = '\0');
 
-    BufferLikeString &erase(size_t pos = 0, size_t n = std::string::npos) {
-        if (pos == 0) {
-            //移除前面的数据
-            if (n != std::string::npos) {
-                //移除部分
-                if (n > size()) {
-                    //移除太多数据了
-                    throw std::out_of_range("BufferLikeString::erase out_of_range in head");
-                }
-                //设置起始偏移量
-                _erase_head += n;
-                data()[size()] = '\0';
-                return *this;
-            }
-            //移除全部数据
-            _erase_head = 0;
-            _erase_tail = _str.size();
-            data()[0] = '\0';
-            return *this;
-        }
+    bool empty() const;
 
-        if (n == std::string::npos || pos + n >= size()) {
-            //移除末尾所有数据
-            if (pos >= size()) {
-                //移除太多数据
-                throw std::out_of_range("BufferLikeString::erase out_of_range in tail");
-            }
-            _erase_tail += size() - pos;
-            data()[size()] = '\0';
-            return *this;
-        }
-
-        //移除中间的
-        if (pos + n > size()) {
-            //超过长度限制
-            throw std::out_of_range("BufferLikeString::erase out_of_range in middle");
-        }
-        _str.erase(_erase_head + pos, n);
-        return *this;
-    }
-
-    BufferLikeString &append(const BufferLikeString &str) {
-        return append(str.data(), str.size());
-    }
-
-    BufferLikeString &append(const std::string &str) {
-        return append(str.data(), str.size());
-    }
-
-    BufferLikeString &append(const char *data) {
-        return append(data, strlen(data));
-    }
-
-    BufferLikeString &append(const char *data, size_t len) {
-        if (len <= 0) {
-            return *this;
-        }
-        if (_erase_head > _str.capacity() / 2) {
-            moveData();
-        }
-        if (_erase_tail == 0) {
-            _str.append(data, len);
-            return *this;
-        }
-        _str.insert(_erase_head + size(), data, len);
-        return *this;
-    }
-
-    void push_back(char c) {
-        if (_erase_tail == 0) {
-            _str.push_back(c);
-            return;
-        }
-        else {
-            data()[size()] = c;
-            --_erase_tail;
-            data()[size()] = '\0';
-        }
-    }
-
-    BufferLikeString &insert(size_t pos, const char *s, size_t n) {
-        _str.insert(_erase_head + pos, s, n);
-        return *this;
-    }
-
-    BufferLikeString &assign(const char *data) {
-        return assign(data, strlen(data));
-    }
-
-    BufferLikeString &assign(const char *data, size_t len) {
-        if (len <= 0) {
-            return *this;
-        }
-        // data is in range of str, then modify _erase_head and _erase_tail
-        if (data >= _str.data() && data < _str.data() + _str.size()) {
-            _erase_head = data - _str.data();
-            if (data + len > _str.data() + _str.size()) {
-                throw std::out_of_range("BufferLikeString::assign out_of_range");
-            }
-            _erase_tail = _str.data() + _str.size() - (data + len);
-        }
-        else {
-            _str.assign(data, len);
-            _erase_head = 0;
-            _erase_tail = 0;
-        }
-        return *this;
-    }
-
-    void clear() {
-        _erase_head = 0;
-        _erase_tail = 0;
-        _str.clear();
-    }
-
-    char &operator[](size_t pos) {
-        if (pos >= size()) {
-            throw std::out_of_range("BufferLikeString::operator[] out_of_range");
-        }
-        return data()[pos];
-    }
-
-    const char &operator[](size_t pos) const {
-        return (*const_cast<BufferLikeString *>(this))[pos];
-    }
-
-    size_t capacity() const {
-        return _str.capacity();
-    }
-
-    void reserve(size_t size) {
-        _str.reserve(size);
-    }
-
-    void resize(size_t size, char c = '\0') {
-        _str.resize(size, c);
-        _erase_head = 0;
-        _erase_tail = 0;
-    }
-
-    bool empty() const {
-        return size() <= 0;
-    }
-
-    std::string substr(size_t pos, size_t n = std::string::npos) const {
-        if (n == std::string::npos) {
-            //获取末尾所有的
-            if (pos >= size()) {
-                throw std::out_of_range("BufferLikeString::substr out_of_range");
-            }
-            return _str.substr(_erase_head + pos, size() - pos);
-        }
-
-        //获取部分
-        if (pos + n > size()) {
-            throw std::out_of_range("BufferLikeString::substr out_of_range");
-        }
-        return _str.substr(_erase_head + pos, n);
-    }
+    std::string substr(size_t pos, size_t n = std::string::npos) const;
 
 private:
-    void moveData() {
-        if (_erase_head) {
-            _str.erase(0, _erase_head);
-            _erase_head = 0;
-        }
-    }
+    void moveData();
 
 private:
     size_t _erase_head;

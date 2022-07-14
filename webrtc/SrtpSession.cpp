@@ -290,4 +290,10 @@ namespace RTC
 
 		return true;
 	}
+
+    void SrtpSession::RemoveStream(uint32_t ssrc)
+    {
+        srtp_remove_stream(this->session, uint32_t{ htonl(ssrc) });
+    }
+
 } // namespace RTC

@@ -21,6 +21,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 #include <utility>
 #include "IceServer.hpp"
+#include "StunPacket.hpp"
 
 namespace RTC
 {

@@ -19,9 +19,10 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 #ifndef MS_RTC_STUN_PACKET_HPP
 #define MS_RTC_STUN_PACKET_HPP
 
-#include "Utils.hpp"
+#include <stdint.h>
 #include <string>
-
+#include <string>
+struct sockaddr;
 namespace RTC
 {
 	class StunPacket

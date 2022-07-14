@@ -10,6 +10,7 @@
 
 #include "Nack.h"
 #include "Util/util.h"
+using toolkit::getCurrentMillisecond;
 using namespace mediakit;
 
 static constexpr uint32_t kMaxNackMS = 5 * 1000;
