@@ -24,7 +24,6 @@ static inline const char *getFunctionName(const char *func) {
 LogContext::LogContext(int level, const char *file, const char *function, int line, const char *module_name, const char *flag)
     : _level(level), _line(line), _file(getFileName(file)), _function(getFunctionName(function)),
     _module_name(module_name), _flag(flag) {
-    gettimeofday(&_tv, nullptr);
     //_thread_name = getThreadName();
 }
 

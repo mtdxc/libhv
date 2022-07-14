@@ -1,6 +1,5 @@
 ﻿#pragma once
 #include "hlog.h"
-#include "htime.h"
 #include <stdexcept>
 #define PrintLog(level, ...) logger_print(hlog, level, __FILENAME__, __LINE__, ##__VA_ARGS__)
 #define PrintT(...) PrintLog(LOG_LEVEL_DEBUG, ##__VA_ARGS__)
@@ -39,7 +38,6 @@ public:
     std::string _function;
     std::string _module_name;
     std::string _flag;
-    struct timeval _tv;
 
     const std::string &str();
 

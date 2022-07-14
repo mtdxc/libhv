@@ -22,7 +22,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 #include <utility>
 #include "IceServer.hpp"
 #include "StunPacket.hpp"
-
+#include "hplatform.h"
 namespace RTC
 {
 	/* Static. */
