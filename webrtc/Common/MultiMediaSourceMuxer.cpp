@@ -103,7 +103,7 @@ MultiMediaSourceMuxer::MultiMediaSourceMuxer(const string &vhost, const string &
     }
 #endif
     if (option.enable_mp4) {
-        // _mp4 = Recorder::createRecorder(Recorder::type_mp4, vhost, app, stream, option.mp4_save_path, option.mp4_max_second);
+        _mp4 = Recorder::createRecorder(Recorder::type_mp4, vhost, app, stream, option.mp4_save_path, option.mp4_max_second);
     }
     if (option.enable_ts) {
         _ts = std::make_shared<TSMediaSourceMuxer>(vhost, app, stream);
@@ -182,7 +182,6 @@ int MultiMediaSourceMuxer::totalReaderCount(MediaSource &sender) {
     else
         return totalReaderCount();
 }
-#if 0
 //此函数可能跨线程调用
 bool MultiMediaSourceMuxer::setupRecord(MediaSource &sender, Recorder::type type, bool start, const string &custom_path, size_t max_second) {
     switch (type) {
@@ -270,7 +269,6 @@ bool MultiMediaSourceMuxer::stopSendRtp(MediaSource &sender, const string &ssrc)
     return false;
 #endif//ENABLE_RTPPROXY
 }
-#endif
 
 vector<Track::Ptr> MultiMediaSourceMuxer::getMediaTracks(MediaSource &sender, bool trackReady) const {
     return getTracks(trackReady);

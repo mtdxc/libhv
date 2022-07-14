@@ -113,7 +113,6 @@ public:
      * @return 观看总人数
      */
     int totalReaderCount(MediaSource &sender) override;
-#if 0
     /**
      * 设置录制状态
      * @param type 录制类型
@@ -145,7 +144,7 @@ public:
      * @return 是否成功
      */
     bool stopSendRtp(MediaSource &sender, const std::string &ssrc) override;
-#endif
+
     /**
      * 获取所有Track
      * @param trackReady 是否筛选过滤未就绪的track

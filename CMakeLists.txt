@@ -268,6 +268,7 @@ if (BUILD_WEBRTC AND OpenSSL_FOUND)
     add_subdirectory(3rdpart/Bento4)
     unset(BUILD_APPS)
     
+    add_definitions(-DENABLE_HLS)
     add_subdirectory(webrtc)
 endif()
 

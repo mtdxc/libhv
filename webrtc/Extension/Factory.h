@@ -16,7 +16,7 @@
 #include "Extension/Track.h"
 #include "Rtsp/RtpCodec.h"
 #include "Rtmp/RtmpCodec.h"
-
+class AP4_SampleDescription;
 namespace mediakit{
 
 class Factory {
@@ -38,7 +38,7 @@ public:
      */
     static RtpCodec::Ptr getRtpDecoderByTrack(const Track::Ptr &track);
 
-
+    static std::shared_ptr<AP4_SampleDescription> getAP4Descripion(const Track::Ptr &track);
     ////////////////////////////////rtmp相关//////////////////////////////////
 
     /**

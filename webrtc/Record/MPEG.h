@@ -17,7 +17,9 @@
 #include <cstdio>
 #include <cstdint>
 #include <unordered_map>
-
+#include "Ap4Mpeg2Ts.h"
+class AP4_MemoryByteStream;
+class AP4_SampleDescription;
 namespace mediakit {
 
 //该类用于产生MPEG-TS/MPEG-PS
@@ -36,6 +38,7 @@ public:
      */
     void resetTracks() override;
 
+
     /**
      * 输入帧数据
      */
@@ -48,25 +51,27 @@ protected:
      * @param timestamp 时间戳，单位毫秒
      * @param key_pos 是否为关键帧的第一个ts/ps包，用于确保ts切片第一帧为关键帧
      */
-    virtual void onWrite(std::shared_ptr<toolkit::Buffer> buffer, uint32_t timestamp, bool key_pos) = 0;
+    virtual void onWrite(std::shared_ptr<Buffer> buffer, uint32_t timestamp, bool key_pos) = 0;
 
 private:
     void createContext();
     void releaseContext();
-    void onWrite_l(const void *packet, size_t bytes);
     void flushCache();
-
+    void writeHeader();
 private:
+    bool _write_header = false;
     bool _is_ps = false;
     bool _have_video = false;
     bool _key_pos = false;
-    uint32_t _max_cache_size = 0;
     uint32_t _timestamp = 0;
-    struct mpeg_muxer_t *_context = nullptr;
-    std::unordered_map<int, int/*track_id*/> _codec_to_trackid;
-    FrameMerger _frame_merger{FrameMerger::h264_prefix};
-    toolkit::BufferRaw::Ptr _current_buffer;
-    toolkit::ResourcePool<toolkit::BufferRaw> _buffer_pool;
+    AP4_Mpeg2TsWriter _writer;
+    AP4_MemoryByteStream* _buffer;
+    struct TsStream {
+        AP4_Mpeg2TsWriter::SampleStream* stream;
+        std::shared_ptr<AP4_SampleDescription> desc;
+    };
+    std::unordered_map<int, TsStream> _streams;
+    FrameMerger _frame_merger{FrameMerger::mp4_nal_size};
 };
 
 }//mediakit

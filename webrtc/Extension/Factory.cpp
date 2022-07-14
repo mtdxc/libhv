@@ -23,9 +23,159 @@
 #include "Common/Parser.h"
 #include "Util/base64.h"
 #include "Common/config.h"
+#include "Ap4.h"
 using std::string;
 
 namespace mediakit{
+std::shared_ptr<AP4_SampleDescription> Factory::getAP4Descripion(const Track::Ptr &track) {
+    std::shared_ptr<AP4_SampleDescription> ret;
+    AP4_UI32 format = 0;
+    switch (track->getCodecId()){
+        case CodecH264 : 
+            format = AP4_SAMPLE_FORMAT_AVC1;
+            if (track->ready()) {
+                auto video = std::dynamic_pointer_cast<H264Track>(track);
+                AP4_AvcFrameParser::AccessUnitInfo access_unit_info;
+                AP4_AvcFrameParser parser;
+                parser.Feed((const AP4_UI08*)video->getSps().data(), video->getSps().size(), access_unit_info);
+                parser.Feed((const AP4_UI08*)video->getPps().data(), video->getPps().size(), access_unit_info);
+                unsigned int video_width = 0;
+                unsigned int video_height = 0;
+                AP4_AvcSequenceParameterSet* sps = parser.GetSequenceParameterSets()[0];
+                sps->GetInfo(video_width, video_height);
+                AP4_Array<AP4_DataBuffer> sps_array;
+                sps_array.Append(AP4_DataBuffer((const AP4_UI08*)video->getSps().data(), video->getSps().size()));
+                AP4_Array<AP4_DataBuffer> pps_array;
+                sps_array.Append(AP4_DataBuffer((const AP4_UI08*)video->getPps().data(), video->getPps().size()));
+                return std::make_shared<AP4_AvcSampleDescription>(format,
+                    (AP4_UI16)video_width,
+                    (AP4_UI16)video_height,
+                    24,
+                    "h264",
+                    (AP4_UI08)sps->profile_idc,
+                    (AP4_UI08)sps->level_idc,
+                    (AP4_UI08)(sps->constraint_set0_flag << 7 |
+                        sps->constraint_set1_flag << 6 |
+                        sps->constraint_set2_flag << 5 |
+                        sps->constraint_set3_flag << 4),
+                    4,
+                    sps->chroma_format_idc,
+                    sps->bit_depth_luma_minus8,
+                    sps->bit_depth_chroma_minus8,
+                    sps_array,
+                    pps_array);
+            }
+            break;
+        case CodecH265 :
+            if (track->ready()) {
+                auto video = std::dynamic_pointer_cast<H265Track>(track);
+                format = AP4_SAMPLE_FORMAT_HEV1;
+                AP4_HevcFrameParser::AccessUnitInfo access_unit_info;
+                AP4_HevcFrameParser parser;
+                parser.Feed((const AP4_UI08*)video->getSps().data(), video->getSps().size(), access_unit_info);
+                parser.Feed((const AP4_UI08*)video->getPps().data(), video->getPps().size(), access_unit_info);
+                parser.Feed((const AP4_UI08*)video->getVps().data(), video->getVps().size(), access_unit_info);
+                AP4_HevcSequenceParameterSet* sps = parser.GetSequenceParameterSets()[0];
+                unsigned int video_width = 0;
+                unsigned int video_height = 0;
+                sps->GetInfo(video_width, video_height);
+
+                AP4_UI08 general_profile_space = sps->profile_tier_level.general_profile_space;
+                AP4_UI08 general_tier_flag = sps->profile_tier_level.general_tier_flag;
+                AP4_UI08 general_profile = sps->profile_tier_level.general_profile_idc;
+                AP4_UI32 general_profile_compatibility_flags = sps->profile_tier_level.general_profile_compatibility_flags;
+                AP4_UI64 general_constraint_indicator_flags = sps->profile_tier_level.general_constraint_indicator_flags;
+                AP4_UI08 general_level = sps->profile_tier_level.general_level_idc;
+                AP4_UI32 min_spatial_segmentation = 0; // TBD (should read from VUI if present)
+                AP4_UI08 parallelism_type = 0; // unknown
+                AP4_UI08 chroma_format = sps->chroma_format_idc;
+                AP4_UI08 luma_bit_depth = 8; // hardcoded temporarily, should be read from the bitstream
+                AP4_UI08 chroma_bit_depth = 8; // hardcoded temporarily, should be read from the bitstream
+                AP4_UI16 average_frame_rate = 0; // unknown
+                AP4_UI08 constant_frame_rate = 0; // unknown
+                AP4_UI08 num_temporal_layers = 0; // unknown
+                AP4_UI08 temporal_id_nested = 0; // unknown
+                AP4_UI08 nalu_length_size = 4;
+
+                // collect the VPS, SPS and PPS into arrays
+                AP4_Array<AP4_DataBuffer> sps_array;
+                sps_array.Append(AP4_DataBuffer((const AP4_UI08*)video->getSps().data(), video->getSps().size()));
+                AP4_Array<AP4_DataBuffer> pps_array;
+                sps_array.Append(AP4_DataBuffer((const AP4_UI08*)video->getPps().data(), video->getPps().size()));
+                AP4_Array<AP4_DataBuffer> vps_array;
+                sps_array.Append(AP4_DataBuffer((const AP4_UI08*)video->getVps().data(), video->getVps().size()));
+                AP4_UI08 parameters_completeness = (format == AP4_SAMPLE_FORMAT_HVC1 ? 1 : 0);
+                return std::make_shared<AP4_HevcSampleDescription>(format,
+                                      video_width,
+                                      video_height,
+                                      24,
+                                      "HEVC Coding",
+                                      general_profile_space,
+                                      general_tier_flag,
+                                      general_profile,
+                                      general_profile_compatibility_flags,
+                                      general_constraint_indicator_flags,
+                                      general_level,
+                                      min_spatial_segmentation,
+                                      parallelism_type,
+                                      chroma_format,
+                                      luma_bit_depth,
+                                      chroma_bit_depth,
+                                      average_frame_rate,
+                                      constant_frame_rate,
+                                      num_temporal_layers,
+                                      temporal_id_nested,
+                                      nalu_length_size,
+                                      vps_array,
+                                      parameters_completeness,
+                                      sps_array,
+                                      parameters_completeness,
+                                      pps_array,
+                                      parameters_completeness);
+            }
+            break;
+        case CodecAAC : 
+            if (track->ready()){
+                auto audio = std::dynamic_pointer_cast<AACTrack>(track);
+                // create a sample description for our samples
+                AP4_DataBuffer dsi;
+                std::string cfg = audio->getAacCfg();
+                dsi.SetData((const AP4_Byte*)cfg.data(), cfg.size());
+                return std::make_shared<AP4_MpegAudioSampleDescription>(
+                    AP4_OTI_MPEG4_AUDIO,   // object type
+                    audio->getAudioSampleRate(),
+                    16,                    // sample size
+                    audio->getAudioChannel(),
+                    &dsi,                  // decoder info
+                    6144,                  // buffer size
+                    128000,                // max bitrate
+                    128000);               // average bitrate
+                //sample_description_index = sample_table->GetSampleDescriptionCount();
+                //sample_table->AddSampleDescription(sample_description);
+            }
+            break;
+        case CodecL16 :
+        case CodecOpus :
+            format = AP4_SAMPLE_FORMAT_OPUS;
+            break;
+        case CodecG711A :
+            format = AP4_SAMPLE_FORMAT_PCMA;
+            break;
+        case CodecG711U :
+            format = AP4_SAMPLE_FORMAT_PCMU;
+            break;
+        default : 
+            break;
+    }
+    if (format) {
+        auto audio = std::dynamic_pointer_cast<AudioTrack>(track);
+        ret = std::make_shared<AP4_GenericAudioSampleDescription>(format, audio->getAudioSampleRate(), audio->getAudioSampleBit(), audio->getAudioChannel(), nullptr);
+    }
+    else {
+        WarnL << "暂不支持该CodecId:" << track->getCodecName();
+    }
+    return ret;
+}
 
 Track::Ptr Factory::getTrackBySdp(const SdpTrack::Ptr &track) {
     auto codec = getCodecId(track->_codec);
