@@ -15,13 +15,14 @@ class TcpServerEventLoopTmpl {
 public:
     typedef std::shared_ptr<TSocketChannel> TSocketChannelPtr;
 
-    TcpServerEventLoopTmpl(EventLoopPtr loop = NULL, bool new_worker = true) {
+    TcpServerEventLoopTmpl(EventLoopPtr loop = NULL, bool new_worker = false) {
         owner_worker = new_worker;
         if (owner_worker) {
-            worker_threads = new EventLoopThreadPool;
+            worker_threads = std::make_shared<EventLoopThreadPool>();
         }
         else {
             worker_threads = EventLoopThreadPool::Instance();
+            if (!loop) loop = worker_threads->loop(0);
         }
         acceptor_loop = loop ? loop : std::make_shared<EventLoop>();
         listenfd = -1;
@@ -32,11 +33,8 @@ public:
     }
 
     virtual ~TcpServerEventLoopTmpl() {
-        if (owner_worker && worker_threads) 
-            delete worker_threads;
-        worker_threads = nullptr;
     }
-    EventLoopThreadPool* loops() { return worker_threads; }
+    EventLoopThreadPool* loops() { return worker_threads.get(); }
     EventLoopPtr loop(int idx = -1) {
         return worker_threads->loop(idx);
     }
@@ -238,16 +236,15 @@ private:
     std::map<uint32_t, TSocketChannelPtr>   channels; // GUAREDE_BY(mutex_)
     std::mutex                              mutex_;
 
-    EventLoopPtr            acceptor_loop;
-    EventLoopThreadPool*    worker_threads;
+    EventLoopPtr             acceptor_loop;
+    EventLoopThreadPool::Ptr worker_threads;
     bool owner_worker;
 };
 
 template<class TSocketChannel = SocketChannel>
 class TcpServerTmpl : private EventLoopThread, public TcpServerEventLoopTmpl<TSocketChannel> {
 public:
-    TcpServerTmpl(EventLoopPtr loop = NULL, bool new_worker = true)
-        : EventLoopThread()
+    TcpServerTmpl(bool new_worker = false) : EventLoopThread()
         , TcpServerEventLoopTmpl<TSocketChannel>(EventLoopThread::loop(), new_worker)
     {}
     virtual ~TcpServerTmpl() {

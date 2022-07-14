@@ -331,8 +331,8 @@ int http_server_run(http_server_t* server, int wait) {
         for (int i = 0; i < pools->threadNum(); i++) {
             auto loop = pools->loop(i);
             if (!loop) continue;
-            loop->runInLoop([i, server] {
-                hloop_t* hloop = tlsEventLoop()->loop();
+            loop->runInLoop([i, server, loop] {
+                hloop_t* hloop = loop->loop();
                 // http
                 if (server->listenfd[0] >= 0) {
                     hio_t* listenio = haccept(hloop, server->listenfd[0], on_accept);

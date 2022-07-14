@@ -99,8 +99,7 @@ private:
 template<class TSocketChannel = SocketChannel>
 class UdpServerTmpl : private EventLoopThread, public UdpServerEventLoopTmpl<TSocketChannel> {
 public:
-    UdpServerTmpl(EventLoopPtr loop = NULL)
-        : EventLoopThread()
+    UdpServerTmpl() : EventLoopThread()
         , UdpServerEventLoopTmpl<TSocketChannel>(EventLoopThread::loop())
     {}
     virtual ~UdpServerTmpl() {

@@ -80,7 +80,7 @@ static std::string getUserName(void* buf, int len) {
 }
 
 //////////////////////////////////////////////////////////////////////////////////
-WebRtcServer::WebRtcServer() : _udp(NULL, false), _rtmp(NULL, false), _rtsp(NULL, false){
+WebRtcServer::WebRtcServer() {
 }
 
 WebRtcServer::~WebRtcServer() {
@@ -93,8 +93,14 @@ WebRtcServer& WebRtcServer::Instance()
     return instance;
 }
 
+hv::EventLoopPtr WebRtcServer::getPoller()
+{
+    return EventLoopThreadPool::Instance()->nextLoop();
+}
+
 void WebRtcServer::start()
 {
+    EventLoopThreadPool::Instance()->start();
     startUdp();
     startHttp();
     startRtmp();
@@ -103,10 +109,10 @@ void WebRtcServer::start()
 
 void WebRtcServer::stop()
 {
-    _rtsp.stop();
-    _rtmp.stop();
+    _rtsp = nullptr;
+    _rtmp = nullptr;
     websocket_server_stop(&_http);
-    _udp.stop();
+    _udp = nullptr;
     EventLoopThreadPool::Instance()->stop();
 }
 
@@ -461,7 +467,7 @@ void WebRtcServer::startHttp()
     }
     _http.service = &http;
     _http.ws = &ws;
-    _http.share_pools = _udp.loops();
+    _http.share_pools = EventLoopThreadPool::Instance().get();
     websocket_server_run(&_http, 0);
 }
 
@@ -541,39 +547,43 @@ WebRtcSession::WebRtcSession(hio_t* io) : hv::SocketChannel(io)
 void WebRtcServer::startUdp()
 {
     GET_CONFIG(uint16_t, local_port, RTC::kPort);
-    int listenfd = _udp.createsocket(local_port);
+    _udp = std::make_shared<hv::UdpServerEventLoopTmpl2<WebRtcSession>>();
+    int listenfd = _udp->createsocket(local_port);
     if (listenfd < 0) {
+        _udp = nullptr;
         return;
     }
     LOGI("udp listen on %d, listenfd=%d ...\n", local_port, listenfd);
 
-    _udp.onNewClient = [this](hio_t* io, hv::Buffer* data) {
+    _udp->onNewClient = [this](hio_t* io, hv::Buffer* data) {
         // @todo select loop with data or peerAddr
         auto user_name = getUserName(data->data(), data->size());
         if (user_name.empty()) {
             return;
         }
         if(auto ret = getItem(user_name))
-            _udp.accept(io, ret->getPoller());
+            _udp->accept(io, ret->getPoller());
     };
-    _udp.onMessage = [this](const std::shared_ptr<WebRtcSession> & session, hv::Buffer* buf) {
+    _udp->onMessage = [this](const std::shared_ptr<WebRtcSession> & session, hv::Buffer* buf) {
         session->onRecv(buf);
     };
-    _udp.setLoadBalance(LB_LeastConnections);
+    _udp->setLoadBalance(LB_LeastConnections);
 
-    _udp.start();
+    _udp->start();
 }
 
 void WebRtcServer::startRtmp()
 {
     GET_CONFIG(uint16_t, port, ::Rtmp::kPort);
     if (port <= 0) return;
-    int listenfd = _rtmp.createsocket(port);
+    _rtmp = std::make_shared<hv::TcpServerEventLoopTmpl<mediakit::RtmpSession>>();
+    int listenfd = _rtmp->createsocket(port);
     if (listenfd < 0) {
+        _rtmp = nullptr;
         return;
     }
     LOGI("listen rtmp on %d", port);
-    _rtmp.onConnection = [](const std::shared_ptr<RtmpSession>& session) {
+    _rtmp->onConnection = [](const std::shared_ptr<RtmpSession>& session) {
         if (session->isConnected()) {
             std::weak_ptr<RtmpSession> weak_ptr = session;
             hv::setInterval(10000, [weak_ptr](hv::TimerID tId) {
@@ -589,25 +599,27 @@ void WebRtcServer::startRtmp()
             session->onError(SockException(Err_eof,"socket closed"));
         }
     };
-    _rtmp.onMessage = [](const std::shared_ptr<RtmpSession>& session, hv::Buffer* buf) {
+    _rtmp->onMessage = [](const std::shared_ptr<RtmpSession>& session, hv::Buffer* buf) {
         auto buffer = BufferRaw::create();
         buffer->assign((char*)buf->data(), buf->size());
         session->onRecv(buffer);
     };
-    _rtmp.setLoadBalance(LB_LeastConnections);
-    _rtmp.start();
+    _rtmp->setLoadBalance(LB_LeastConnections);
+    _rtmp->start();
 }
 
 void WebRtcServer::startRtsp()
 {
     GET_CONFIG(uint16_t, port, ::Rtsp::kPort);
     if (port <= 0) return;
-    int listenfd = _rtsp.createsocket(port);
+    _rtsp = std::make_shared<hv::TcpServerEventLoopTmpl<mediakit::RtspSession>>();
+    int listenfd = _rtsp->createsocket(port);
     if (listenfd < 0) {
+        _rtsp = nullptr;
         return;
     }
-    LOGI("listen rtmp on %d", port);
-    _rtsp.onConnection = [](const std::shared_ptr<RtspSession>& session) {
+    LOGI("listen rtsp on %d", port);
+    _rtsp->onConnection = [](const std::shared_ptr<RtspSession>& session) {
         if (session->isConnected()) {
             std::weak_ptr<RtspSession> weak_ptr = session;
             hv::setInterval(10000, [weak_ptr](hv::TimerID tId) {
@@ -623,13 +635,13 @@ void WebRtcServer::startRtsp()
             session->onError(SockException(Err_eof, "socket closed"));
         }
     };
-    _rtsp.onMessage = [](const std::shared_ptr<RtspSession>& session, hv::Buffer* buf) {
+    _rtsp->onMessage = [](const std::shared_ptr<RtspSession>& session, hv::Buffer* buf) {
         auto buffer = BufferRaw::create();
         buffer->assign((char*)buf->data(), buf->size());
         session->onRecv(buffer);
     };
-    _rtsp.setLoadBalance(LB_LeastConnections);
-    _rtsp.start();
+    _rtsp->setLoadBalance(LB_LeastConnections);
+    _rtsp->start();
 }
 
 //////////////////////////////////////////////////////////////////////////

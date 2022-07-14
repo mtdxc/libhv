@@ -50,7 +50,7 @@ public:
     void stop();
 
     static WebRtcServer& Instance();
-    hv::EventLoopPtr getPoller() { return _udp.nextLoop(nullptr); }
+    hv::EventLoopPtr getPoller();
 
     using onCreateRtc = std::function<void(const WebRtcInterface &rtc)>;
     using Plugin = std::function<void(std::shared_ptr<toolkit::Session> sender, const std::string &offer, const WebRtcArgs &args, const onCreateRtc &cb)>;
@@ -83,9 +83,9 @@ private:
     std::unordered_map<std::string, std::weak_ptr<WebRtcTransportImp> > _map;
 
     std::string _local_ip;
-    hv::UdpServerTmpl2<WebRtcSession> _udp;
-    hv::TcpServerTmpl<mediakit::RtmpSession> _rtmp;
-    hv::TcpServerTmpl<mediakit::RtspSession> _rtsp;
+    std::shared_ptr<hv::UdpServerEventLoopTmpl2<WebRtcSession>> _udp;
+    std::shared_ptr<hv::TcpServerEventLoopTmpl<mediakit::RtmpSession>> _rtmp;
+    std::shared_ptr<hv::TcpServerEventLoopTmpl<mediakit::RtspSession>> _rtsp;
     websocket_server_t _http;
     mutable std::mutex _mtx_creator;
     std::unordered_map<std::string, Plugin> _map_creator;

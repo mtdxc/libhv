@@ -9,6 +9,7 @@ namespace hv {
 
 class EventLoopThreadPool : public Status {
 public:
+    typedef std::shared_ptr<EventLoopThreadPool> Ptr;
     EventLoopThreadPool(int thread_num = std::thread::hardware_concurrency()) {
         setStatus(kInitializing);
         thread_num_ = thread_num;
@@ -21,9 +22,9 @@ public:
         join();
     }
 
-    static EventLoopThreadPool* Instance() {
-        static EventLoopThreadPool pool;
-        return &pool;
+    static Ptr Instance() {
+        static Ptr pool(new EventLoopThreadPool());
+        return pool;
     }
 
     int threadNum() {
