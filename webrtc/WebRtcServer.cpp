@@ -7,9 +7,9 @@
  * LICENSE file in the root of the source tree. All contributing project authors
  * may be found in the AUTHORS file in the root of the source tree.
  */
-#include "IceServer.hpp"
 #include "WebRtcServer.h"
-#include "WebRtcTransport.h"
+#include "webrtc/IceServer.hpp"
+#include "webrtc/WebRtcTransport.h"
 #include "hstring.h"
 #include "hbase.h"
 #include <string>
