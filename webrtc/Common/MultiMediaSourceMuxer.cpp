@@ -18,9 +18,7 @@
 #include "Record/HlsRecorder.h"
 #include "Record/HlsMediaSource.h"
 #endif
-#ifdef ENABLE_TS
 #include "TS/TSMediaSourceMuxer.h"
-#endif
 #ifdef ENABLE_FMP4
 #include "FMP4/FMP4MediaSourceMuxer.h"
 #endif
@@ -107,11 +105,9 @@ MultiMediaSourceMuxer::MultiMediaSourceMuxer(const string &vhost, const string &
     if (option.enable_mp4) {
         // _mp4 = Recorder::createRecorder(Recorder::type_mp4, vhost, app, stream, option.mp4_save_path, option.mp4_max_second);
     }
-#ifdef ENABLE_TS
     if (option.enable_ts) {
         _ts = std::make_shared<TSMediaSourceMuxer>(vhost, app, stream);
     }
-#endif
 #if defined(ENABLE_MP4)
     if (option.enable_fmp4) {
         _fmp4 = std::make_shared<FMP4MediaSourceMuxer>(vhost, app, stream);
@@ -134,11 +130,9 @@ void MultiMediaSourceMuxer::setMediaListener(const std::weak_ptr<MediaSourceEven
     if (_rtsp) {
         _rtsp->setListener(self);
     }
-#if defined(ENABLE_TS)
     if (_ts) {
         _ts->setListener(self);
     }
-#endif
 #if defined(ENABLE_MP4)
     if (_fmp4) {
         _fmp4->setListener(self);
@@ -160,9 +154,7 @@ int MultiMediaSourceMuxer::totalReaderCount() const {
     int ret = 0;
     if(_rtsp) ret += _rtsp->readerCount();
     if(_rtmp) ret += _rtmp->readerCount();
-#if defined(ENABLE_TS)
     if(_ts) ret += _ts->readerCount();
-#endif
 #if defined(ENABLE_MP4)
     if(_fmp4) ret += _fmp4->readerCount();
 #endif
@@ -295,10 +287,8 @@ bool MultiMediaSourceMuxer::onTrackReady(const Track::Ptr &track) {
         ret = true;
     if (_rtsp && _rtsp->addTrack(track))
         ret = true;
-#if defined(ENABLE_TS)
     if (_ts && _ts->addTrack(track))
         ret = true;
-#endif
 #if defined(ENABLE_MP4)
     if (_fmp4 && _fmp4->addTrack(track))
         ret =  true;
@@ -345,11 +335,9 @@ void MultiMediaSourceMuxer::resetTracks() {
     if (_rtsp) {
         _rtsp->resetTracks();
     }
-#if defined(ENABLE_TS)
     if (_ts) {
         _ts->resetTracks();
     }
-#endif
 #if defined(ENABLE_MP4)
     if (_fmp4) {
         _fmp4->resetTracks();
@@ -388,10 +376,8 @@ bool MultiMediaSourceMuxer::onTrackFrame(const Frame::Ptr &frame_in) {
         ret =  true;
     if (_rtsp && _rtsp->inputFrame(frame))
         ret =  true;
-#if defined(ENABLE_TS)
     if (_ts && _ts->inputFrame(frame))
         ret = true;
-#endif
     //拷贝智能指针，目的是为了防止跨线程调用设置录像相关api导致的线程竞争问题
     //此处使用智能指针拷贝来确保线程安全，比互斥锁性能更优
 #if defined(ENABLE_HLS)
@@ -425,9 +411,7 @@ bool MultiMediaSourceMuxer::isEnabled(){
         auto hls = _hls;
         auto flag = (_rtmp && _rtmp->isEnabled()) ||
                     (_rtsp && _rtsp->isEnabled()) ||
-#if defined(ENABLE_TS)
                     (_ts && _ts->isEnabled()) ||
-#endif
                     #if defined(ENABLE_MP4)
                     (_fmp4 && _fmp4->isEnabled()) ||
                     #endif
