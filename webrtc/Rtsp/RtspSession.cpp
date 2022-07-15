@@ -21,7 +21,7 @@ using namespace std;
 using namespace toolkit;
 
 namespace mediakit {
-bool makeSockPair(std::shared_ptr<hv::SocketChannel> pair[2], const string& local_ip, bool re_use_port = true, bool is_udp = true) {
+bool makeSockPair(std::shared_ptr<hv::SocketChannel> pair[2], const std::string& local_ip, bool re_use_port, bool is_udp) {
     //hloop_create_udp_server(hevent_loop(io_), local_ip.c_str(), 1234);
     static auto func = [](const string& str, int index) {
         uint16_t port[] = { 30000, 35000 };
@@ -585,20 +585,12 @@ void RtspSession::onAuthDigest(const string &realm,const string &auth_md5){
         (2)当password为ANSI字符串,则
             response= md5( md5(username:realm:password):nonce:md5(public_method:url) );
          */
-        char output[33] = { 0 };
-        std::string input;
         auto encrypted_pwd = good_pwd;
         if(!encrypted) {
             //提供的是明文密码
-            input = username + ":" + realm + ":" + good_pwd;
-            hv_md5_hex((uint8_t*)input.data(), input.length(), output, 33);
-            encrypted_pwd = output;
+            encrypted_pwd = Md5Str(username + ":" + realm + ":" + good_pwd);
         }
-        input = "DESCRIBE:" + uri;
-        hv_md5_hex((uint8_t*)input.data(), input.length(), output, 33);
-        input = encrypted_pwd + ":" + nonce + ":" + output;
-        hv_md5_hex((uint8_t*)input.data(), input.length(), output, 33);
-        std::string good_response = output;
+        std::string good_response = Md5Str(encrypted_pwd + ":" + nonce + ":" + Md5Str("DESCRIBE:" + uri));
         if(strcasecmp(good_response.data(),response.data()) == 0) {
             //认证成功！md5不区分大小写
             onAuthSuccess();

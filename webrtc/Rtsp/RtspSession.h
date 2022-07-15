@@ -28,6 +28,7 @@
 #include "Rtcp/RtcpContext.h"
 
 namespace mediakit {
+bool makeSockPair(std::shared_ptr<hv::SocketChannel> pair[2], const std::string& local_ip, bool re_use_port = true, bool is_udp = true);
 
 class RtspSession;
 typedef BufferOffset<Buffer::Ptr> BufferRtp;

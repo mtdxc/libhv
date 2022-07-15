@@ -304,12 +304,19 @@ public:
         char buf[SOCKADDR_STRLEN] = {0};
         return SOCKADDR_STR(addr, buf);
     }
-
+    uint16_t localport() {
+        if (io_ == nullptr) return 0;
+        return sockaddr_port((sockaddr_u*)hio_localaddr(io_));
+    }
     std::string peeraddr() {
         if (io_ == NULL) return "";
         struct sockaddr* addr = hio_peeraddr(io_);
         char buf[SOCKADDR_STRLEN] = {0};
         return SOCKADDR_STR(addr, buf);
+    }
+    uint16_t peerport() {
+        if (io_ == nullptr) return 0;
+        return sockaddr_port((sockaddr_u*)hio_peeraddr(io_));
     }
 
     EventLoopPtr getPoller() {

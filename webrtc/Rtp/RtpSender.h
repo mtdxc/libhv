@@ -31,7 +31,7 @@ public:
      * @param args 发送参数
      * @param cb 连接目标端口是否成功的回调
      */
-    void startSend(const MediaSourceEvent::SendRtpArgs &args, const std::function<void(uint16_t local_port, const toolkit::SockException &ex)> &cb);
+    void startSend(const MediaSourceEvent::SendRtpArgs &args, const std::function<void(uint16_t local_port, const SockException &ex)> &cb);
 
     /**
      * 输入帧数据
@@ -57,11 +57,11 @@ public:
 
 private:
     //合并写输出
-    void onFlushRtpList(std::shared_ptr<std::list<toolkit::Buffer::Ptr> > rtp_list);
+    void onFlushRtpList(std::shared_ptr<std::list<Buffer::Ptr> > rtp_list);
     //udp/tcp连接成功回调
     void onConnect();
     //异常断开socket事件
-    void onErr(const toolkit::SockException &ex, bool is_connect = false);
+    void onErr(const SockException &ex, bool is_connect = false);
 
 private:
     bool _is_connect = false;
