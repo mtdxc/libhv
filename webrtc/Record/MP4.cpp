@@ -11,9 +11,16 @@
 #ifdef ENABLE_MP4
 #include "MP4.h"
 #include "Util/File.h"
-#include "Util/logger.h"
+#include "logger.h"
 #include "Common/config.h"
-
+#include "mp4-writer.h"
+#include "mov-writer.h"
+#include "mov-reader.h"
+#include "mpeg4-hevc.h"
+#include "mpeg4-avc.h"
+#include "mpeg4-aac.h"
+#include "mov-buffer.h"
+#include "mov-format.h"
 using namespace toolkit;
 using namespace std;
 

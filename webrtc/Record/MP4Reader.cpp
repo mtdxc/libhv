@@ -12,8 +12,8 @@
 
 #include "MP4Reader.h"
 #include "Common/config.h"
-#include "Thread/WorkThreadPool.h"
 #include "Util/File.h"
+//#include "Thread/WorkThreadPool.h"
 using std::string;
 using namespace toolkit;
 
@@ -115,7 +115,7 @@ void MP4Reader::startReadMP4(const EventPoller::Ptr &poller_in, uint64_t sample_
     }
 
     //未指定线程，那么使用后台线程(读写文件采用后台线程)
-    auto poller = poller_in ? poller_in : WorkThreadPool::Instance().getPoller();
+    auto poller = poller_in ? poller_in : hv::EventLoopThreadPool::Instance()->loop();
     auto timer_sec = (sample_ms ? sample_ms : sampleMS) / 1000.0f;
 
     //启动定时器

@@ -10,12 +10,12 @@
 
 #ifdef ENABLE_MP4
 #include "MP4Demuxer.h"
-#include "Util/logger.h"
+#include "logger.h"
 #include "Extension/H265.h"
 #include "Extension/H264.h"
 #include "Extension/AAC.h"
-#include "Extension/G711.h"
-#include "Extension/Opus.h"
+#include "Extension/AudioTrack.h"
+
 using namespace toolkit;
 
 namespace mediakit {

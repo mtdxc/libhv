@@ -19,7 +19,7 @@
 #include "Record/HlsMediaSource.h"
 #endif
 #include "TS/TSMediaSourceMuxer.h"
-#ifdef ENABLE_FMP4
+#ifdef ENABLE_MP4
 #include "FMP4/FMP4MediaSourceMuxer.h"
 #endif
 #include "Rtp/RtpSender.h"

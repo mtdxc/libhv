@@ -79,8 +79,8 @@ private:
     uint32_t _seek_to = 0;
     std::string _file_path;
     std::recursive_mutex _mtx;
-    toolkit::Ticker _seek_ticker;
-    toolkit::Timer::Ptr _timer;
+    Ticker _seek_ticker;
+    hv::TimerID _timer;
     MP4Demuxer::Ptr _demuxer;
     MultiMediaSourceMuxer::Ptr _muxer;
 };
