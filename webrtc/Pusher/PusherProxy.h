@@ -23,7 +23,7 @@ public:
 
     // 如果retry_count<0,则一直重试播放；否则重试retry_count次数
     // 默认一直重试，创建此对象时候，需要外部保证MediaSource存在
-    PusherProxy(const MediaSource::Ptr &src, int retry_count = -1, const toolkit::EventPoller::Ptr &poller = nullptr);
+    PusherProxy(const MediaSource::Ptr &src, int retry_count = -1, const EventPoller::Ptr &poller = nullptr);
     ~PusherProxy() override;
 
     /**
@@ -54,7 +54,7 @@ private:
 
 private:
     int _retry_count;
-    toolkit::Timer::Ptr _timer;
+    Timer::Ptr _timer;
     std::weak_ptr<MediaSource> _weak_src;
     Event _on_close;
     Event _on_publish;

@@ -15,7 +15,6 @@
 #include "Extension/H264.h"
 
 using namespace std;
-using namespace toolkit;
 
 namespace mediakit {
 

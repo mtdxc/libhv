@@ -57,7 +57,7 @@ private:
 };
 
 
-namespace toolkit {
+namespace mediakit {
 
 using Session = hv::SocketChannel;
 using SockInfo = hv::SocketChannel;

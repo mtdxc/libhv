@@ -15,7 +15,7 @@
 #include "logger.h"
 #include "Extension/AAC.h"
 #include "Rtmp/RtmpMediaSource.h"
-using namespace toolkit;
+
 using namespace std;
 
 namespace mediakit {
@@ -178,7 +178,7 @@ std::shared_ptr<SockInfo> PlayerProxy::getOriginSock(MediaSource &sender) const 
     return getSockInfo();
 }
 
-toolkit::EventPoller::Ptr PlayerProxy::getOwnerPoller(MediaSource &sender) {
+EventPoller::Ptr PlayerProxy::getOwnerPoller(MediaSource &sender) {
     return getPoller();
 }
 

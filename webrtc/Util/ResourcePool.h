@@ -18,7 +18,7 @@
 #include <mutex>
 #include <unordered_set>
 
-namespace toolkit {
+namespace mediakit {
 
 #if (defined(__GNUC__) && (__GNUC__ >= 5 || (__GNUC__ >= 4 && __GNUC_MINOR__ >= 9))) || defined(__clang__)             \
     || !defined(__GNUC__)
@@ -195,5 +195,5 @@ private:
     std::shared_ptr<ResourcePool_l<C>> pool;
 };
 
-} /* namespace toolkit */
+} /* namespace mediakit */
 #endif /* UTIL_RECYCLEPOOL_H_ */

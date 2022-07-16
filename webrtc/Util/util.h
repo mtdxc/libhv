@@ -75,9 +75,9 @@ private:
         return instance; \
     }
 
-namespace toolkit {
+namespace mediakit {
 
-#define StrPrinter ::toolkit::_StrPrinter()
+#define StrPrinter mediakit::_StrPrinter()
 class _StrPrinter : public std::string {
 public:
     _StrPrinter() {}

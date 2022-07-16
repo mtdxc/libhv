@@ -15,7 +15,6 @@
 #include "Util/File.h"
 
 using std::string;
-using namespace toolkit;
 
 namespace mediakit {
 

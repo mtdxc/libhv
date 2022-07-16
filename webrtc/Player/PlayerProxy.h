@@ -28,7 +28,7 @@ public:
     PlayerProxy(const std::string &vhost, const std::string &app, const std::string &stream_id,
                 const ProtocolOption &option,
                 int retry_count = -1, ///< 重试次数， 如果 < 0 则一直重试播放；否则重试retry_count次数
-                const toolkit::EventPoller::Ptr &poller = nullptr);
+                const EventPoller::Ptr &poller = nullptr);
 
     ~PlayerProxy() override;
 
@@ -64,8 +64,8 @@ private:
     int totalReaderCount(MediaSource &sender) override;
     MediaOriginType getOriginType(MediaSource &sender) const override;
     std::string getOriginUrl(MediaSource &sender) const override;
-    std::shared_ptr<toolkit::SockInfo> getOriginSock(MediaSource &sender) const override;
-    toolkit::EventPoller::Ptr getOwnerPoller(MediaSource &sender) override;
+    std::shared_ptr<SockInfo> getOriginSock(MediaSource &sender) const override;
+    EventPoller::Ptr getOwnerPoller(MediaSource &sender) override;
 
     void rePlay(const std::string &strUrl,int iFailedCnt);
     void onPlaySuccess();
@@ -78,7 +78,7 @@ private:
     std::string _app;
     std::string _stream_id;
     std::string _pull_url;
-    toolkit::Timer::Ptr _timer;
+    Timer::Ptr _timer;
 
     MultiMediaSourceMuxer::Ptr _muxer;
 };

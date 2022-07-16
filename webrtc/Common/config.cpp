@@ -17,7 +17,6 @@
 #include <stdio.h>
 
 using namespace std;
-using namespace toolkit;
 
 namespace mediakit {
 

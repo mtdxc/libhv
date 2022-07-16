@@ -15,7 +15,6 @@
 #include "Util/File.h"
 //#include "Thread/WorkThreadPool.h"
 using std::string;
-using namespace toolkit;
 
 namespace mediakit {
 

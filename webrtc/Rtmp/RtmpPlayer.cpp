@@ -14,7 +14,7 @@
 #include "logger.h"
 #include "Util/onceToken.h"
 
-using namespace toolkit;
+
 using std::string;
 
 namespace mediakit {

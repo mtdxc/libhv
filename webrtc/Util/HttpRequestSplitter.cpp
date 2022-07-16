@@ -11,7 +11,7 @@
 #include "HttpRequestSplitter.h"
 #include "logger.h"
 #include "Util/util.h"
-using namespace toolkit;
+
 
 //协议解析最大缓存1兆数据
 static constexpr size_t kMaxCacheSize = 1 * 1024 * 1024;

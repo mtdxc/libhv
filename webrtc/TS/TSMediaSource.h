@@ -31,11 +31,11 @@ public:
 };
 
 //TS直播源
-class TSMediaSource : public MediaSource, public toolkit::RingDelegate<TSPacket::Ptr>, private PacketCache<TSPacket>{
+class TSMediaSource : public MediaSource, public RingDelegate<TSPacket::Ptr>, private PacketCache<TSPacket>{
 public:
     using Ptr = std::shared_ptr<TSMediaSource>;
     using RingDataType = std::shared_ptr < std::list<TSPacket::Ptr> > ;
-    using RingType = toolkit::RingBuffer<RingDataType>;
+    using RingType = RingBuffer<RingDataType>;
 
     TSMediaSource(const std::string &vhost,
                   const std::string &app,

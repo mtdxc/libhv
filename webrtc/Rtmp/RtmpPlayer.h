@@ -30,13 +30,13 @@ class RtmpPlayer : public PlayerBase, public hv::TcpClient, public RtmpProtocol,
     public std::enable_shared_from_this<RtmpPlayer> {
 public:
     typedef std::shared_ptr<RtmpPlayer> Ptr;
-    RtmpPlayer(const toolkit::EventPoller::Ptr &poller);
+    RtmpPlayer(const EventPoller::Ptr &poller);
     ~RtmpPlayer() override;
 
     void shutdown(const SockException& e, bool safe = false) {
         InfoL << e.what();
         closesocket();
-        //toolkit::Session::close(safe);
+        //Session::close(safe);
     }
 
     void play(const std::string &strUrl) override;
@@ -107,11 +107,11 @@ private:
     //rtmp接收超时计时器
     Ticker _rtmp_recv_ticker;
     //心跳发送定时器
-    std::shared_ptr<toolkit::Timer> _beat_timer;
+    std::shared_ptr<Timer> _beat_timer;
     //播放超时定时器
-    std::shared_ptr<toolkit::Timer> _play_timer;
+    std::shared_ptr<Timer> _play_timer;
     //rtmp接收超时定时器
-    std::shared_ptr<toolkit::Timer> _rtmp_recv_timer;
+    std::shared_ptr<Timer> _rtmp_recv_timer;
 };
 
 } /* namespace mediakit */

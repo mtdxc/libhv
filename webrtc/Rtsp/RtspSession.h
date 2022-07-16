@@ -33,7 +33,7 @@ bool makeSockPair(std::shared_ptr<hv::SocketChannel> pair[2], const std::string&
 class RtspSession;
 typedef BufferOffset<Buffer::Ptr> BufferRtp;
 
-class RtspSession : public toolkit::Session, public RtspSplitter, public RtpReceiver, public MediaSourceEvent,
+class RtspSession : public Session, public RtspSplitter, public RtpReceiver, public MediaSourceEvent,
     public std::enable_shared_from_this<RtspSession> {
 public:
     using Ptr = std::shared_ptr<RtspSession>;
@@ -47,7 +47,7 @@ public:
 
     void shutdown(const SockException& e, bool safe = false) {
         InfoP(this) << "shutdown " << e.what();
-        toolkit::Session::close(safe);
+        Session::close(safe);
     }
     ////TcpSession override////
     void onRecv(const Buffer::Ptr &buf);
@@ -77,8 +77,8 @@ protected:
     // 获取媒体源url或者文件路径
     std::string getOriginUrl(MediaSource &sender) const override;
     // 获取媒体源客户端相关信息
-    std::shared_ptr<toolkit::SockInfo> getOriginSock(MediaSource &sender) const override;
-    toolkit::EventPoller::Ptr getOwnerPoller(MediaSource &sender) override;
+    std::shared_ptr<SockInfo> getOriginSock(MediaSource &sender) const override;
+    EventPoller::Ptr getOwnerPoller(MediaSource &sender) override;
 
     /////TcpSession override////
     ssize_t send(Buffer::Ptr pkt);
@@ -220,7 +220,7 @@ private:
 /**
  * 支持ssl加密的rtsp服务器，可用于诸如亚马逊echo show这样的设备访问
  */
-//using RtspSessionWithSSL = toolkit::TcpSessionWithSSL<RtspSession>;
+//using RtspSessionWithSSL = TcpSessionWithSSL<RtspSession>;
 
 } /* namespace mediakit */
 

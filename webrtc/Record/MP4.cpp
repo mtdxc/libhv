@@ -21,7 +21,7 @@
 #include "mpeg4-aac.h"
 #include "mov-buffer.h"
 #include "mov-format.h"
-using namespace toolkit;
+
 using namespace std;
 
 namespace mediakit {

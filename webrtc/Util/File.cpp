@@ -23,7 +23,7 @@
 //#include "uv_errno.h"
 
 using namespace std;
-using namespace toolkit;
+using namespace mediakit;
 
 #if !defined(_WIN32)
 #define    _unlink    unlink
@@ -99,7 +99,7 @@ int closedir(DIR *d) {
 }
 #endif // defined(_WIN32)
 
-namespace toolkit {
+namespace mediakit {
 
 FILE *File::create_file(const char *file, const char *mode) {
     std::string path = file;

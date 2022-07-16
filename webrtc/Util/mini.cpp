@@ -23,7 +23,7 @@
 #include "hstring.h"
 using namespace std;
 
-namespace toolkit {
+//namespace toolkit {
 
 template<>
 mINI_basic<string, variant> &mINI_basic<string, variant>::Instance(){
@@ -54,6 +54,6 @@ uint8_t variant::as<uint8_t>() const {
     return 0xFF & as_default<int>();
 }
 
-}  // namespace toolkit
+//}  // namespace toolkit
 
 

@@ -260,7 +260,7 @@ std::string RtpExt::dumpString() const {
             break;
         }
         default: {
-            printer << getExtName(_type) << ", hex:" << toolkit::hexdump(data(), size());
+            printer << getExtName(_type) << ", hex:" << mediakit::hexdump(data(), size());
             break;
         }
     }

@@ -15,7 +15,7 @@
 #include "RtspSession.h"
 
 using std::string;
-using namespace toolkit;
+
 
 namespace mediakit {
 

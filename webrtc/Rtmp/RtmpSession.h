@@ -25,7 +25,7 @@
 
 namespace mediakit {
 /// Rtmp服务器会话，负责承载rtmp推流和拉流功能.
-class RtmpSession : public toolkit::Session, public RtmpProtocol, public MediaSourceEvent,
+class RtmpSession : public Session, public RtmpProtocol, public MediaSourceEvent,
     public std::enable_shared_from_this<RtmpSession>{
 public:
     using Ptr = std::shared_ptr<RtmpSession>;
@@ -35,7 +35,7 @@ public:
 
     void shutdown(const SockException& e, bool safe= false) {
         InfoP(this) << e.what();
-        toolkit::Session::close(safe);
+        Session::close(safe);
     }
     /*
     来数据回调
@@ -93,8 +93,8 @@ private:
     // 获取媒体源url或者文件路径
     std::string getOriginUrl(MediaSource &sender) const override;
     // 获取媒体源客户端相关信息
-    std::shared_ptr<toolkit::SockInfo> getOriginSock(MediaSource &sender) const override;
-    toolkit::EventPoller::Ptr getOwnerPoller(MediaSource &sender) override;
+    std::shared_ptr<SockInfo> getOriginSock(MediaSource &sender) const override;
+    EventPoller::Ptr getOwnerPoller(MediaSource &sender) override;
 
     void setSocketFlags();
     std::string getStreamId(const std::string &str);
@@ -124,7 +124,7 @@ private:
 /**
  * 支持ssl加密的rtmp服务器
  */
-//using RtmpSessionWithSSL = toolkit::TcpSessionWithSSL<RtmpSession>;
+//using RtmpSessionWithSSL = TcpSessionWithSSL<RtmpSession>;
 
 } /* namespace mediakit */
 #endif /* SRC_RTMP_RTMPSESSION_H_ */

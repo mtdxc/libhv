@@ -26,7 +26,7 @@ public:
     using Ptr = std::shared_ptr<RtmpPlayerImp>;
     using Super = PlayerImp<RtmpPlayer,PlayerBase>;
 
-    RtmpPlayerImp(const toolkit::EventPoller::Ptr &poller) : Super(poller) {};
+    RtmpPlayerImp(const EventPoller::Ptr &poller) : Super(poller) {};
 
     ~RtmpPlayerImp() override {
         DebugL << std::endl;

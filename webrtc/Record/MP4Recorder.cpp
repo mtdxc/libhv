@@ -18,7 +18,6 @@
 //#include "Thread/WorkThreadPool.h"
 #include "Util/NoticeCenter.h"
 using namespace std;
-using namespace toolkit;
 
 namespace mediakit {
 

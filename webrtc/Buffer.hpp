@@ -30,7 +30,7 @@ template <typename T> struct is_pointer<T*> : public std::true_type {};
 template <typename T> struct is_pointer<const T*> : public std::true_type {};
 
 //缓存基类
-class Buffer : public toolkit::noncopyable {
+class Buffer : public noncopyable {
 public:
     using Ptr = std::shared_ptr<Buffer>;
 
@@ -148,7 +148,7 @@ public:
     }
 
 protected:
-    friend class toolkit::ResourcePool_l<BufferRaw>;
+    friend class ResourcePool_l<BufferRaw>;
 
     BufferRaw(size_t capacity = 0) {
         if (capacity) {

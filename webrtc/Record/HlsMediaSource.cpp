@@ -10,7 +10,6 @@
 
 #include "HlsMediaSource.h"
 
-using namespace toolkit;
 
 namespace mediakit {
 

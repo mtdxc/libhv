@@ -12,7 +12,7 @@
 #include "Rtmp/utils.h"
 #include "RtmpMediaSource.h"
 #include "logger.h"
-using namespace toolkit;
+
 using namespace std;
 
 #define C1_DIGEST_SIZE 32

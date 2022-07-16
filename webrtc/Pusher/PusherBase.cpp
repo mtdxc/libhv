@@ -13,7 +13,6 @@
 #include "Rtsp/RtspPusher.h"
 #include "Rtmp/RtmpPusher.h"
 
-using namespace toolkit;
 
 namespace mediakit {
 

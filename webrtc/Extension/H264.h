@@ -26,7 +26,7 @@ template<typename Parent>
 class H264FrameHelper : public Parent{
 public:
     friend class FrameImp;
-    // friend class toolkit::ResourcePool_l<H264FrameHelper>;
+    // friend class ResourcePool_l<H264FrameHelper>;
     using Ptr = std::shared_ptr<H264FrameHelper>;
 
     enum {

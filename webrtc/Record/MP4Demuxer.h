@@ -79,7 +79,7 @@ private:
     MP4FileDisk::Reader _mov_reader;
     uint64_t _duration_ms = 0;
     std::map<int, Track::Ptr> _track_to_codec;
-    toolkit::ResourcePool<BufferRaw> _buffer_pool;
+    ResourcePool<BufferRaw> _buffer_pool;
 };
 
 

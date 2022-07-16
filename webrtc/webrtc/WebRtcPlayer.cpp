@@ -11,7 +11,7 @@
 #include "WebRtcPlayer.h"
 #include "Util/NoticeCenter.h"
 using namespace mediakit;
-using namespace toolkit;
+
 WebRtcPlayer::Ptr WebRtcPlayer::create(const hv::EventLoopPtr &poller,
                                        const RtspMediaSource::Ptr &src,
                                        const MediaInfo &info) {

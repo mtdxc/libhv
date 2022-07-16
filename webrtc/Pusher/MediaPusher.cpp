@@ -13,7 +13,6 @@
 #include "PusherBase.h"
 
 using std::string;
-using namespace toolkit;
 
 namespace mediakit {
 

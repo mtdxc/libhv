@@ -71,7 +71,7 @@ int uv_exepath(char *buffer, int *size) {
 
 using namespace std;
 
-namespace toolkit {
+namespace mediakit {
 
 static constexpr char CCH[] = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 

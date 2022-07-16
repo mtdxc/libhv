@@ -24,7 +24,6 @@
 #endif
 #include "Rtp/RtpSender.h"
 using namespace std;
-using namespace toolkit;
 
 StatisticImp(mediakit::MultiMediaSourceMuxer);
 

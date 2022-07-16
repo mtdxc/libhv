@@ -20,7 +20,7 @@ namespace mediakit{
 class RtmpRing {
 public:
     using Ptr = std::shared_ptr<RtmpRing>;
-    using RingType = toolkit::RingBuffer<RtmpPacket::Ptr>;
+    using RingType = RingBuffer<RtmpPacket::Ptr>;
 
     RtmpRing() = default;
     virtual ~RtmpRing() = default;

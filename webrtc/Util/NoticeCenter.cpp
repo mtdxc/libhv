@@ -11,7 +11,7 @@
 #include "util.h"
 #include "NoticeCenter.h"
 
-namespace toolkit {
+//namespace toolkit {
 
 INSTANCE_IMP(NoticeCenter)
 
@@ -75,5 +75,5 @@ void NoticeCenter::delDispatcher(const std::string &event, const EventDispatcher
     }
 }
 
-} /* namespace toolkit */
+//} /* namespace toolkit */
 

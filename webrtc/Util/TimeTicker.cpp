@@ -1,6 +1,6 @@
 #include "TimeTicker.h"
 #include "util.h"
-using toolkit::getCurrentMillisecond;
+using mediakit::getCurrentMillisecond;
 
 Ticker::Ticker(uint64_t min_ms /*= 0*/)
 {

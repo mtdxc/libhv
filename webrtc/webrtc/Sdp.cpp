@@ -15,7 +15,6 @@
 #include "Common/config.h"
 
 using namespace std;
-using namespace toolkit;
 using namespace mediakit;
 
 namespace RTC {

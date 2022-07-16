@@ -10,7 +10,6 @@
 
 #include "PusherProxy.h"
 
-using namespace toolkit;
 using namespace std;
 
 namespace mediakit {

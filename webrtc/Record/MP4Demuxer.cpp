@@ -16,8 +16,6 @@
 #include "Extension/AAC.h"
 #include "Extension/AudioTrack.h"
 
-using namespace toolkit;
-
 namespace mediakit {
 
 MP4Demuxer::MP4Demuxer() {}

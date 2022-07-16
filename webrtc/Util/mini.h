@@ -27,7 +27,7 @@
 #include <vector>
 #include <fstream>
 #include "util.h"
-namespace toolkit {
+//namespace toolkit {
 
 template<typename key, typename variant>
 class mINI_basic : public std::map<key, variant> {
@@ -39,17 +39,17 @@ public:
         std::string symbol, tag;
         for (auto &line : lines) {
             // trim blanks
-            line = trim(line);
+            line = mediakit::trim(line);
             // split line into tokens and parse tokens
             if (line.empty() || line.front() == ';' || line.front() == '#') {
                 continue;
             }
             if (line.size() >= 3 && line.front() == '[' && line.back() == ']') {
-                tag = trim(line.substr(1, line.size() - 2));
+                tag = mediakit::trim(line.substr(1, line.size() - 2));
             } else {
                 auto at = line.find('=');
-                symbol = trim(tag + "." + line.substr(0, at));
-                (*this)[symbol] = (at == std::string::npos ? std::string() : trim(line.substr(at + 1)));
+                symbol = mediakit::trim(tag + "." + line.substr(0, at));
+                (*this)[symbol] = (at == std::string::npos ? std::string() : mediakit::trim(line.substr(at + 1)));
             }
         }
     }
@@ -167,6 +167,6 @@ uint8_t variant::as<uint8_t>() const;
 
 using mINI = mINI_basic<std::string, variant>;
 
-}  // namespace toolkit
+//}  // namespace toolkit
 #endif //UTIL_MINI_H
 

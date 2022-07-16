@@ -26,19 +26,19 @@ public:
                 const std::string &vhost,
                 const std::string &app,
                 const std::string &stream,
-                const toolkit::EventPoller::Ptr &poller = nullptr);
+                const EventPoller::Ptr &poller = nullptr);
 
     MediaPusher(const MediaSource::Ptr &src,
-                const toolkit::EventPoller::Ptr &poller = nullptr);
+                const EventPoller::Ptr &poller = nullptr);
 
     virtual ~MediaPusher();
 
     void publish(const std::string &url) override;
-    toolkit::EventPoller::Ptr getPoller();
+    EventPoller::Ptr getPoller();
 
 private:
     std::weak_ptr<MediaSource> _src;
-    toolkit::EventPoller::Ptr _poller;
+    EventPoller::Ptr _poller;
 };
 
 } /* namespace mediakit */

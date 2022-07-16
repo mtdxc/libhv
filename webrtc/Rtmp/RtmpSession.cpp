@@ -13,7 +13,7 @@
 #include "Util/onceToken.h"
 
 using std::string;
-using namespace toolkit;
+
 
 namespace mediakit {
 
@@ -579,7 +579,7 @@ std::shared_ptr<SockInfo> RtmpSession::getOriginSock(MediaSource &sender) const 
     return const_cast<RtmpSession *>(this)->shared_from_this();
 }
 
-toolkit::EventPoller::Ptr RtmpSession::getOwnerPoller(MediaSource &sender) {
+EventPoller::Ptr RtmpSession::getOwnerPoller(MediaSource &sender) {
     return getPoller();
 }
 

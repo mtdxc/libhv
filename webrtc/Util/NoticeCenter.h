@@ -19,7 +19,7 @@
 #include <unordered_map>
 #include "function_traits.h"
 
-namespace toolkit {
+//namespace toolkit {
 
 class EventDispatcher {
 public:
@@ -124,5 +124,5 @@ private:
     std::unordered_map<std::string, EventDispatcher::Ptr> _mapListener;
 };
 
-} /* namespace toolkit */
+//} /* namespace toolkit */
 #endif /* SRC_UTIL_NOTICECENTER_H_ */

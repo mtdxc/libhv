@@ -49,7 +49,7 @@ private:
     BufferRaw::Ptr obtainBuffer();
 
 private:
-    toolkit::ResourcePool<BufferRaw> _packet_pool;
+    ResourcePool<BufferRaw> _packet_pool;
     RtmpMediaSource::RingType::RingReader::Ptr _ring_reader;
 };
 

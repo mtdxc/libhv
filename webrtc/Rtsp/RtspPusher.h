@@ -27,12 +27,12 @@ class RtspPusher : public hv::TcpClient, public RtspSplitter, public PusherBase,
     public std::enable_shared_from_this<RtspPusher>{
 public:
     typedef std::shared_ptr<RtspPusher> Ptr;
-    RtspPusher(const toolkit::EventPoller::Ptr &poller,const RtspMediaSource::Ptr &src);
+    RtspPusher(const EventPoller::Ptr &poller,const RtspMediaSource::Ptr &src);
     ~RtspPusher() override;
     void shutdown(const SockException& e, bool safe = false) {
         InfoL << e.what();
         closesocket();
-        // toolkit::Session::close(safe);
+        // Session::close(safe);
     }
 
     void publish(const std::string &url) override;
@@ -94,9 +94,9 @@ private:
     //RTCP端口, trackid idx 为数组下标
     hv::SocketChannelPtr _rtcp_sock[2];
     //超时功能实现
-    std::shared_ptr<toolkit::Timer> _publish_timer;
+    std::shared_ptr<Timer> _publish_timer;
     //心跳定时器
-    std::shared_ptr<toolkit::Timer> _beat_timer;
+    std::shared_ptr<Timer> _beat_timer;
 
     // 推送媒体源
     std::weak_ptr<RtspMediaSource> _push_src;

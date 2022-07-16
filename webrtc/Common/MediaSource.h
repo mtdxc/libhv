@@ -53,7 +53,7 @@ public:
     // 获取媒体源url或者文件路径
     virtual std::string getOriginUrl(MediaSource &sender) const;
     // 获取媒体源客户端相关信息
-    virtual std::shared_ptr<toolkit::SockInfo> getOriginSock(MediaSource &sender) const { return nullptr; }
+    virtual std::shared_ptr<SockInfo> getOriginSock(MediaSource &sender) const { return nullptr; }
 
     // 通知拖动进度条
     virtual bool seekTo(MediaSource &sender, uint32_t stamp) { return false; }
@@ -79,7 +79,7 @@ public:
     // 获取丢包率
     virtual int getLossRate(MediaSource &sender, TrackType type) { return -1; }
     // 获取所在线程
-    virtual toolkit::EventPoller::Ptr getOwnerPoller(MediaSource &sender) { return nullptr; }
+    virtual EventPoller::Ptr getOwnerPoller(MediaSource &sender) { return nullptr; }
 
     ////////////////////////仅供MultiMediaSourceMuxer对象继承////////////////////////
     // 开启或关闭录制
@@ -134,7 +134,7 @@ public:
 
     MediaOriginType getOriginType(MediaSource &sender) const override;
     std::string getOriginUrl(MediaSource &sender) const override;
-    std::shared_ptr<toolkit::SockInfo> getOriginSock(MediaSource &sender) const override;
+    std::shared_ptr<SockInfo> getOriginSock(MediaSource &sender) const override;
 
     bool seekTo(MediaSource &sender, uint32_t stamp) override;
     bool pause(MediaSource &sender,  bool pause) override;
@@ -149,7 +149,7 @@ public:
     void startSendRtp(MediaSource &sender, const SendRtpArgs &args, const std::function<void(uint16_t, const SockException &)> cb) override;
     bool stopSendRtp(MediaSource &sender, const std::string &ssrc) override;
     int getLossRate(MediaSource &sender, TrackType type) override;
-    toolkit::EventPoller::Ptr getOwnerPoller(MediaSource &sender) override;
+    EventPoller::Ptr getOwnerPoller(MediaSource &sender) override;
 
 private:
     std::weak_ptr<MediaSourceEvent> _listener;
@@ -290,7 +290,7 @@ public:
     // 获取媒体源url或者文件路径
     std::string getOriginUrl() const;
     // 获取媒体源客户端相关信息
-    std::shared_ptr<toolkit::SockInfo> getOriginSock() const;
+    std::shared_ptr<SockInfo> getOriginSock() const;
 
     // 拖动进度条
     bool seekTo(uint32_t stamp);
@@ -315,7 +315,7 @@ public:
     // 获取丢包率
     int getLossRate(mediakit::TrackType type);
     // 获取所在线程
-    toolkit::EventPoller::Ptr getOwnerPoller();
+    EventPoller::Ptr getOwnerPoller();
 
     ////////////////static方法，查找或生成MediaSource////////////////
 
@@ -326,7 +326,7 @@ public:
     static Ptr find(const std::string &vhost, const std::string &app, const std::string &stream_id, bool from_mp4 = false);
 
     // 异步查找流
-    static void findAsync(const MediaInfo &info, const std::shared_ptr<toolkit::Session> &session, const std::function<void(const Ptr &src)> &cb);
+    static void findAsync(const MediaInfo &info, const std::shared_ptr<Session> &session, const std::function<void(const Ptr &src)> &cb);
     // 遍历所有流
     static void for_each_media(const std::function<void(const Ptr &src)> &cb, const std::string &schema = "", const std::string &vhost = "", const std::string &app = "", const std::string &stream = "");
     // 从mp4文件生成MediaSource
@@ -354,7 +354,7 @@ private:
     std::string _app;
     std::string _stream_id;
     std::weak_ptr<MediaSourceEvent> _listener;
-    toolkit::EventPoller::Ptr _default_poller;
+    EventPoller::Ptr _default_poller;
     //对象个数统计
     ObjectStatistic<MediaSource> _statistic;
 };

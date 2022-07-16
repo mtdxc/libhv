@@ -257,7 +257,7 @@ public:
     }
 
 private:
-    //friend class toolkit::ResourcePool_l<RtmpPacket>;
+    //friend class ResourcePool_l<RtmpPacket>;
     RtmpPacket(){
         clear();
     }

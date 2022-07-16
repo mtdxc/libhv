@@ -40,13 +40,13 @@ namespace mediakit {
  * rtmp推拉流协议中，先传递metadata，然后传递config帧，然后一直传递普通帧
  */
 class RtmpMediaSource : public MediaSource, 
-    public toolkit::RingDelegate<RtmpPacket::Ptr>, // onWrite劫持RtmpRing写入
+    public RingDelegate<RtmpPacket::Ptr>, // onWrite劫持RtmpRing写入
     private PacketCache<RtmpPacket> // 合并写缓存
 {
 public:
     using Ptr = std::shared_ptr<RtmpMediaSource>;
     using RingDataType = std::shared_ptr<std::list<RtmpPacket::Ptr> >;
-    using RingType = toolkit::RingBuffer<RingDataType>;
+    using RingType = RingBuffer<RingDataType>;
 
     /**
      * 构造函数

@@ -30,7 +30,6 @@
 
 using std::string;
 using namespace mediakit;
-using toolkit::mINI;
 //RTC配置项目
 namespace RTC {
 #define RTC_FIELD "rtc."
@@ -83,7 +82,7 @@ static void translateIPFromEnv(std::vector<std::string> &v) {
 GET_CONFIG_FUNC(std::vector<std::string>, extern_ips, RTC::kExternIP, [](string str) {
     std::vector<std::string> ret;
     if (str.length()) {
-        ret = toolkit::split(str, ",");
+        ret = split(str, ",");
     }
     translateIPFromEnv(ret);
     return ret;
@@ -212,7 +211,7 @@ void WebRtcTransport::OnDtlsTransportApplicationDataReceived(const RTC::DtlsTran
 #ifdef ENABLE_SCTP
     _sctp->ProcessSctpData(data, len);
 #else
-    InfoL << toolkit::hexdump(data, len);
+    InfoL << hexdump(data, len);
 #endif
 }
 
@@ -1095,12 +1094,12 @@ void WebRtcTransportImp::onShutdown(const SockException &ex){
 #include "WebRtcEchoTest.h"
 #include "WebRtcPlayer.h"
 #include "WebRtcPusher.h"
-using namespace toolkit;
-void echo_plugin(std::shared_ptr<toolkit::Session> sender, const string &offer, const WebRtcArgs &args, const WebRtcServer::onCreateRtc &cb) {
+
+void echo_plugin(std::shared_ptr<Session> sender, const string &offer, const WebRtcArgs &args, const WebRtcServer::onCreateRtc &cb) {
     cb(*WebRtcEchoTest::create(WebRtcServer::Instance().getPoller()));
 }
 
-void push_plugin(std::shared_ptr<toolkit::Session> sender, const string &offer_sdp, const WebRtcArgs &args, const WebRtcServer::onCreateRtc &cb) {
+void push_plugin(std::shared_ptr<Session> sender, const string &offer_sdp, const WebRtcArgs &args, const WebRtcServer::onCreateRtc &cb) {
     MediaInfo info(args.at("url"));
     Broadcast::PublishAuthInvoker invoker = [cb, offer_sdp, info](const string &err, const ProtocolOption &option) mutable {
         if (!err.empty()) {
@@ -1154,7 +1153,7 @@ void push_plugin(std::shared_ptr<toolkit::Session> sender, const string &offer_s
     }
 }
 
-void play_plugin(std::shared_ptr<toolkit::Session> sender, const string &offer_sdp, const WebRtcArgs &args, const WebRtcServer::onCreateRtc &cb) {
+void play_plugin(std::shared_ptr<Session> sender, const string &offer_sdp, const WebRtcArgs &args, const WebRtcServer::onCreateRtc &cb) {
     MediaInfo info(args.at("url"));
     auto session_ptr = sender;
     Broadcast::AuthInvoker invoker = [cb, offer_sdp, info, session_ptr](const string &err) mutable {

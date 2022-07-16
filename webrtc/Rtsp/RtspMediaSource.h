@@ -35,12 +35,12 @@ namespace mediakit {
  * 只要生成了这两要素，那么要实现rtsp推流、rtsp服务器就很简单了
  * rtsp推拉流协议中，先传递sdp，然后再协商传输方式(tcp/udp/组播)，最后一直传递rtp
  */
-class RtspMediaSource : public MediaSource, public toolkit::RingDelegate<RtpPacket::Ptr>, private PacketCache<RtpPacket> {
+class RtspMediaSource : public MediaSource, public RingDelegate<RtpPacket::Ptr>, private PacketCache<RtpPacket> {
 public:
-    using PoolType = toolkit::ResourcePool<RtpPacket>;
+    using PoolType = ResourcePool<RtpPacket>;
     using Ptr = std::shared_ptr<RtspMediaSource>;
     using RingDataType = std::shared_ptr<std::list<RtpPacket::Ptr> >;
-    using RingType = toolkit::RingBuffer<RingDataType>;
+    using RingType = RingBuffer<RingDataType>;
 
     /**
      * 构造函数

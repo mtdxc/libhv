@@ -107,7 +107,7 @@ private:
     ////////////Chunk////////////
     std::unordered_map<int, std::pair<RtmpPacket::Ptr/*now*/, RtmpPacket::Ptr/*last*/> > _map_chunk_data;
     //循环池
-    toolkit::ResourcePool<BufferRaw> _packet_pool;
+    ResourcePool<BufferRaw> _packet_pool;
 };
 
 } /* namespace mediakit */

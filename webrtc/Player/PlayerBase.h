@@ -25,12 +25,12 @@
 
 namespace mediakit {
 /// 播放器接口定义
-class PlayerBase : public TrackSource, public toolkit::mINI {
+class PlayerBase : public TrackSource, public mINI {
 public:
     using Ptr = std::shared_ptr<PlayerBase>;
     using Event = std::function<void(const SockException &ex)>;
 
-    static Ptr createPlayer(const toolkit::EventPoller::Ptr &poller, const std::string &strUrl);
+    static Ptr createPlayer(const EventPoller::Ptr &poller, const std::string &strUrl);
 
     PlayerBase();
     ~PlayerBase() override = default;
@@ -181,8 +181,8 @@ public:
         return _delegate ? _delegate->getTracks(ready) : Parent::getTracks(ready);
     }
 
-    std::shared_ptr<toolkit::SockInfo> getSockInfo() const {
-        return std::dynamic_pointer_cast<toolkit::SockInfo>(_delegate);
+    std::shared_ptr<SockInfo> getSockInfo() const {
+        return std::dynamic_pointer_cast<SockInfo>(_delegate);
     }
 
     void setMediaSource(const MediaSource::Ptr &src) override {

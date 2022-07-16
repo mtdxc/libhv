@@ -18,7 +18,7 @@
 #include <inttypes.h>
 #include "logger.h"
 using namespace std;
-using namespace toolkit;
+
 
 namespace mediakit {
 bool makeSockPair(std::shared_ptr<hv::SocketChannel> pair[2], const std::string& local_ip, bool re_use_port, bool is_udp) {
@@ -76,7 +76,7 @@ static std::unordered_map<string, std::weak_ptr<RtspSession> > g_mapGetter;
 //对g_mapGetter上锁保护
 static std::recursive_mutex g_mtxGetter;
 
-RtspSession::RtspSession(hio_t* io) : toolkit::Session(io) {
+RtspSession::RtspSession(hio_t* io) : Session(io) {
     DebugP(this);
     GET_CONFIG(uint32_t, keep_alive_sec, Rtsp::kKeepAliveSecond);
     setWriteTimeout(keep_alive_sec * 1000);
@@ -1181,7 +1181,7 @@ std::shared_ptr<SockInfo> RtspSession::getOriginSock(MediaSource &sender) const 
     return const_cast<RtspSession *>(this)->shared_from_this();
 }
 
-toolkit::EventPoller::Ptr RtspSession::getOwnerPoller(MediaSource &sender) {
+EventPoller::Ptr RtspSession::getOwnerPoller(MediaSource &sender) {
     return getPoller();
 }
 

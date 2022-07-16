@@ -19,7 +19,6 @@
 
 
 using namespace std;
-using namespace toolkit;
 
 StatisticImp(mediakit::MediaSource);
 
@@ -221,8 +220,8 @@ int MediaSource::getLossRate(mediakit::TrackType type) {
     return listener->getLossRate(*this, type);
 }
 
-toolkit::EventPoller::Ptr MediaSource::getOwnerPoller() {
-    toolkit::EventPoller::Ptr ret;
+EventPoller::Ptr MediaSource::getOwnerPoller() {
+    EventPoller::Ptr ret;
     auto listener = _listener.lock();
     if (listener) {
         ret = listener->getOwnerPoller(*this);
@@ -710,7 +709,7 @@ int MediaSourceEventInterceptor::getLossRate(MediaSource &sender, TrackType type
     return -1; //异常返回-1
 }
 
-toolkit::EventPoller::Ptr MediaSourceEventInterceptor::getOwnerPoller(MediaSource &sender) {
+EventPoller::Ptr MediaSourceEventInterceptor::getOwnerPoller(MediaSource &sender) {
     auto listener = _listener.lock();
     if (listener) {
         return listener->getOwnerPoller(sender);

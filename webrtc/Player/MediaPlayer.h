@@ -24,14 +24,14 @@ class MediaPlayer : public PlayerImp<PlayerBase, PlayerBase> {
 public:
     using Ptr = std::shared_ptr<MediaPlayer>;
 
-    MediaPlayer(const toolkit::EventPoller::Ptr &poller = nullptr);
+    MediaPlayer(const EventPoller::Ptr &poller = nullptr);
     ~MediaPlayer() override = default;
 
     void play(const std::string &url) override;
-    toolkit::EventPoller::Ptr getPoller();
+    EventPoller::Ptr getPoller();
 
 private:
-    toolkit::EventPoller::Ptr _poller;
+    EventPoller::Ptr _poller;
 };
 
 } /* namespace mediakit */

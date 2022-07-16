@@ -34,12 +34,12 @@ class RtspPlayer : public PlayerBase, public hv::TcpClient, public RtspSplitter,
 public:
     using Ptr = std::shared_ptr<RtspPlayer>;
 
-    RtspPlayer(const toolkit::EventPoller::Ptr &poller);
+    RtspPlayer(const EventPoller::Ptr &poller);
     ~RtspPlayer() override;
     void shutdown(const SockException& e, bool safe = false) {
         InfoL << e.what();
         closesocket();
-        // toolkit::Session::close(safe);
+        // Session::close(safe);
     }
     void play(const std::string &strUrl) override;
     void pause(bool pause) override;
@@ -146,8 +146,8 @@ private:
 
     //超时功能实现
     Ticker _rtp_recv_ticker;
-    std::shared_ptr<toolkit::Timer> _play_check_timer;
-    std::shared_ptr<toolkit::Timer> _rtp_check_timer;
+    std::shared_ptr<Timer> _play_check_timer;
+    std::shared_ptr<Timer> _rtp_check_timer;
     //服务器支持的命令
     std::set<std::string> _supported_cmd;
     ////////// rtcp ////////////////

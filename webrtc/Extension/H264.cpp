@@ -12,7 +12,7 @@
 #include "SPSParser.h"
 #include "logger.h"
 #include "Util/base64.h"
-using namespace toolkit;
+
 using std::string;
 
 namespace mediakit {

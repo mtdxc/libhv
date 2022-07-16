@@ -24,7 +24,7 @@
 #define RING_MIN_SIZE 32
 #define LOCK_GUARD(mtx) std::lock_guard<decltype(mtx)> lck(mtx)
 
-namespace toolkit {
+namespace mediakit {
 
 template<typename T>
 class RingDelegate {

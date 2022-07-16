@@ -16,7 +16,6 @@
 #include <iostream>
 #include "Common/config.h"
 #include "AP4.h"
-using toolkit::mINI;
 using namespace std;
 using namespace mediakit;
 
@@ -269,7 +268,7 @@ bool checkArgs(Args &args, const First &first, const KeyTypes &...keys) {
         } \
     }
 
-void SockInfoToJson(hv::Json& val, toolkit::SockInfo* info) {
+void SockInfoToJson(hv::Json& val, SockInfo* info) {
     val["local_addr"] = info->localaddr();
     val["peer_addr"] = info->peeraddr();
     //val["identifier"] = info->getIdentifier();

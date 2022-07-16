@@ -53,7 +53,7 @@ public:
     hv::EventLoopPtr getPoller();
 
     using onCreateRtc = std::function<void(const WebRtcInterface &rtc)>;
-    using Plugin = std::function<void(std::shared_ptr<toolkit::Session> sender, const std::string &offer, const WebRtcArgs &args, const onCreateRtc &cb)>;
+    using Plugin = std::function<void(std::shared_ptr<mediakit::Session> sender, const std::string &offer, const WebRtcArgs &args, const onCreateRtc &cb)>;
 
     void registerPlugin(const std::string &type, Plugin cb);
     WebRtcTransportPtr getItem(const std::string &key);

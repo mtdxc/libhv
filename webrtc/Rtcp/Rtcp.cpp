@@ -16,7 +16,6 @@
 #include "hstring.h"
 #include "htime.h"
 using std::string;
-using namespace toolkit;
 
 namespace mediakit {
 

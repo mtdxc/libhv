@@ -21,12 +21,12 @@
 
 namespace mediakit {
 
-class PusherBase : public toolkit::mINI {
+class PusherBase : public mINI {
 public:
     using Ptr = std::shared_ptr<PusherBase>;
     using Event = std::function<void(const SockException &ex)>;
 
-    static Ptr createPusher(const toolkit::EventPoller::Ptr &poller,
+    static Ptr createPusher(const EventPoller::Ptr &poller,
                             const MediaSource::Ptr &src,
                             const std::string &strUrl);
 
@@ -83,8 +83,8 @@ public:
         return _delegate ? _delegate->teardown() : Parent::teardown();
     }
 
-    std::shared_ptr<toolkit::SockInfo> getSockInfo() const {
-        return std::dynamic_pointer_cast<toolkit::SockInfo>(_delegate);
+    std::shared_ptr<SockInfo> getSockInfo() const {
+        return std::dynamic_pointer_cast<SockInfo>(_delegate);
     }
 
     /**

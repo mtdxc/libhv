@@ -31,11 +31,11 @@ public:
 };
 
 //FMP4直播源
-class FMP4MediaSource : public MediaSource, public toolkit::RingDelegate<FMP4Packet::Ptr>, private PacketCache<FMP4Packet>{
+class FMP4MediaSource : public MediaSource, public RingDelegate<FMP4Packet::Ptr>, private PacketCache<FMP4Packet>{
 public:
     using Ptr = std::shared_ptr<FMP4MediaSource>;
     using RingDataType = std::shared_ptr<std::list<FMP4Packet::Ptr> >;
-    using RingType = toolkit::RingBuffer<RingDataType>;
+    using RingType = RingBuffer<RingDataType>;
 
     FMP4MediaSource(const std::string &vhost,
                     const std::string &app,

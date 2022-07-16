@@ -11,7 +11,7 @@
 #include "RtcpContext.h"
 #include "logger.h"
 #include "Util/util.h"
-using toolkit::getCurrentMillisecond;
+
 namespace mediakit {
 
 void RtcpContext::onRtp(uint16_t /*seq*/, uint32_t stamp, uint64_t ntp_stamp_ms, uint32_t /*sample_rate*/, size_t bytes) {

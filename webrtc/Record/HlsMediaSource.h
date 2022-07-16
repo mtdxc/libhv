@@ -22,7 +22,7 @@ class HlsMediaSource : public MediaSource {
 public:
     friend class HlsCookieData;
 
-    using RingType = toolkit::RingBuffer<std::string>;
+    using RingType = RingBuffer<std::string>;
     using Ptr = std::shared_ptr<HlsMediaSource>;
 
     HlsMediaSource(const std::string &vhost, const std::string &app, const std::string &stream_id)
@@ -100,7 +100,7 @@ class HlsCookieData {
 public:
     using Ptr = std::shared_ptr<HlsCookieData>;
 
-    HlsCookieData(const MediaInfo &info, const std::shared_ptr<toolkit::SockInfo> &sock_info);
+    HlsCookieData(const MediaInfo &info, const std::shared_ptr<SockInfo> &sock_info);
     ~HlsCookieData();
 
     void addByteUsage(size_t bytes);
@@ -121,7 +121,7 @@ private:
     std::shared_ptr<bool> _added;
     Ticker _ticker;
     std::weak_ptr<HlsMediaSource> _src;
-    std::shared_ptr<toolkit::SockInfo> _sock_info;
+    std::shared_ptr<SockInfo> _sock_info;
     HlsMediaSource::RingType::RingReader::Ptr _ring_reader;
 };
 

@@ -18,7 +18,7 @@
 #include "Util/base64.h"
 #include "logger.h"
 #include "Rtcp/Rtcp.h"
-using namespace toolkit;
+
 using std::string;
 
 namespace mediakit {

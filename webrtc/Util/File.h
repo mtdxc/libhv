@@ -60,7 +60,7 @@ struct dirent *readdir(DIR *);
 #define ftell64 ftell
 #endif
 
-namespace toolkit {
+namespace mediakit {
 
 class File {
 public:

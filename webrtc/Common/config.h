@@ -113,7 +113,7 @@ extern const std::string kBroadcastReloadConfig;
 #define ReloadConfigTag ((void *)(0xFF))
 #define RELOAD_KEY(arg, key)                                                                                           \
     do {                                                                                                               \
-        decltype(arg) arg##_tmp = ::toolkit::mINI::Instance()[key];                                                    \
+        decltype(arg) arg##_tmp = ::mINI::Instance()[key];                                                    \
         if (arg == arg##_tmp) {                                                                                        \
             return;                                                                                                    \
         }                                                                                                              \
@@ -124,21 +124,21 @@ extern const std::string kBroadcastReloadConfig;
 //监听某个配置发送变更
 #define LISTEN_RELOAD_KEY(arg, key, ...)                                                                               \
     static onceToken arg##_token_listen_([](){                                                              \
-        ::toolkit::NoticeCenter::Instance().addListener(ReloadConfigTag,                                               \
+        ::NoticeCenter::Instance().addListener(ReloadConfigTag,                                               \
             Broadcast::kBroadcastReloadConfig,[](BroadcastReloadConfigArgs) {                                          \
             __VA_ARGS__;                                                                                               \
         });                                                                                                            \
     });
 
 #define GET_CONFIG(type, arg, key)                                                                                     \
-    static type arg = ::toolkit::mINI::Instance()[key];                                                                \
+    static type arg = ::mINI::Instance()[key];                                                                \
     LISTEN_RELOAD_KEY(arg, key, { RELOAD_KEY(arg, key); });
 
 #define GET_CONFIG_FUNC(type, arg, key, ...)                                                                           \
     static type arg;                                                                                                   \
     static onceToken arg##_token_set_([](){                                                                 \
         static auto lam = __VA_ARGS__ ;                                                                                \
-        static auto arg##_str = ::toolkit::mINI::Instance()[key];                                                      \
+        static auto arg##_str = ::mINI::Instance()[key];                                                      \
         arg = lam(arg##_str);                                                                                          \
         LISTEN_RELOAD_KEY(arg, key, {                                                                                  \
             RELOAD_KEY(arg##_str, key);                                                                                \

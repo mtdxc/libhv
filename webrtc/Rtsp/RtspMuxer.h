@@ -18,7 +18,7 @@
 
 namespace mediakit{
 
-class RingDelegateHelper : public toolkit::RingDelegate<RtpPacket::Ptr> {
+class RingDelegateHelper : public RingDelegate<RtpPacket::Ptr> {
 public:
     using onRtp = std::function<void(RtpPacket::Ptr in, bool is_key)> ;
 

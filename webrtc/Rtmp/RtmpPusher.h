@@ -22,13 +22,13 @@ class RtmpPusher : public RtmpProtocol, public hv::TcpClient, public PusherBase,
     std::enable_shared_from_this<RtmpPusher> {
 public:
     typedef std::shared_ptr<RtmpPusher> Ptr;
-    RtmpPusher(const toolkit::EventPoller::Ptr &poller,const RtmpMediaSource::Ptr &src);
+    RtmpPusher(const EventPoller::Ptr &poller,const RtmpMediaSource::Ptr &src);
     ~RtmpPusher() override;
 
     void shutdown(const SockException& e, bool safe = false) {
         InfoL << e.what();
         closesocket();
-        // toolkit::Session::close(safe);
+        // Session::close(safe);
     }
     void publish(const std::string &url) override ;
     void teardown() override;
@@ -79,7 +79,7 @@ private:
     std::unordered_map<int, std::function<void(AMFDecoder &dec)> > _map_on_result;
 
     //推流超时定时器
-    std::shared_ptr<toolkit::Timer> _publish_timer;
+    std::shared_ptr<Timer> _publish_timer;
     std::weak_ptr<RtmpMediaSource> _publish_src;
     RtmpMediaSource::RingType::RingReader::Ptr _rtmp_reader;
 };

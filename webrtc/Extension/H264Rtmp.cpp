@@ -12,7 +12,6 @@
 #include "H264Rtmp.h"
 
 using std::string;
-using namespace toolkit;
 
 namespace mediakit {
 
