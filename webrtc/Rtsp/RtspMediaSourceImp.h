@@ -11,7 +11,7 @@
 #ifndef SRC_RTSP_RTSPTORTMPMEDIASOURCE_H_
 #define SRC_RTSP_RTSPTORTMPMEDIASOURCE_H_
 
-#include "Rtmp/amf.h"
+//#include "Rtmp/amf.h"
 #include "RtspMediaSource.h"
 #include "RtspDemuxer.h"
 #include "Common/MultiMediaSourceMuxer.h"

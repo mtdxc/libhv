@@ -17,15 +17,14 @@
 #include "Util/util.h"
 //#include "Poller/Timer.h"
 #include "Socket.h"
-#include "TcpClient.h"
+#include "TcpClient.hpp"
 #include "RtspSplitter.h"
 #include "Pusher/PusherBase.h"
 #include "Rtcp/RtcpContext.h"
 
 namespace mediakit {
 
-class RtspPusher : public hv::TcpClient, public RtspSplitter, public PusherBase, 
-    public std::enable_shared_from_this<RtspPusher> {
+class RtspPusher : public toolkit::TcpClient, public RtspSplitter, public PusherBase {
 public:
     typedef std::shared_ptr<RtspPusher> Ptr;
     RtspPusher(const toolkit::EventPoller::Ptr &poller,const RtspMediaSource::Ptr &src);

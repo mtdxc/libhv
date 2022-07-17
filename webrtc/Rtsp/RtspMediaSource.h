@@ -16,14 +16,14 @@
 #include <memory>
 #include <functional>
 #include <unordered_map>
-#include "Common/config.h"
+//#include "Common/config.h"
+//#include "Thread/ThreadPool.h"
 #include "Common/MediaSource.h"
 #include "RtpCodec.h"
 #include "Util/RingBuffer.h"
 #include "Util/TimeTicker.h"
 #include "Util/ResourcePool.h"
 #include "Util/NoticeCenter.h"
-//#include "Thread/ThreadPool.h"
 
 #define RTP_GOP_SIZE 512
 

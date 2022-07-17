@@ -16,9 +16,8 @@
 #include <unordered_set>
 #include <unordered_map>
 #include "Util/util.h"
-#include "Common/config.h"
 #include "Socket.h"
-#include "Player/PlayerBase.h"
+//#include "Player/PlayerBase.h"
 //#include "RtpMultiCaster.h"
 #include "RtspMediaSource.h"
 #include "RtspSplitter.h"
@@ -32,7 +31,8 @@ namespace mediakit {
 class RtspSession;
 typedef toolkit::BufferOffset<toolkit::Buffer::Ptr> BufferRtp;
 
-class RtspSession : public toolkit::Session, public RtspSplitter, public RtpReceiver, public MediaSourceEvent {
+class RtspSession : public toolkit::Session, public RtspSplitter, public RtpReceiver, public MediaSourceEvent,
+    public std::enable_shared_from_this<RtspSession> {
 public:
     using Ptr = std::shared_ptr<RtspSession>;
     using onGetRealm = std::function<void(const std::string &realm)>;

@@ -19,7 +19,7 @@
 #include "Util/util.h"
 #include "Util/TimeTicker.h"
 #include "Socket.h"
-#include "TcpClient.h"
+#include "TcpClient.hpp"
 #include "RtspSplitter.h"
 #include "RtpReceiver.h"
 #include "Common/Stamp.h"
@@ -28,8 +28,7 @@
 namespace mediakit {
 
 //实现了rtsp播放器协议部分的功能，及数据接收功能
-class RtspPlayer : public PlayerBase, public hv::TcpClient, public RtspSplitter, public RtpReceiver,
-    public std::enable_shared_from_this<RtspPlayer> {
+class RtspPlayer : public PlayerBase, public toolkit::TcpClient, public RtspSplitter, public RtpReceiver {
 public:
     using Ptr = std::shared_ptr<RtspPlayer>;
 

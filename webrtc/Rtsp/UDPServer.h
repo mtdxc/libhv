@@ -17,6 +17,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include "Util/util.h"
+#include "Buffer.hpp"
 #include "Socket.h"
 
 namespace mediakit {
@@ -27,7 +28,7 @@ public:
     ~UDPServer();
     static UDPServer &Instance();
     // 监听udp本地地址和端口，并接收数据
-    toolkit::Socket::Ptr getSock(toolkit::SocketHelper &helper, const char *local_ip, int interleaved, uint16_t local_port = 0);
+    toolkit::Session::Ptr getSock(hv::EventLoopPtr loop, const char *local_ip, int interleaved, uint16_t local_port = 0);
 
     // 数据回调，当函数返回false时，则自动取消回调的注册
     using onRecvData = std::function<bool(int intervaled, const toolkit::Buffer::Ptr &buffer, struct sockaddr *peer_addr)>;
@@ -40,7 +41,7 @@ private:
     std::mutex _mtx_udp_sock;
     std::mutex _mtx_on_recv;
     // local_ip:interleaved -> socket
-    std::unordered_map<std::string, toolkit::Socket::Ptr> _udp_sock_map;
+    std::unordered_map<std::string, toolkit::Session::Ptr> _udp_sock_map;
     // peer_ip -> obj -> onRecvData
     std::unordered_map<std::string, std::unordered_map<void *, onRecvData> > _on_recv_map;
 };

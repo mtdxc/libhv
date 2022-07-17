@@ -12,6 +12,7 @@
 #include <cinttypes>
 #include "Rtsp.h"
 #include "Common/Parser.h"
+#include "Common/config.h"
 #include "Extension/Track.h"
 #include "Socket.h"
 
@@ -341,43 +342,33 @@ public:
     }
 
     void makeSockPair(toolkit::Session::Ptr pair[2], const string &local_ip, bool re_use_port, bool is_udp) {
-        auto &sock0 = pair.first;
-        auto &sock1 = pair.second;
+        auto &sock0 = pair[0];
+        auto &sock1 = pair[1];
         auto sock_pair = getPortPair();
         if (!sock_pair) {
             throw runtime_error("none reserved udp port in pool");
         }
-        if (is_udp) {
-            if (!sock0->bindUdpSock(2 * *sock_pair, local_ip.data(), re_use_port)) {
-                //分配端口失败
-                throw runtime_error("open udp socket[0] failed");
-            }
-
-            if (!sock1->bindUdpSock(2 * *sock_pair + 1, local_ip.data(), re_use_port)) {
-                //分配端口失败
-                throw runtime_error("open udp socket[1] failed");
-            }
-
-            auto on_cycle = [sock_pair](Socket::Ptr &, std::shared_ptr<void> &) {};
-            // udp socket没onAccept事件，设置该回调，目的是为了在销毁socket时，回收对象
-            sock0->setOnAccept(on_cycle);
-            sock1->setOnAccept(on_cycle);
-        } else {
-            if (!sock0->listen(2 * *sock_pair, local_ip.data())) {
-                //分配端口失败
-                throw runtime_error("listen tcp socket[0] failed");
-            }
-
-            if (!sock1->listen(2 * *sock_pair + 1, local_ip.data())) {
-                //分配端口失败
-                throw runtime_error("listen tcp socket[1] failed");
-            }
-
-            auto on_cycle = [sock_pair](const Buffer::Ptr &buf, struct sockaddr *addr, int addr_len) {};
-            // udp socket没onAccept事件，设置该回调，目的是为了在销毁socket时，回收对象
-            sock0->setOnRead(on_cycle);
-            sock1->setOnRead(on_cycle);
+        hloop_t* loop = hv::tlsEventLoop()->loop();
+        hio_type_e iotype = is_udp ? HIO_TYPE_UDP : HIO_TYPE_TCP;
+        hio_t* io1 = hio_create_socket(loop, local_ip.data(), 2 * *sock_pair, iotype, HIO_SERVER_SIDE);
+        if (!io1) {
+            //分配端口失败
+            throw runtime_error("open udp socket[0] failed");
         }
+        hio_t* io2 = hio_create_socket(loop, local_ip.data(), 2 * *sock_pair + 1, iotype, HIO_SERVER_SIDE);
+        if (!io2) {
+            hio_close(io1);
+            //分配端口失败
+            throw runtime_error("open udp socket[1] failed");
+        }
+        pair[0] = std::make_shared<toolkit::Session>(io1);
+        pair[1] = std::make_shared<toolkit::Session>(io2);
+        /*
+        auto on_cycle = [sock_pair](Socket::Ptr &, std::shared_ptr<void> &) {};
+        // udp socket没onAccept事件，设置该回调，目的是为了在销毁socket时，回收对象
+        sock0->setOnAccept(on_cycle);
+        sock1->setOnAccept(on_cycle);
+        */
     }
 
 private:

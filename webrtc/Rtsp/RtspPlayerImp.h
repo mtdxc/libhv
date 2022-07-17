@@ -14,10 +14,8 @@
 #include <memory>
 #include <algorithm>
 #include <functional>
-#include "Common/config.h"
 #include "RtspPlayer.h"
 #include "RtspDemuxer.h"
-#include "Util/TimeTicker.h"
 
 namespace mediakit {
 
