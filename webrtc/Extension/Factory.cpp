@@ -19,11 +19,10 @@
 #include "H265Rtp.h"
 #include "CommonRtp.h"
 #include "G711Rtp.h"
-#include "Opus.h"
-#include "G711.h"
-#include "L16.h"
+#include "AudioTrack.h"
 #include "Common/Parser.h"
-#include "Util/base64.h"
+#include "Common/config.h"
+#include "util/base64.h"
 
 using std::string;
 
@@ -68,8 +67,8 @@ Track::Ptr Factory::getTrackBySdp(const SdpTrack::Ptr &track) {
             auto sps_pps = map["sprop-parameter-sets"];
             string base64_SPS = FindField(sps_pps.data(), NULL, ",");
             string base64_PPS = FindField(sps_pps.data(), ",", NULL);
-            auto sps = decodeBase64(base64_SPS);
-            auto pps = decodeBase64(base64_PPS);
+            auto sps = hv::Base64Decode(base64_SPS.data());
+            auto pps = hv::Base64Decode(base64_PPS.data());
             if (sps.empty() || pps.empty()) {
                 //如果sdp里面没有sps/pps,那么可能在后续的rtp里面恢复出sps/pps
                 return std::make_shared<H264Track>();
@@ -80,9 +79,9 @@ Track::Ptr Factory::getTrackBySdp(const SdpTrack::Ptr &track) {
         case CodecH265: {
             //a=fmtp:96 sprop-sps=QgEBAWAAAAMAsAAAAwAAAwBdoAKAgC0WNrkky/AIAAADAAgAAAMBlQg=; sprop-pps=RAHA8vA8kAA=
             auto map = Parser::parseArgs(track->_fmtp, ";", "=");
-            auto vps = decodeBase64(map["sprop-vps"]);
-            auto sps = decodeBase64(map["sprop-sps"]);
-            auto pps = decodeBase64(map["sprop-pps"]);
+            auto vps = hv::Base64Decode(map["sprop-vps"].data());
+            auto sps = hv::Base64Decode(map["sprop-sps"].data());
+            auto pps = hv::Base64Decode(map["sprop-pps"].data());
             if (sps.empty() || pps.empty()) {
                 //如果sdp里面没有sps/pps,那么可能在后续的rtp里面恢复出sps/pps
                 return std::make_shared<H265Track>();
@@ -259,10 +258,26 @@ Track::Ptr Factory::getAudioTrackByAmf(const AMFValue& amf, int sample_rate, int
 
 RtmpCodec::Ptr Factory::getRtmpCodecByTrack(const Track::Ptr &track, bool is_encode) {
     switch (track->getCodecId()){
-        case CodecH264 : return std::make_shared<H264RtmpEncoder>(track);
-        case CodecAAC : return std::make_shared<AACRtmpEncoder>(track);
-        case CodecH265 : return std::make_shared<H265RtmpEncoder>(track);
-        case CodecOpus : return std::make_shared<CommonRtmpEncoder>(track);
+        case CodecH264 :
+            if (is_encode)
+                return std::make_shared<H264RtmpEncoder>(track);
+            else
+                return std::make_shared<H264RtmpDecoder>();            
+        case CodecAAC :
+            if (is_encode)
+                return std::make_shared<AACRtmpEncoder>(track);
+            else
+                return std::make_shared<AACRtmpDecoder>();
+        case CodecH265 : 
+            if (is_encode)
+                return std::make_shared<H265RtmpEncoder>(track);
+            else
+                return std::make_shared<H265RtmpDecoder>();
+        case CodecOpus :
+            if (is_encode)
+                return std::make_shared<CommonRtmpEncoder>(track);
+            else
+                return std::make_shared<CommonRtmpDecoder>(track->getCodecId());
         case CodecG711A :
         case CodecG711U : {
             auto audio_track = std::dynamic_pointer_cast<AudioTrack>(track);
@@ -277,7 +292,10 @@ RtmpCodec::Ptr Factory::getRtmpCodecByTrack(const Track::Ptr &track, bool is_enc
                       << ",该音频已被忽略";
                 return nullptr;
             }
-            return std::make_shared<CommonRtmpEncoder>(track);
+            if (is_encode)
+                return std::make_shared<CommonRtmpEncoder>(track);
+            else
+                return std::make_shared<CommonRtmpDecoder>(track->getCodecId());
         }
         default : 
             WarnL << "暂不支持该CodecId:" << track->getCodecName(); 

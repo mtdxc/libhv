@@ -29,6 +29,7 @@ set(RTC_Root ${CMAKE_CURRENT_SOURCE_DIR})
 aux_source_directory(. RTC_SRCS)
 aux_source_directory(Util RTC_SRCS)
 aux_source_directory(Common RTC_SRCS)
+aux_source_directory(Extension RTC_SRCS)
 
 add_executable(rtc_server ${RTC_SRCS})
 target_link_libraries(rtc_server srtp2 ${HV_LIBRARIES})

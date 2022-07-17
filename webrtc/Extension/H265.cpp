@@ -10,10 +10,9 @@
 
 #include "H265.h"
 #include "SPSParser.h"
-#include "Util/base64.h"
+#include "util/base64.h"
 
 using std::string;
-using namespace toolkit;
 
 namespace mediakit {
 
@@ -180,21 +179,21 @@ public:
         }
         _printer << "a=rtpmap:" << payload_type << " " << getCodecName() << "/" << 90000 << "\r\n";
         _printer << "a=fmtp:" << payload_type << " "
-            << "sprop-vps=" << encodeBase64(strVPS) << "; "
-            << "sprop-sps=" << encodeBase64(strSPS) << "; "
-            << "sprop-pps=" << encodeBase64(strPPS) << "\r\n";
+            << "sprop-vps=" << hv::Base64Encode(strVPS) << "; "
+            << "sprop-sps=" << hv::Base64Encode(strSPS) << "; "
+            << "sprop-pps=" << hv::Base64Encode(strPPS) << "\r\n";
         _printer << "a=control:trackID=" << (int)TrackVideo << "\r\n";
     }
 
     string getSdp() const override {
-        return _printer;
+        return _printer.str();
     }
 
     CodecId getCodecId() const override {
         return CodecH265;
     }
 private:
-    _StrPrinter _printer;
+    std::stringstream _printer;
 };
 
 Sdp::Ptr H265Track::getSdp() {
