@@ -16,7 +16,7 @@
 #include "PlayerBase.h"
 #include "Rtsp/RtspPlayer.h"
 #include "Rtmp/RtmpPlayer.h"
-#include "Thread/TaskExecutor.h"
+//#include "Thread/TaskExecutor.h"
 
 namespace mediakit {
 
@@ -29,11 +29,9 @@ public:
 
     void play(const std::string &url) override;
     toolkit::EventPoller::Ptr getPoller();
-    void setOnCreateSocket(toolkit::Socket::onCreateSocket cb);
 
 private:
     toolkit::EventPoller::Ptr _poller;
-    toolkit::Socket::onCreateSocket _on_create_socket;
 };
 
 } /* namespace mediakit */

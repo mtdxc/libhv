@@ -12,9 +12,10 @@
 #include "PlayerBase.h"
 #include "Rtsp/RtspPlayerImp.h"
 #include "Rtmp/RtmpPlayerImp.h"
+#ifdef ENABLE_HTTP
 #include "Http/HlsPlayer.h"
 #include "Http/TsPlayerImp.h"
-
+#endif
 using namespace std;
 using namespace toolkit;
 
@@ -34,22 +35,23 @@ PlayerBase::Ptr PlayerBase::createPlayer(const EventPoller::Ptr &poller, const s
         //去除？后面的字符串
         url = url.substr(0, pos);
     }
-
+#ifdef ENABLE_SSL
     if (strcasecmp("rtsps", prefix.data()) == 0) {
         return PlayerBase::Ptr(new TcpClientWithSSL<RtspPlayerImp>(poller), releasePlayer);
     }
-
+#endif
     if (strcasecmp("rtsp", prefix.data()) == 0) {
         return PlayerBase::Ptr(new RtspPlayerImp(poller), releasePlayer);
     }
-
+#ifdef ENABLE_SSL
     if (strcasecmp("rtmps", prefix.data()) == 0) {
         return PlayerBase::Ptr(new TcpClientWithSSL<RtmpPlayerImp>(poller), releasePlayer);
     }
-
+#endif
     if (strcasecmp("rtmp", prefix.data()) == 0) {
         return PlayerBase::Ptr(new RtmpPlayerImp(poller), releasePlayer);
     }
+#if ENABLE_HTTP
     if ((strcasecmp("http", prefix.data()) == 0 || strcasecmp("https", prefix.data()) == 0)) {
         if (end_with(url, ".m3u8") || end_with(url_in, ".m3u8")) {
             return PlayerBase::Ptr(new HlsPlayerImp(poller), releasePlayer);
@@ -58,7 +60,7 @@ PlayerBase::Ptr PlayerBase::createPlayer(const EventPoller::Ptr &poller, const s
         }
         return PlayerBase::Ptr(new TsPlayerImp(poller), releasePlayer);
     }
-
+#endif
     return PlayerBase::Ptr(new RtspPlayerImp(poller), releasePlayer);
 }
 

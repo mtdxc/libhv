@@ -20,16 +20,16 @@
 #include "RtmpMediaSourceImp.h"
 #include "Util/util.h"
 #include "Util/TimeTicker.h"
-#include "Network/TcpSession.h"
+#include "Socket.h"
 #include "Common/Stamp.h"
 
 namespace mediakit {
 /// Rtmp服务器会话，负责承载rtmp推流和拉流功能.
-class RtmpSession : public toolkit::TcpSession, public RtmpProtocol, public MediaSourceEvent {
+class RtmpSession : public toolkit::Session, public RtmpProtocol, public MediaSourceEvent {
 public:
     using Ptr = std::shared_ptr<RtmpSession>;
 
-    RtmpSession(const toolkit::Socket::Ptr &sock);
+    RtmpSession(hio_t* io);
     ~RtmpSession() override;
     /*
     来数据回调

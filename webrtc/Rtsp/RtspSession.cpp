@@ -49,7 +49,7 @@ static std::unordered_map<string, std::weak_ptr<RtspSession> > g_mapGetter;
 //对g_mapGetter上锁保护
 static std::recursive_mutex g_mtxGetter;
 
-RtspSession::RtspSession(const Socket::Ptr &sock) : TcpSession(sock) {
+RtspSession::RtspSession(hio_t* io) : toolkit::Session(io) {
     DebugP(this);
     GET_CONFIG(uint32_t, keep_alive_sec, Rtsp::kKeepAliveSecond);
     sock->setSendTimeOutSecond(keep_alive_sec);
@@ -1059,7 +1059,7 @@ ssize_t RtspSession::send(Buffer::Ptr pkt){
 //		DebugP(this) << pkt->data();
 //	}
     _bytes_usage += pkt->size();
-    return TcpSession::send(std::move(pkt));
+    return write(pkt->data(), pkt->size());
 }
 
 bool RtspSession::sendRtspResponse(const string &res_code, const std::initializer_list<string> &header, const string &sdp, const char *protocol) {
@@ -1135,7 +1135,7 @@ string RtspSession::getOriginUrl(MediaSource &sender) const {
     return _media_info._full_url;
 }
 
-std::shared_ptr<SockInfo> RtspSession::getOriginSock(MediaSource &sender) const {
+std::shared_ptr<toolkit::SockInfo> RtspSession::getOriginSock(MediaSource &sender) const {
     return const_cast<RtspSession *>(this)->shared_from_this();
 }
 
@@ -1217,6 +1217,7 @@ void RtspSession::sendRtpPacket(const RtspMediaSource::RingDataType &pkt) {
 }
 
 void RtspSession::setSocketFlags(){
+#ifdef ENABLE_MERGE_WIRTE
     GET_CONFIG(int, mergeWriteMS, General::kMergeWriteMS);
     if(mergeWriteMS > 0) {
         //推流模式下，关闭TCP_NODELAY会增加推流端的延时，但是服务器性能将提高
@@ -1224,6 +1225,7 @@ void RtspSession::setSocketFlags(){
         //播放模式下，开启MSG_MORE会增加延时，但是能提高发送性能
         setSendFlags(SOCKET_DEFAULE_FLAGS | FLAG_MORE);
     }
+#endif
 }
 
 }

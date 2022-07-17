@@ -18,9 +18,9 @@
 #include "Rtmp.h"
 #include "Util/util.h"
 #include "Util/TimeTicker.h"
-#include "Network/Socket.h"
+#include "Socket.h"
 #include "Util/ResourcePool.h"
-#include "Http/HttpRequestSplitter.h"
+#include "Util/HttpRequestSplitter.h"
 
 namespace mediakit {
 /*

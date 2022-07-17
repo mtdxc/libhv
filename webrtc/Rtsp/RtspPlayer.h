@@ -18,9 +18,8 @@
 #include "Player/PlayerBase.h"
 #include "Util/util.h"
 #include "Util/TimeTicker.h"
-#include "Poller/Timer.h"
-#include "Network/Socket.h"
-#include "Network/TcpClient.h"
+#include "Socket.h"
+#include "TcpClient.h"
 #include "RtspSplitter.h"
 #include "RtpReceiver.h"
 #include "Common/Stamp.h"
@@ -29,7 +28,8 @@
 namespace mediakit {
 
 //实现了rtsp播放器协议部分的功能，及数据接收功能
-class RtspPlayer : public PlayerBase, public toolkit::TcpClient, public RtspSplitter, public RtpReceiver {
+class RtspPlayer : public PlayerBase, public hv::TcpClient, public RtspSplitter, public RtpReceiver,
+    public std::enable_shared_from_this<RtspPlayer> {
 public:
     using Ptr = std::shared_ptr<RtspPlayer>;
 
@@ -87,9 +87,9 @@ protected:
     virtual void onRtcpPacket(int track_idx, SdpTrack::Ptr &track, uint8_t *data, size_t len);
 
     /////////////TcpClient override/////////////
-    void onConnect(const toolkit::SockException &err) override;
-    void onRecv(const toolkit::Buffer::Ptr &buf) override;
-    void onErr(const toolkit::SockException &ex) override;
+    void onConnect(const toolkit::SockException &err);
+    void onRecv(const toolkit::Buffer::Ptr &buf);
+    void onErr(const toolkit::SockException &ex);
 
 private:
     void onPlayResult_l(const toolkit::SockException &ex , bool handshake_done);
@@ -123,9 +123,9 @@ private:
     std::vector<SdpTrack::Ptr> _sdp_track;
     std::function<void(const Parser&)> _on_response;
     //RTP端口,trackid idx 为数组下标
-    toolkit::Socket::Ptr _rtp_sock[2];
+    toolkit::Session::Ptr _rtp_sock[2];
     //RTCP端口,trackid idx 为数组下标
-    toolkit::Socket::Ptr _rtcp_sock[2];
+    toolkit::Session::Ptr _rtcp_sock[2];
 
     //rtsp鉴权相关
     std::string _md5_nonce;

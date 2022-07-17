@@ -17,9 +17,9 @@
 #include <unordered_map>
 #include "Util/util.h"
 #include "Common/config.h"
-#include "Network/TcpSession.h"
+#include "Socket.h"
 #include "Player/PlayerBase.h"
-#include "RtpMultiCaster.h"
+//#include "RtpMultiCaster.h"
 #include "RtspMediaSource.h"
 #include "RtspSplitter.h"
 #include "RtpReceiver.h"
@@ -32,7 +32,7 @@ namespace mediakit {
 class RtspSession;
 typedef toolkit::BufferOffset<toolkit::Buffer::Ptr> BufferRtp;
 
-class RtspSession : public toolkit::TcpSession, public RtspSplitter, public RtpReceiver, public MediaSourceEvent {
+class RtspSession : public toolkit::Session, public RtspSplitter, public RtpReceiver, public MediaSourceEvent {
 public:
     using Ptr = std::shared_ptr<RtspSession>;
     using onGetRealm = std::function<void(const std::string &realm)>;
@@ -40,13 +40,13 @@ public:
     //在请求明文密码时，如果提供md5密码者则会导致认证失败
     using onAuth = std::function<void(bool encrypted, const std::string &pwd_or_md5)>;
 
-    RtspSession(const toolkit::Socket::Ptr &sock);
+    RtspSession(hio_t* io);
     virtual ~RtspSession();
 
     ////TcpSession override////
-    void onRecv(const toolkit::Buffer::Ptr &buf) override;
-    void onError(const toolkit::SockException &err) override;
-    void onManager() override;
+    void onRecv(const toolkit::Buffer::Ptr &buf);
+    void onError(const toolkit::SockException &err);
+    void onManager();
 
 protected:
     /////RtspSplitter override/////
@@ -71,11 +71,11 @@ protected:
     // 获取媒体源url或者文件路径
     std::string getOriginUrl(MediaSource &sender) const override;
     // 获取媒体源客户端相关信息
-    std::shared_ptr<SockInfo> getOriginSock(MediaSource &sender) const override;
+    std::shared_ptr<toolkit::SockInfo> getOriginSock(MediaSource &sender) const override;
     toolkit::EventPoller::Ptr getOwnerPoller(MediaSource &sender) override;
 
     /////TcpSession override////
-    ssize_t send(toolkit::Buffer::Ptr pkt) override;
+    ssize_t send(toolkit::Buffer::Ptr pkt);
 
     //收到RTCP包回调
     virtual void onRtcpPacket(int track_idx, SdpTrack::Ptr &track, const char *data, size_t len);
@@ -188,15 +188,15 @@ private:
 
     ////////RTP over udp////////
     //RTP端口,trackid idx 为数组下标
-    toolkit::Socket::Ptr _rtp_socks[2];
+    toolkit::Session::Ptr _rtp_socks[2];
     //RTCP端口,trackid idx 为数组下标
-    toolkit::Socket::Ptr _rtcp_socks[2];
+    toolkit::Session::Ptr _rtcp_socks[2];
     //标记是否收到播放的udp打洞包,收到播放的udp打洞包后才能知道其外网udp端口号
     std::unordered_set<int> _udp_connected_flags;
 
     ////////RTP over udp_multicast////////
     //共享的rtp组播对象
-    RtpMultiCaster::Ptr _multicaster;
+    // RtpMultiCaster::Ptr _multicaster;
 
     ////////RTSP over HTTP  ////////
     //quicktime 请求rtsp会产生两次tcp连接，
@@ -214,7 +214,7 @@ private:
 /**
  * 支持ssl加密的rtsp服务器，可用于诸如亚马逊echo show这样的设备访问
  */
-using RtspSessionWithSSL = toolkit::TcpSessionWithSSL<RtspSession>;
+//using RtspSessionWithSSL = toolkit::TcpSessionWithSSL<RtspSession>;
 
 } /* namespace mediakit */
 

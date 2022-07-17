@@ -17,7 +17,6 @@
 #include "RtmpPlayer.h"
 #include "RtmpMediaSource.h"
 #include "RtmpDemuxer.h"
-#include "Poller/Timer.h"
 #include "Util/TimeTicker.h"
 
 namespace mediakit {

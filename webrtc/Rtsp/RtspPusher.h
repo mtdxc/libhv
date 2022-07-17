@@ -15,16 +15,17 @@
 #include <memory>
 #include "RtspMediaSource.h"
 #include "Util/util.h"
-#include "Poller/Timer.h"
-#include "Network/Socket.h"
-#include "Network/TcpClient.h"
+//#include "Poller/Timer.h"
+#include "Socket.h"
+#include "TcpClient.h"
 #include "RtspSplitter.h"
 #include "Pusher/PusherBase.h"
 #include "Rtcp/RtcpContext.h"
 
 namespace mediakit {
 
-class RtspPusher : public toolkit::TcpClient, public RtspSplitter, public PusherBase {
+class RtspPusher : public hv::TcpClient, public RtspSplitter, public PusherBase, 
+    public std::enable_shared_from_this<RtspPusher> {
 public:
     typedef std::shared_ptr<RtspPusher> Ptr;
     RtspPusher(const toolkit::EventPoller::Ptr &poller,const RtspMediaSource::Ptr &src);
@@ -35,9 +36,9 @@ public:
 
 protected:
     //for Tcpclient override
-    void onRecv(const toolkit::Buffer::Ptr &buf) override;
-    void onConnect(const toolkit::SockException &err) override;
-    void onErr(const toolkit::SockException &ex) override;
+    void onRecv(const toolkit::Buffer::Ptr &buf);
+    void onConnect(const toolkit::SockException &err);
+    void onErr(const toolkit::SockException &ex);
 
     //RtspSplitter override
     void onWholeRtspPacket(Parser &parser) override ;
@@ -85,9 +86,9 @@ private:
     SdpParser _sdp_parser;
     std::vector<SdpTrack::Ptr> _track_vec;
     //RTP端口, trackid idx 为数组下标
-    toolkit::Socket::Ptr _rtp_sock[2];
+    toolkit::Session::Ptr _rtp_sock[2];
     //RTCP端口, trackid idx 为数组下标
-    toolkit::Socket::Ptr _rtcp_sock[2];
+    toolkit::Session::Ptr _rtcp_sock[2];
     //超时功能实现
     std::shared_ptr<toolkit::Timer> _publish_timer;
     //心跳定时器

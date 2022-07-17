@@ -143,7 +143,7 @@ bool PlayerProxy::close(MediaSource &sender, bool force) {
 
     //通知其停止推流
     weak_ptr<PlayerProxy> weakSelf = dynamic_pointer_cast<PlayerProxy>(shared_from_this());
-    getPoller()->async_first([weakSelf]() {
+    getPoller()->async([weakSelf]() {
         if (auto strongSelf = weakSelf.lock()) {
             strongSelf->_muxer.reset();
             strongSelf->setMediaSource(nullptr);

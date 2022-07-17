@@ -223,12 +223,14 @@ void RtmpPusher::send_metaData(){
 }
 
 void RtmpPusher::setSocketFlags(){
+#ifdef ENABLE_MERGE_WIRTE
     GET_CONFIG(int, mergeWriteMS, General::kMergeWriteMS);
     if (mergeWriteMS > 0) {
         //提高发送性能
         setSendFlags(SOCKET_DEFAULE_FLAGS | FLAG_MORE);
         SockUtil::setNoDelay(getSock()->rawFD(), false);
     }
+#endif    
 }
 
 void RtmpPusher::onCmd_result(AMFDecoder &dec){

@@ -12,7 +12,7 @@
 #define ZLMEDIAKIT_RTSPSPLITTER_H
 
 #include "Common/Parser.h"
-#include "Http/HttpRequestSplitter.h"
+#include "Util/HttpRequestSplitter.h"
 
 namespace mediakit{
 // rtsp tcp控制通道分包器

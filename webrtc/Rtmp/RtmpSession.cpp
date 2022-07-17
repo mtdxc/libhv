@@ -11,13 +11,13 @@
 #include "RtmpSession.h"
 #include "Common/config.h"
 #include "Util/onceToken.h"
-
+#include "logger.h"
 using std::string;
 using namespace toolkit;
 
 namespace mediakit {
 
-RtmpSession::RtmpSession(const Socket::Ptr &sock) : TcpSession(sock) {
+RtmpSession::RtmpSession(hio_t* io) : toolkit::Session(io) {
     DebugP(this);
     GET_CONFIG(uint32_t, keep_alive_sec, Rtmp::kKeepAliveSecond);
     sock->setSendTimeOutSecond(keep_alive_sec);
@@ -584,6 +584,7 @@ toolkit::EventPoller::Ptr RtmpSession::getOwnerPoller(MediaSource &sender) {
 }
 
 void RtmpSession::setSocketFlags(){
+#ifdef ENABLE_MERGE_WIRTE
     GET_CONFIG(int, merge_write_ms, General::kMergeWriteMS);
     if (merge_write_ms > 0) {
         //推流模式下，关闭TCP_NODELAY会增加推流端的延时，但是服务器性能将提高
@@ -591,6 +592,7 @@ void RtmpSession::setSocketFlags(){
         //播放模式下，开启MSG_MORE会增加延时，但是能提高发送性能
         setSendFlags(SOCKET_DEFAULE_FLAGS | FLAG_MORE);
     }
+#endif
 }
 
 void RtmpSession::dumpMetadata(const AMFValue &metadata) {

@@ -11,7 +11,7 @@
 #include <algorithm>
 #include "MediaPusher.h"
 #include "PusherBase.h"
-
+#include "EventLoopThreadPool.h"
 using std::string;
 using namespace toolkit;
 
@@ -20,7 +20,7 @@ namespace mediakit {
 MediaPusher::MediaPusher(const MediaSource::Ptr &src,
                          const EventPoller::Ptr &poller) {
     _src = src;
-    _poller = poller ? poller : EventPollerPool::Instance().getPoller();
+    _poller = poller ? poller : hv::EventLoopThreadPool::Instance()->loop();
 }
 
 MediaPusher::MediaPusher(const string &schema,
@@ -34,17 +34,9 @@ MediaPusher::MediaPusher(const string &schema,
 MediaPusher::~MediaPusher() {
 }
 
-static void setOnCreateSocket_l(const std::shared_ptr<PusherBase> &delegate, const Socket::onCreateSocket &cb){
-    auto helper = std::dynamic_pointer_cast<SocketHelper>(delegate);
-    if (helper) {
-        helper->setOnCreateSocket(cb);
-    }
-}
-
 void MediaPusher::publish(const string &url) {
     _delegate = PusherBase::createPusher(_poller, _src.lock(), url);
     assert(_delegate);
-    setOnCreateSocket_l(_delegate, _on_create_socket);
     _delegate->setOnShutdown(_on_shutdown);
     _delegate->setOnPublished(_on_publish);
     _delegate->mINI::operator=(*this);
@@ -53,11 +45,6 @@ void MediaPusher::publish(const string &url) {
 
 EventPoller::Ptr MediaPusher::getPoller(){
     return _poller;
-}
-
-void MediaPusher::setOnCreateSocket(Socket::onCreateSocket cb){
-    setOnCreateSocket_l(_delegate, cb);
-    _on_create_socket = std::move(cb);
 }
 
 } /* namespace mediakit */

@@ -12,7 +12,7 @@
 #define SRC_DEVICE_PLAYERPROXY_H_
 
 #include <memory>
-#include "Common/Device.h"
+#include "Common/MultiMediaSourceMuxer.h"
 #include "Player/MediaPlayer.h"
 #include "Util/TimeTicker.h"
 

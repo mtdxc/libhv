@@ -472,12 +472,14 @@ void RtspPusher::sendRecord() {
 }
 
 void RtspPusher::setSocketFlags(){
+#ifdef ENABLE_MERGE_WIRTE
     GET_CONFIG(int, merge_write_ms, General::kMergeWriteMS);
     if (merge_write_ms > 0) {
         //提高发送性能
         setSendFlags(SOCKET_DEFAULE_FLAGS | FLAG_MORE);
         SockUtil::setNoDelay(getSock()->rawFD(), false);
     }
+#endif    
 }
 
 void RtspPusher::sendRtspRequest(const string &cmd, const string &url, const std::initializer_list<string> &header, const string &sdp) {

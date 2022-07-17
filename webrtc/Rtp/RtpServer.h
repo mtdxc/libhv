@@ -13,7 +13,7 @@
 
 #if defined(ENABLE_RTPPROXY)
 #include <memory>
-#include "Network/Socket.h"
+#include "Socket.h"
 #include "Network/TcpServer.h"
 #include "Network/UdpServer.h"
 #include "RtpSession.h"

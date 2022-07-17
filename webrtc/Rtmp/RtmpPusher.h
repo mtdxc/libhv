@@ -13,12 +13,13 @@
 
 #include "RtmpProtocol.h"
 #include "RtmpMediaSource.h"
-#include "Network/TcpClient.h"
+#include "TcpClient.h"
 #include "Pusher/PusherBase.h"
 
 namespace mediakit {
 // rtmp推流类，将本地的RtmpMediaSource推到url指定地址
-class RtmpPusher : public RtmpProtocol, public toolkit::TcpClient, public PusherBase {
+class RtmpPusher : public RtmpProtocol, public hv::TcpClient, public PusherBase, 
+    public std::enable_shared_from_this<RtmpPusher> {
 public:
     typedef std::shared_ptr<RtmpPusher> Ptr;
     RtmpPusher(const toolkit::EventPoller::Ptr &poller,const RtmpMediaSource::Ptr &src);
@@ -29,14 +30,14 @@ public:
 
 protected:
     //for Tcpclient override
-    void onRecv(const toolkit::Buffer::Ptr &buf) override;
-    void onConnect(const toolkit::SockException &err) override;
-    void onErr(const toolkit::SockException &ex) override;
+    void onRecv(const toolkit::Buffer::Ptr &buf);
+    void onConnect(const toolkit::SockException &err);
+    void onErr(const toolkit::SockException &ex);
 
     //for RtmpProtocol override
     void onRtmpChunk(RtmpPacket::Ptr chunk_data) override;
     void onSendRawData(toolkit::Buffer::Ptr buffer) override{
-        send(std::move(buffer));
+        send(buffer->data(), buffer->size());
     }
 
 private:

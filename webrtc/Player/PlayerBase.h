@@ -15,7 +15,7 @@
 #include <memory>
 #include <string>
 #include <functional>
-#include "Network/Socket.h"
+#include "Socket.h"
 #include "Util/mini.h"
 #include "Util/RingBuffer.h"
 #include "Common/MediaSource.h"

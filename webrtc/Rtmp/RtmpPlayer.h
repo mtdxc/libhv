@@ -20,13 +20,14 @@
 #include "Player/PlayerBase.h"
 #include "Util/util.h"
 #include "Util/TimeTicker.h"
-#include "Network/Socket.h"
-#include "Network/TcpClient.h"
+#include "Socket.h"
+#include "TcpClient.h"
 
 namespace mediakit {
 
 //实现了rtmp播放器协议部分的功能，及数据接收功能
-class RtmpPlayer : public PlayerBase, public toolkit::TcpClient, public RtmpProtocol {
+class RtmpPlayer : public PlayerBase, public hv::TcpClient, public RtmpProtocol,
+    public std::enable_shared_from_this<RtmpPlayer> {
 public:
     typedef std::shared_ptr<RtmpPlayer> Ptr;
     RtmpPlayer(const toolkit::EventPoller::Ptr &poller);
@@ -49,14 +50,14 @@ protected:
     void onPlayResult_l(const toolkit::SockException &ex, bool handshake_done);
 
     //form Tcpclient
-    void onRecv(const toolkit::Buffer::Ptr &buf) override;
-    void onConnect(const toolkit::SockException &err) override;
-    void onErr(const toolkit::SockException &ex) override;
+    void onRecv(const toolkit::Buffer::Ptr &buf);
+    void onConnect(const toolkit::SockException &err);
+    void onErr(const toolkit::SockException &ex);
     //from RtmpProtocol
     void onRtmpChunk(RtmpPacket::Ptr chunk_data) override;
     void onStreamDry(uint32_t stream_index) override;
     void onSendRawData(toolkit::Buffer::Ptr buffer) override {
-        send(std::move(buffer));
+        send(buffer->data(), buffer->size());
     }
 
     template<typename FUNC>
