@@ -11,7 +11,7 @@
 #include "RtmpSession.h"
 #include "Common/config.h"
 #include "Util/onceToken.h"
-#include "logger.h"
+#include "Util/logger.h"
 using std::string;
 using namespace toolkit;
 
@@ -20,7 +20,8 @@ namespace mediakit {
 RtmpSession::RtmpSession(hio_t* io) : toolkit::Session(io) {
     DebugP(this);
     GET_CONFIG(uint32_t, keep_alive_sec, Rtmp::kKeepAliveSecond);
-    sock->setSendTimeOutSecond(keep_alive_sec);
+    //sock->setSendTimeOutSecond(keep_alive_sec);
+    setWriteTimeout(keep_alive_sec*1000);
 }
 
 RtmpSession::~RtmpSession() {
@@ -65,10 +66,10 @@ void RtmpSession::onManager() {
     }
 }
 
-void RtmpSession::onRecv(const Buffer::Ptr &buf) {
+void RtmpSession::onRecv(const char *data, size_t size) {
     _ticker.resetTime();
-    _total_bytes += buf->size();
-    onParseRtmp(buf->data(), buf->size());
+    _total_bytes += size;
+    onParseRtmp(data, size);
 }
 
 void RtmpSession::onCmd_connect(AMFDecoder &dec) {
@@ -300,13 +301,13 @@ void RtmpSession::sendPlayResponse(const string &err, const RtmpMediaSource::Ptr
 
         size_t i = 0;
         auto size = pkt->size();
-        strongSelf->setSendFlushFlag(false);
-        pkt->for_each([&](const RtmpPacket::Ptr &rtmp){
+        // strongSelf->setSendFlushFlag(false);
+        for (auto& rtmp : *pkt){
             if(++i == size){
-                strongSelf->setSendFlushFlag(true);
+                //strongSelf->setSendFlushFlag(true);
             }
             strongSelf->onSendMedia(rtmp);
-        });
+        }
     });
     _ring_reader->setDetachCB([weakSelf]() {
         if (auto strongSelf = weakSelf.lock())
@@ -559,7 +560,7 @@ bool RtmpSession::close(MediaSource &sender,bool force)  {
         return false;
     }
     string err = StrPrinter << "close media:" << sender.getSchema() << "/" << sender.getVhost() << "/" << sender.getApp() << "/" << sender.getId() << " " << force;
-    safeShutdown(SockException(Err_shutdown,err));
+    shutdown(SockException(Err_shutdown,err), true);
     return true;
 }
 

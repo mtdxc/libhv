@@ -15,7 +15,6 @@
 #include "amf.h"
 #include "Rtmp.h"
 #include "utils.h"
-#include "Common/config.h"
 #include "RtmpProtocol.h"
 #include "RtmpMediaSourceImp.h"
 #include "Util/util.h"
@@ -25,12 +24,14 @@
 
 namespace mediakit {
 /// Rtmp服务器会话，负责承载rtmp推流和拉流功能.
-class RtmpSession : public toolkit::Session, public RtmpProtocol, public MediaSourceEvent {
+class RtmpSession : public toolkit::Session, public RtmpProtocol, public MediaSourceEvent,
+    public std::enable_shared_from_this<RtmpSession> {
 public:
     using Ptr = std::shared_ptr<RtmpSession>;
 
     RtmpSession(hio_t* io);
     ~RtmpSession() override;
+
     /*
     来数据回调
     - onParseRtmp
@@ -38,7 +39,7 @@ public:
        - onProcessCmd or
        - _push_src->onWrite
     */
-    void onRecv(const toolkit::Buffer::Ptr &buf) override;
+    void onRecv(const char *data, size_t size);
     void onError(const toolkit::SockException &err) override;
     void onManager() override;
 
@@ -46,7 +47,7 @@ private:
     void onSendMedia(const RtmpPacket::Ptr &pkt);
     void onSendRawData(toolkit::Buffer::Ptr buffer) override {
         _total_bytes += buffer->size();
-        send(std::move(buffer));
+        write(buffer->data(), buffer->size());
     }
     
     void onRtmpChunk(RtmpPacket::Ptr chunk_data) override;
@@ -86,7 +87,7 @@ private:
     // 获取媒体源url或者文件路径
     std::string getOriginUrl(MediaSource &sender) const override;
     // 获取媒体源客户端相关信息
-    std::shared_ptr<SockInfo> getOriginSock(MediaSource &sender) const override;
+    std::shared_ptr<toolkit::SockInfo> getOriginSock(MediaSource &sender) const override;
     toolkit::EventPoller::Ptr getOwnerPoller(MediaSource &sender) override;
 
     void setSocketFlags();
@@ -117,7 +118,7 @@ private:
 /**
  * 支持ssl加密的rtmp服务器
  */
-using RtmpSessionWithSSL = toolkit::TcpSessionWithSSL<RtmpSession>;
+//using RtmpSessionWithSSL = toolkit::TcpSessionWithSSL<RtmpSession>;
 
 } /* namespace mediakit */
 #endif /* SRC_RTMP_RTMPSESSION_H_ */

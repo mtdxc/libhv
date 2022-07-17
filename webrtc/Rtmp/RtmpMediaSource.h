@@ -19,13 +19,13 @@
 #include "amf.h"
 #include "Rtmp.h"
 #include "RtmpDemuxer.h"
-#include "Common/config.h"
+//#include "Common/config.h"
 #include "Common/MediaSource.h"
-#include "Util/util.h"
+//#include "Util/util.h"
 #include "Util/RingBuffer.h"
-#include "Util/TimeTicker.h"
-#include "Util/ResourcePool.h"
-#include "Util/NoticeCenter.h"
+//#include "Util/TimeTicker.h"
+//#include "Util/ResourcePool.h"
+//#include "Util/NoticeCenter.h"
 //#include "Thread/ThreadPool.h"
 
 #define RTMP_GOP_SIZE 512

@@ -13,11 +13,11 @@
 
 #include <memory>
 #include <functional>
-#include "Common/config.h"
 #include "RtmpPlayer.h"
 #include "RtmpMediaSource.h"
 #include "RtmpDemuxer.h"
-#include "Util/TimeTicker.h"
+//#include "Common/config.h"
+//#include "Util/TimeTicker.h"
 
 namespace mediakit {
 

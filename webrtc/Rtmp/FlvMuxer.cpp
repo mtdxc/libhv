@@ -27,14 +27,13 @@ void FlvMuxer::start(const EventPoller::Ptr &poller, const RtmpMediaSource::Ptr 
     if (!media) {
         throw std::runtime_error("RtmpMediaSource 无效");
     }
-    if (!poller->isCurrentThread()) {
+    if (!poller->isInLoopThread()) {
         weak_ptr<FlvMuxer> weakSelf = getSharedPtr();
         // 延时两秒启动录制，是为了等config帧收集完毕
         poller->doDelayTask(2000, [weakSelf, poller, media, start_pts]() {
             if (auto strongSelf = weakSelf.lock()) {
                 strongSelf->start(poller, media, start_pts);
             }
-            return 0;
         });
         return;
     }
@@ -59,7 +58,7 @@ void FlvMuxer::start(const EventPoller::Ptr &poller, const RtmpMediaSource::Ptr 
 
         size_t i = 0;
         auto size = pkt->size();
-        pkt->for_each([&](const RtmpPacket::Ptr &rtmp) {
+        for (auto& rtmp : *pkt) {
             if (check) {
                 if (rtmp->time_stamp < start_pts) {
                     return;
@@ -67,7 +66,7 @@ void FlvMuxer::start(const EventPoller::Ptr &poller, const RtmpMediaSource::Ptr 
                 check = false;
             }
             strongSelf->onWriteRtmp(rtmp, ++i == size);
-        });
+        }
     });
 }
 

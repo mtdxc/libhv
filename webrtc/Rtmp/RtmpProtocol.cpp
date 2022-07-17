@@ -25,7 +25,7 @@ using namespace std;
 #define C1_OFFSET_SIZE 4
 
 #ifdef ENABLE_OPENSSL
-#include "Util/SSLBox.h"
+//#include "Util/SSLBox.h"
 #include <openssl/hmac.h>
 #include <openssl/opensslv.h>
 

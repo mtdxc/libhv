@@ -13,20 +13,19 @@
 #include "Util/util.h"
 #include "Util/logger.h"
 #include "Util/onceToken.h"
-#include "Thread/ThreadPool.h"
 using namespace toolkit;
 using std::string;
 
 namespace mediakit {
 
-RtmpPlayer::RtmpPlayer(const EventPoller::Ptr &poller) : TcpClient(poller) {}
+RtmpPlayer::RtmpPlayer(const EventPoller::Ptr &poller) : toolkit::TcpClient(poller) {}
 
 RtmpPlayer::~RtmpPlayer() {
     DebugL << std::endl;
 }
 
 void RtmpPlayer::teardown() {
-    if (alive()) {
+    if (isConnected()) {
         shutdown(SockException(Err_shutdown,"teardown"));
     }
     _app.clear();
@@ -74,7 +73,7 @@ void RtmpPlayer::play(const string &strUrl)  {
         if (auto strong_self = weak_self.lock())
             strong_self->onPlayResult_l(SockException(Err_timeout, "play rtmp timeout"), false);
         return false;
-    }, getPoller()));
+    }, loop()));
 
     _metadata_got = false;
     startConnect(host_url, port, play_timeout_sec);
@@ -125,7 +124,7 @@ void RtmpPlayer::onPlayResult_l(const SockException &ex, bool handshake_done) {
             return true;
         };
         //创建rtmp数据接收超时检测定时器
-        _rtmp_recv_timer = std::make_shared<Timer>(timeout_ms / 2000.0f, lam, getPoller());
+        _rtmp_recv_timer = std::make_shared<Timer>(timeout_ms / 2000.0f, lam, loop());
     } else {
         shutdown(SockException(Err_shutdown,"teardown"));
     }
@@ -256,7 +255,7 @@ void RtmpPlayer::send_pause(bool pause) {
             uint32_t timeStamp = (uint32_t)::time(NULL);
             strongSelf->sendUserControl(CONTROL_PING_REQUEST, timeStamp);
             return true;
-        }, getPoller()));
+        }, loop()));
     }
 }
 

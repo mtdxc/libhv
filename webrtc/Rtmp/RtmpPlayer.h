@@ -21,18 +21,17 @@
 #include "Util/util.h"
 #include "Util/TimeTicker.h"
 #include "Socket.h"
-#include "TcpClient.h"
+#include "TcpClient.hpp"
 
 namespace mediakit {
 
 //实现了rtmp播放器协议部分的功能，及数据接收功能
-class RtmpPlayer : public PlayerBase, public hv::TcpClient, public RtmpProtocol,
-    public std::enable_shared_from_this<RtmpPlayer> {
+class RtmpPlayer : public PlayerBase, public toolkit::TcpClient, public RtmpProtocol {
 public:
     typedef std::shared_ptr<RtmpPlayer> Ptr;
     RtmpPlayer(const toolkit::EventPoller::Ptr &poller);
     ~RtmpPlayer() override;
-
+    
     void play(const std::string &strUrl) override;
     void pause(bool bPause) override;
     void speed(float speed) override;

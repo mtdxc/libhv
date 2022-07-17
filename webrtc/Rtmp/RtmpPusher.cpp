@@ -12,14 +12,13 @@
 #include "Rtmp/utils.h"
 #include "Util/util.h"
 #include "Util/onceToken.h"
-#include "Thread/ThreadPool.h"
 
 using std::string;
 using namespace toolkit;
 
 namespace mediakit {
 
-RtmpPusher::RtmpPusher(const EventPoller::Ptr &poller, const RtmpMediaSource::Ptr &src) : TcpClient(poller){
+RtmpPusher::RtmpPusher(const EventPoller::Ptr &poller, const RtmpMediaSource::Ptr &src) : toolkit::TcpClient(poller){
     _publish_src = src;
 }
 
@@ -29,7 +28,7 @@ RtmpPusher::~RtmpPusher() {
 }
 
 void RtmpPusher::teardown() {
-    if (!alive()) 
+    if (!isConnected()) 
         return;
 
     _app.clear();
@@ -89,7 +88,7 @@ void RtmpPusher::publish(const string &url)  {
         if (auto strongSelf = weakSelf.lock())
             strongSelf->onPublishResult_l(SockException(Err_timeout, "publish rtmp timeout"), false);
         return false;
-    }, getPoller()));
+    }, loop()));
 
     if (!(*this)[Client::kNetAdapter].empty()) {
         setNetAdapter((*this)[Client::kNetAdapter]);
@@ -192,7 +191,7 @@ void RtmpPusher::send_metaData(){
 
     src->pause(false);
 
-    _rtmp_reader = src->getRing()->attach(getPoller());
+    _rtmp_reader = src->getRing()->attach(loop());
     std::weak_ptr<RtmpPusher> weak_self = std::dynamic_pointer_cast<RtmpPusher>(shared_from_this());
     _rtmp_reader->setReadCB([weak_self](const RtmpMediaSource::RingDataType &pkt) {
         auto strong_self = weak_self.lock();
@@ -202,13 +201,13 @@ void RtmpPusher::send_metaData(){
         // write packet
         size_t i = 0;
         auto size = pkt->size();
-        strong_self->setSendFlushFlag(false);
-        pkt->for_each([&](const RtmpPacket::Ptr &rtmp) {
+        //strong_self->setSendFlushFlag(false);
+        for (auto& rtmp : *pkt) {
             if (++i == size) {
-                strong_self->setSendFlushFlag(true);
+                //strong_self->setSendFlushFlag(true);
             }
             strong_self->sendRtmp(rtmp->type_id, strong_self->_stream_index, rtmp, rtmp->time_stamp, rtmp->chunk_id);
-        });
+        }
     });
 
     _rtmp_reader->setDetachCB([weak_self]() {

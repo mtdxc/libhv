@@ -13,13 +13,12 @@
 
 #include "RtmpProtocol.h"
 #include "RtmpMediaSource.h"
-#include "TcpClient.h"
+#include "TcpClient.hpp"
 #include "Pusher/PusherBase.h"
 
 namespace mediakit {
 // rtmp推流类，将本地的RtmpMediaSource推到url指定地址
-class RtmpPusher : public RtmpProtocol, public hv::TcpClient, public PusherBase, 
-    public std::enable_shared_from_this<RtmpPusher> {
+class RtmpPusher : public RtmpProtocol, public toolkit::TcpClient, public PusherBase {
 public:
     typedef std::shared_ptr<RtmpPusher> Ptr;
     RtmpPusher(const toolkit::EventPoller::Ptr &poller,const RtmpMediaSource::Ptr &src);
