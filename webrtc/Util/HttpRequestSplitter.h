@@ -90,7 +90,7 @@ protected:
 private:
     ssize_t _content_len = 0;
     size_t _remain_data_size = 0;
-    BufferLikeString _remain_data;
+    toolkit::BufferLikeString _remain_data;
 };
 
 } /* namespace mediakit */

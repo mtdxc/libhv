@@ -11,7 +11,7 @@
 #include <cinttypes>
 #include "Parser.h"
 #include "macros.h"
-#include "Network/sockutil.h"
+//#include "Network/sockutil.h"
 
 using std::string;
 using namespace toolkit;
@@ -217,7 +217,7 @@ static void inline checkHost(std::string &host) {
         // ipv6去除方括号
         host.pop_back();
         host.erase(0, 1);
-        CHECK(SockUtil::is_ipv6(host.data()), "not a ipv6 address:", host);
+        //CHECK(SockUtil::is_ipv6(host.data()), "not a ipv6 address:", host);
     }
 }
 

@@ -11,7 +11,7 @@
 #include "H264.h"
 #include "SPSParser.h"
 #include "Util/logger.h"
-#include "Util/base64.h"
+#include "util/base64.h"
 using namespace toolkit;
 using std::string;
 
@@ -230,7 +230,7 @@ public:
         char strTemp[24];
         snprintf(strTemp, sizeof(strTemp), "%06X", profile_level_id);
         _printer << strTemp;
-        _printer << "; sprop-parameter-sets=" << encodeBase64(strSPS) << "," << encodeBase64(strPPS) << "\r\n";
+        _printer << "; sprop-parameter-sets=" << hv::Base64Encode(strSPS) << "," << hv::Base64Encode(strPPS) << "\r\n";
         _printer << "a=control:trackID=" << (int)TrackVideo << "\r\n";
     }
 

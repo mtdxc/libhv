@@ -19,14 +19,9 @@
 #include <unordered_map>
 #include "Common/config.h"
 #include "Common/Parser.h"
-#include "Util/List.h"
-#include "Network/Socket.h"
+#include "Socket.h"
 #include "Extension/Track.h"
 #include "Record/Recorder.h"
-
-namespace toolkit{
-    class Session;
-}// namespace toolkit
 
 namespace mediakit {
 
@@ -330,7 +325,7 @@ public:
     static Ptr find(const std::string &vhost, const std::string &app, const std::string &stream_id, bool from_mp4 = false);
 
     // 异步查找流
-    static void findAsync(const MediaInfo &info, const std::shared_ptr<toolkit::Session> &session, const std::function<void(const Ptr &src)> &cb);
+    static void findAsync(const MediaInfo &info, const hv::SocketChannelPtr &session, const std::function<void(const Ptr &src)> &cb);
     // 遍历所有流
     static void for_each_media(const std::function<void(const Ptr &src)> &cb, const std::string &schema = "", const std::string &vhost = "", const std::string &app = "", const std::string &stream = "");
     // 从mp4文件生成MediaSource
@@ -383,7 +378,7 @@ private:
 @param policy 刷新缓存策略
 @param packet_list 包缓存类型
 */
-template<typename packet, typename policy = FlushPolicy, typename packet_list = toolkit::List<std::shared_ptr<packet> > >
+template<typename packet, typename policy = FlushPolicy, typename packet_list = std::list<std::shared_ptr<packet> > >
 class PacketCache {
 public:
     PacketCache(){

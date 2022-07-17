@@ -22,7 +22,7 @@ namespace mediakit{
 
 class RtpCache : private PacketCache<toolkit::Buffer> {
 public:
-    using onFlushed = std::function<void(std::shared_ptr<toolkit::List<toolkit::Buffer::Ptr> >)>;
+    using onFlushed = std::function<void(std::shared_ptr<std::list<toolkit::Buffer::Ptr> >)>;
     RtpCache(onFlushed cb);
     ~RtpCache() override = default;
 
@@ -35,7 +35,7 @@ protected:
 
     bool firstKeyReady(bool in);
 protected:
-    void onFlush(std::shared_ptr<toolkit::List<toolkit::Buffer::Ptr> > rtp_list, bool) override;
+    void onFlush(std::shared_ptr<std::list<toolkit::Buffer::Ptr> > rtp_list, bool) override;
 
 private:
     onFlushed _cb;

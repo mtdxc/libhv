@@ -15,7 +15,7 @@
 #include <string>
 #include <cstdlib>
 #include "Util/util.h"
-#include "Network/Buffer.h"
+#include "Buffer.hpp"
 #include "amf.h"
 #include "Extension/Track.h"
 

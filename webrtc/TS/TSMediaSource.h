@@ -34,7 +34,7 @@ public:
 class TSMediaSource : public MediaSource, public toolkit::RingDelegate<TSPacket::Ptr>, private PacketCache<TSPacket>{
 public:
     using Ptr = std::shared_ptr<TSMediaSource>;
-    using RingDataType = std::shared_ptr<toolkit::List<TSPacket::Ptr> >;
+    using RingDataType = std::shared_ptr<std::list<TSPacket::Ptr> >;
     using RingType = toolkit::RingBuffer<RingDataType>;
 
     TSMediaSource(const std::string &vhost,
@@ -101,7 +101,7 @@ private:
      * @param packet_list 合并写缓存列队
      * @param key_pos 是否包含关键帧
      */
-    void onFlush(std::shared_ptr<toolkit::List<TSPacket::Ptr> > packet_list, bool key_pos) override {
+    void onFlush(std::shared_ptr<std::list<TSPacket::Ptr> > packet_list, bool key_pos) override {
         //如果不存在视频，那么就没有存在GOP缓存的意义，所以确保一直清空GOP缓存
         _ring->write(std::move(packet_list), _have_video ? key_pos : true);
     }

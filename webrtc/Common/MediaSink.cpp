@@ -10,7 +10,7 @@
 
 #include "MediaSink.h"
 #include "Extension/AAC.h"
-
+#include "Common/config.h"
 using namespace std;
 
 namespace mediakit{
@@ -160,9 +160,9 @@ void MediaSink::emitAllTrackReady() {
                 //该Track已经被移除
                 continue;
             }
-            pr.second.for_each([&](const Frame::Ptr &frame) {
+            for (auto frame : pr.second) {
                 inputFrame(frame);
-            });
+            }
         }
         _frame_unread.clear();
     }

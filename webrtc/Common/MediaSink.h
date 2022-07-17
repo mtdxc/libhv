@@ -13,6 +13,7 @@
 
 #include <mutex>
 #include <memory>
+#include <list>
 #include "Util/TimeTicker.h"
 #include "Extension/Frame.h"
 #include "Extension/Track.h"
@@ -186,7 +187,7 @@ private:
     // trackType -> (TrackPtr, got_frame)
     std::unordered_map<int, std::pair<Track::Ptr, bool/*got frame*/> > _track_map;
     // 帧缓存  trackType -> FrameList
-    std::unordered_map<int, toolkit::List<Frame::Ptr> > _frame_unread;
+    std::unordered_map<int, std::list<Frame::Ptr> > _frame_unread;
     // 等待ready回调的track列表 trackType -> TrackPtr
     std::unordered_map<int, Track::Ptr> _track_ready_callback;
     toolkit::Ticker _ticker;

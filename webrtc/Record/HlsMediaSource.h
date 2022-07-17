@@ -59,7 +59,9 @@ public:
         _index_file = std::move(index_file);
 
         if (!_index_file.empty()) {
-            _list_cb.for_each([&](const std::function<void(const std::string &str)> &cb) { cb(_index_file); });
+            for (auto& cb : _list_cb) {
+                cb(_index_file);
+            }
             _list_cb.clear();
         }
     }
@@ -93,7 +95,7 @@ private:
     RingType::Ptr _ring;
     std::string _index_file;
     mutable std::mutex _mtx_index;
-    toolkit::List<std::function<void(const std::string &)>> _list_cb;
+    std::list<std::function<void(const std::string &)>> _list_cb;
 };
 
 class HlsCookieData {

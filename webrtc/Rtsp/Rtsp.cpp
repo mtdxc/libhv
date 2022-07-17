@@ -340,7 +340,7 @@ public:
         return *instance;
     }
 
-    void makeSockPair(std::pair<Socket::Ptr, Socket::Ptr> &pair, const string &local_ip, bool re_use_port, bool is_udp) {
+    void makeSockPair(toolkit::Session::Ptr pair[2], const string &local_ip, bool re_use_port, bool is_udp) {
         auto &sock0 = pair.first;
         auto &sock1 = pair.second;
         auto sock_pair = getPortPair();
@@ -415,7 +415,7 @@ private:
     std::deque<uint16_t> _port_pair_pool;
 };
 
-void makeSockPair(std::pair<Socket::Ptr, Socket::Ptr> &pair, const string &local_ip, bool re_use_port, bool is_udp) {
+void makeSockPair(toolkit::Session::Ptr pair[2], const string &local_ip, bool re_use_port, bool is_udp) {
     int try_count = 0;
     while (true) {
         try {
@@ -633,21 +633,6 @@ TitleSdp::TitleSdp(float dur_sec, const std::map<string, string>& header, int ve
         _printer << "a=range:npt=0-" << dur_sec << "\r\n";
     }
     _printer << "a=control:*\r\n";
-}
-
-AudioSdp::AudioSdp(AudioTrack * track, int payload_type) :Sdp(track->getAudioSampleRate(), payload_type) {
-    _codecId = track->getCodecId();
-    int bitrate = track->getBitRate() / 1024;
-    _printer << "m=audio 0 RTP/AVP " << payload_type << "\r\n";
-    if (bitrate) {
-        _printer << "b=AS:" << bitrate << "\r\n";
-    }
-    _printer << "a=rtpmap:" << payload_type << " " << getCodecName() << "/" << track->getAudioSampleRate() << "/" << track->getAudioChannel() << "\r\n";
-    //_printer << "a=control:trackID=" << (int)TrackAudio << "\r\n";
-}
-
-string AudioSdp::getSdp() const {
-    return _printer + "a=control:trackID=1\r\n";
 }
 
 }//namespace mediakit

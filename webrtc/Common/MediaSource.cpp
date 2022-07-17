@@ -11,8 +11,9 @@
 #include "MediaSource.h"
 #include "Record/MP4Reader.h"
 #include "Util/util.h"
-#include "Network/sockutil.h"
-#include "Network/TcpSession.h"
+//#include "Network/sockutil.h"
+//#include "Network/TcpSession.h"
+#include "EventLoopThreadPool.h"
 #include "Util/NoticeCenter.h"
 
 using namespace std;
@@ -68,7 +69,7 @@ MediaSource::MediaSource(const string &schema, const string &vhost, const string
     _app = app;
     _stream_id = stream_id;
     _create_stamp = time(NULL);
-    _default_poller = EventPollerPool::Instance().getPoller();
+    _default_poller = hv::EventLoopThreadPool::Instance()->loop();
 }
 
 MediaSource::~MediaSource() {
@@ -347,7 +348,7 @@ static MediaSource::Ptr find_l(const string &schema, const string &vhost_in, con
     return ret;
 }
 
-static void findAsync_l(const MediaInfo &info, const std::shared_ptr<Session> &session, bool retry,
+static void findAsync_l(const MediaInfo &info, const hv::SocketChannelPtr &session, bool retry,
                         const function<void(const MediaSource::Ptr &src)> &cb){
     auto src = find_l(info._schema, info._vhost, info._app, info._streamid, true);
     if (src || !retry) {
@@ -371,17 +372,16 @@ static void findAsync_l(const MediaInfo &info, const std::shared_ptr<Session> &s
         // 最多等待一定时间，如在这个时间内，流还未注册上，则返回空
         NoticeCenter::Instance().delListener(listener_tag, Broadcast::kBroadcastMediaChanged);
         cb_once(nullptr);
-        return 0;
     });
 
-    auto cancel_all = [on_timeout, listener_tag]() {
+    auto cancel_all = [on_timeout, listener_tag, poller]() {
         //取消延时任务，防止多次回调
-        on_timeout->cancel();
+        poller->killTimer(on_timeout);
         //取消媒体注册事件监听
         NoticeCenter::Instance().delListener(listener_tag, Broadcast::kBroadcastMediaChanged);
     };
 
-    weak_ptr<Session> weak_session = session;
+    weak_ptr<hv::SocketChannel> weak_session = session;
     auto on_register = [weak_session, info, cb_once, cancel_all, poller](BroadcastMediaChangedArgs) {
         if (!bRegist ||
             sender.getSchema() != info._schema ||
@@ -417,7 +417,7 @@ static void findAsync_l(const MediaInfo &info, const std::shared_ptr<Session> &s
     NoticeCenter::Instance().emitEvent(Broadcast::kBroadcastNotFoundStream, info, static_cast<SockInfo &>(*session), close_player);
 }
 
-void MediaSource::findAsync(const MediaInfo &info, const std::shared_ptr<Session> &session, const function<void (const Ptr &)> &cb) {
+void MediaSource::findAsync(const MediaInfo &info, const hv::SocketChannelPtr &session, const function<void (const Ptr &)> &cb) {
     return findAsync_l(info, session, true, cb);
 }
 
@@ -520,7 +520,7 @@ void MediaInfo::parse(const string &url_in){
     if (split_vec.size() > 0) {
         splitUrl(split_vec[0], _host, _port);
         _vhost = _host;
-         if (_vhost == "localhost" || isIP(_vhost.data())) {
+         if (_vhost == "localhost" || _vhost.find_first_not_of("0123456789.:[]") == std::string::npos) {
             //如果访问的是localhost或ip，那么则为默认虚拟主机
             _vhost = DEFAULT_VHOST;
         }
@@ -608,7 +608,7 @@ void MediaSourceEvent::onReaderChanged(MediaSource &sender, int size){
             strong_sender->close(false);
         }
         return false;
-    }, nullptr);
+    }, getOwnerPoller(sender));
 }
 
 string MediaSourceEvent::getOriginUrl(MediaSource &sender) const {

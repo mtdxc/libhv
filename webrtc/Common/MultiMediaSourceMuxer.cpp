@@ -19,7 +19,7 @@
 #include "TS/TSMediaSourceMuxer.h"
 #include "FMP4/FMP4MediaSourceMuxer.h"
 #include "Rtp/RtpSender.h"
-using namespace std;
+using std::string;
 using namespace toolkit;
 
 namespace toolkit {
@@ -43,7 +43,7 @@ ProtocolOption::ProtocolOption() {
     continue_push_ms = s_continue_push_ms;
 }
 
-static std::shared_ptr<MediaSinkInterface> makeRecorder(MediaSource &sender, const vector<Track::Ptr> &tracks, Recorder::type type, const string &custom_path, size_t max_second){
+static std::shared_ptr<MediaSinkInterface> makeRecorder(MediaSource &sender, const std::vector<Track::Ptr> &tracks, Recorder::type type, const string &custom_path, size_t max_second){
     auto recorder = Recorder::createRecorder(type, sender.getVhost(), sender.getApp(), sender.getId(), custom_path, max_second);
     for (auto &track : tracks) {
         recorder->addTrack(track);
@@ -58,7 +58,7 @@ static string getTrackInfoStr(const TrackSource *track_src){
         codec_info << track->getCodecName();
         switch (track->getTrackType()) {
             case TrackAudio : {
-                auto audio_track = dynamic_pointer_cast<AudioTrack>(track);
+                auto audio_track = std::dynamic_pointer_cast<AudioTrack>(track);
                 codec_info << "["
                            << audio_track->getAudioSampleRate() << "/"
                            << audio_track->getAudioChannel() << "/"
@@ -66,7 +66,7 @@ static string getTrackInfoStr(const TrackSource *track_src){
                 break;
             }
             case TrackVideo : {
-                auto video_track = dynamic_pointer_cast<VideoTrack>(track);
+                auto video_track = std::dynamic_pointer_cast<VideoTrack>(track);
                 codec_info << "["
                            << video_track->getVideoWidth() << "/"
                            << video_track->getVideoHeight() << "/"
@@ -96,7 +96,7 @@ MultiMediaSourceMuxer::MultiMediaSourceMuxer(const string &vhost, const string &
         _rtsp = std::make_shared<RtspMediaSourceMuxer>(vhost, app, stream, std::make_shared<TitleSdp>(dur_sec));
     }
     if (option.enable_hls) {
-        _hls = dynamic_pointer_cast<HlsRecorder>(Recorder::createRecorder(Recorder::type_hls, vhost, app, stream, option.hls_save_path));
+        _hls = std::dynamic_pointer_cast<HlsRecorder>(Recorder::createRecorder(Recorder::type_hls, vhost, app, stream, option.hls_save_path));
     }
     if (option.enable_mp4) {
         _mp4 = Recorder::createRecorder(Recorder::type_mp4, vhost, app, stream, option.mp4_save_path, option.mp4_max_second);
@@ -182,7 +182,7 @@ bool MultiMediaSourceMuxer::setupRecord(MediaSource &sender, Recorder::type type
         case Recorder::type_hls : {
             if (start && !_hls) {
                 //开始录制
-                auto hls = dynamic_pointer_cast<HlsRecorder>(makeRecorder(sender, getTracks(), type, custom_path, max_second));
+                auto hls = std::dynamic_pointer_cast<HlsRecorder>(makeRecorder(sender, getTracks(), type, custom_path, max_second));
                 if (hls) {
                     //设置HlsMediaSource的事件监听器
                     hls->setListener(shared_from_this());
@@ -223,7 +223,7 @@ bool MultiMediaSourceMuxer::isRecording(MediaSource &sender, Recorder::type type
 void MultiMediaSourceMuxer::startSendRtp(MediaSource &, const MediaSourceEvent::SendRtpArgs &args, const std::function<void(uint16_t, const toolkit::SockException &)> cb) {
 #if defined(ENABLE_RTPPROXY)
     auto rtp_sender = std::make_shared<RtpSender>();
-    weak_ptr<MultiMediaSourceMuxer> weak_self = shared_from_this();
+    std::weak_ptr<MultiMediaSourceMuxer> weak_self = shared_from_this();
     rtp_sender->startSend(args, [args, weak_self, rtp_sender, cb](uint16_t local_port, const SockException &ex) {
         cb(local_port, ex);
         auto strong_self = weak_self.lock();
@@ -264,7 +264,7 @@ bool MultiMediaSourceMuxer::stopSendRtp(MediaSource &sender, const string &ssrc)
 #endif//ENABLE_RTPPROXY
 }
 
-vector<Track::Ptr> MultiMediaSourceMuxer::getMediaTracks(MediaSource &sender, bool trackReady) const {
+std::vector<Track::Ptr> MultiMediaSourceMuxer::getMediaTracks(MediaSource &sender, bool trackReady) const {
     return getTracks(trackReady);
 }
 

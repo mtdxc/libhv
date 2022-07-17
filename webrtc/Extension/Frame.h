@@ -14,7 +14,7 @@
 #include <map>
 #include <mutex>
 #include <functional>
-#include "Network/Buffer.h"
+#include "Buffer.hpp"
 #include "Common/Stamp.h"
 
 namespace mediakit{
@@ -658,7 +658,7 @@ private:
 private:
     int _type;
     bool _have_decode_able_frame = false;
-    toolkit::List<Frame::Ptr> _frame_cache;
+    std::list<Frame::Ptr> _frame_cache;
 };
 
 }//namespace mediakit

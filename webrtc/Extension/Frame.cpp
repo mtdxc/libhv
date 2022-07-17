@@ -193,12 +193,12 @@ bool FrameMerger::inputFrame(const Frame::Ptr &frame, const onOutput &cb, Buffer
                 merged_frame = tmp;
             }
 
-            _frame_cache.for_each([&](const Frame::Ptr &frame) {
+            for (auto& frame : _frame_cache) {
                 doMerge(*buffer, frame);
                 if (frame->keyFrame()) {
                     have_key_frame = true;
                 }
-            });
+            }
             cb(back->dts(), back->pts(), merged_frame, have_key_frame);
         }
         else {

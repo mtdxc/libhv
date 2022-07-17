@@ -57,7 +57,7 @@ public:
 
 private:
     //合并写输出
-    void onFlushRtpList(std::shared_ptr<toolkit::List<toolkit::Buffer::Ptr> > rtp_list);
+    void onFlushRtpList(std::shared_ptr<std::list<toolkit::Buffer::Ptr> > rtp_list);
     //udp/tcp连接成功回调
     void onConnect();
     //异常断开socket事件

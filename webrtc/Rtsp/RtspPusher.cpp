@@ -8,8 +8,8 @@
  * may be found in the AUTHORS file in the root of the source tree.
  */
 
-#include "Util/MD5.h"
-#include "Util/base64.h"
+#include "util/md5.h"
+#include "util/base64.h"
 #include "Util/logger.h"
 #include "RtspPusher.h"
 #include "RtspSession.h"

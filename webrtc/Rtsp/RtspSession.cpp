@@ -13,8 +13,8 @@
 #include "Common/config.h"
 #include "UDPServer.h"
 #include "RtspSession.h"
-#include "Util/MD5.h"
-#include "Util/base64.h"
+#include "util/md5.h"
+#include "util/base64.h"
 #include "Util/logger.h"
 using namespace std;
 using namespace toolkit;

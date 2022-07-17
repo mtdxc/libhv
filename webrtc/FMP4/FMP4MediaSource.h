@@ -34,7 +34,7 @@ public:
 class FMP4MediaSource : public MediaSource, public toolkit::RingDelegate<FMP4Packet::Ptr>, private PacketCache<FMP4Packet>{
 public:
     using Ptr = std::shared_ptr<FMP4MediaSource>;
-    using RingDataType = std::shared_ptr<toolkit::List<FMP4Packet::Ptr> >;
+    using RingDataType = std::shared_ptr<std::list<FMP4Packet::Ptr> >;
     using RingType = toolkit::RingBuffer<RingDataType>;
 
     FMP4MediaSource(const std::string &vhost,
@@ -120,7 +120,7 @@ private:
      * @param packet_list 合并写缓存列队
      * @param key_pos 是否包含关键帧
      */
-    void onFlush(std::shared_ptr<toolkit::List<FMP4Packet::Ptr> > packet_list, bool key_pos) override {
+    void onFlush(std::shared_ptr<std::list<FMP4Packet::Ptr> > packet_list, bool key_pos) override {
         //如果不存在视频，那么就没有存在GOP缓存的意义，所以确保一直清空GOP缓存
         _ring->write(std::move(packet_list), _have_video ? key_pos : true);
     }

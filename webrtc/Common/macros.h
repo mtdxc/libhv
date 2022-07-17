@@ -11,7 +11,6 @@
 #ifndef ZLMEDIAKIT_MACROS_H
 #define ZLMEDIAKIT_MACROS_H
 
-#include "Util/logger.h"
 #include <iostream>
 #include <sstream>
 #if defined(__MACH__)
@@ -86,7 +85,7 @@ template <typename... ARGS>
 void Assert_ThrowCpp(int failed, const char *exp, const char *func, const char *file, int line, ARGS &&...args) {
     if (failed) {
         std::stringstream ss;
-        toolkit::LoggerWrapper::appendLog(ss, std::forward<ARGS>(args)...);
+        // toolkit::LoggerWrapper::appendLog(ss, std::forward<ARGS>(args)...);
         Assert_Throw(failed, exp, func, file, line, ss.str().data());
     }
 }

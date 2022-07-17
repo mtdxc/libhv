@@ -14,8 +14,8 @@
 #include <iomanip>
 #include "Common/config.h"
 #include "RtspPlayer.h"
-#include "Util/MD5.h"
-#include "Util/base64.h"
+#include "util/md5.h"
+#include "util/base64.h"
 #include "Util/logger.h"
 #include "Rtcp/Rtcp.h"
 using namespace toolkit;

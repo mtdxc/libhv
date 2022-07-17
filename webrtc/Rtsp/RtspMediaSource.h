@@ -23,7 +23,7 @@
 #include "Util/TimeTicker.h"
 #include "Util/ResourcePool.h"
 #include "Util/NoticeCenter.h"
-#include "Thread/ThreadPool.h"
+//#include "Thread/ThreadPool.h"
 
 #define RTP_GOP_SIZE 512
 
@@ -39,7 +39,7 @@ class RtspMediaSource : public MediaSource, public toolkit::RingDelegate<RtpPack
 public:
     using PoolType = toolkit::ResourcePool<RtpPacket>;
     using Ptr = std::shared_ptr<RtspMediaSource>;
-    using RingDataType = std::shared_ptr<toolkit::List<RtpPacket::Ptr> >;
+    using RingDataType = std::shared_ptr<std::list<RtpPacket::Ptr> >;
     using RingType = toolkit::RingBuffer<RingDataType>;
 
     /**
@@ -193,7 +193,7 @@ private:
      * @param rtp_list rtp包列表
      * @param key_pos 是否包含关键帧
      */
-    void onFlush(std::shared_ptr<toolkit::List<RtpPacket::Ptr> > rtp_list, bool key_pos) override {
+    void onFlush(std::shared_ptr<std::list<RtpPacket::Ptr> > rtp_list, bool key_pos) override {
         //如不存在视频，那就没必要使用GOP缓存，因此让is_key为true，以确保一直清空GOP缓存
         _ring->write(std::move(rtp_list), _have_video ? key_pos : true);
     }
