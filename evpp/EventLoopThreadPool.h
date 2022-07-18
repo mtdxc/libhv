@@ -9,6 +9,7 @@ namespace hv {
 
 class EventLoopThreadPool : public Status {
 public:
+    typedef std::shared_ptr<EventLoopThreadPool> Ptr;
     EventLoopThreadPool(int thread_num = std::thread::hardware_concurrency()) {
         setStatus(kInitializing);
         thread_num_ = thread_num;
@@ -19,6 +20,11 @@ public:
     ~EventLoopThreadPool() {
         stop();
         join();
+    }
+
+    static Ptr Instance() {
+        static Ptr pool(new EventLoopThreadPool());
+        return pool;
     }
 
     int threadNum() {
@@ -59,6 +65,21 @@ public:
             break;
         }
         return loop_threads_[idx]->loop();
+    }
+
+    EventLoopPtr findLoop(hio_t* hio) {
+        for (int i = 0; i < loop_threads_.size(); i++) {
+            if (loop_threads_[i]->hloop() == hevent_loop(hio))
+                return loop_threads_[i]->loop();
+        }
+        return nullptr;
+    }
+    EventLoopPtr findLoop(int tid) {
+        for (int i = 0; i < loop_threads_.size(); i++) {
+            if (hloop_tid(loop_threads_[i]->hloop()) == tid)
+                return loop_threads_[i]->loop();
+        }
+        return nullptr;
     }
 
     EventLoopPtr loop(int idx = -1) {

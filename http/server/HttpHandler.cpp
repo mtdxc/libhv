@@ -371,8 +371,11 @@ int HttpHandler::defaultRequestHandler() {
 
     if (api_handler) {
         status_code = invokeHttpHandler(api_handler);
+        if (status_code >=0) {
+            return status_code;
+        }
     }
-    else if (req->method == HTTP_GET || req->method == HTTP_HEAD) {
+    if (req->method == HTTP_GET || req->method == HTTP_HEAD) {
         // static handler
         if (service->staticHandler) {
             status_code = customHttpHandler(service->staticHandler);
