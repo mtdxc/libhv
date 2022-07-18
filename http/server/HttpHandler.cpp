@@ -222,9 +222,13 @@ int HttpHandler::defaultRequestHandler() {
     if (service->api_handlers.size() != 0) {
         service->GetApi(req.get(), &handler);
     }
-
+Retry:
     if (handler) {
         status_code = invokeHttpHandler(handler);
+        if (status_code < 0) {
+            handler = nullptr;
+            goto Retry;
+        }
     }
     else if (req->method == HTTP_GET || req->method == HTTP_HEAD) {
         // static handler
