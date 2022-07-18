@@ -50,25 +50,25 @@ bool HttpCookie::parse(const std::string& str) {
         if (pos != std::string::npos) {
             key = trim(line.substr(0, pos));
             val = trim(line.substr(pos+1));
-            const char* pkey = key.c_str();
-            if (stricmp(pkey, "Domain") == 0) {
-                domain = val;
-            }
-            else if (stricmp(pkey, "Path") == 0) {
-                path = val;
-            }
-            else if (stricmp(pkey, "Expires") == 0) {
-                expires = val;
-            }
-            else if (stricmp(pkey, "Max-Age") == 0) {
-                max_age = atoi(val.c_str());
-            }
-            else if (stricmp(pkey, "SameSite") == 0) {
-                samesite =  stricmp(val.c_str(), "Strict") == 0 ? HttpCookie::SameSite::Strict :
-                            stricmp(val.c_str(), "Lax")    == 0 ? HttpCookie::SameSite::Lax    :
-                            stricmp(val.c_str(), "None")   == 0 ? HttpCookie::SameSite::None   :
-                                                                  HttpCookie::SameSite::Default;
-            }
+        const char* pkey = key.c_str();
+        if (stricmp(pkey, "Domain") == 0) {
+            domain = val;
+        }
+        else if (stricmp(pkey, "Path") == 0) {
+            path = val;
+        }
+        else if (stricmp(pkey, "Expires") == 0) {
+            expires = val;
+        }
+        else if (stricmp(pkey, "Max-Age") == 0) {
+            max_age = atoi(val.c_str());
+        }
+        else if (stricmp(pkey, "SameSite") == 0) {
+            samesite =  stricmp(val.c_str(), "Strict") == 0 ? HttpCookie::SameSite::Strict :
+                        stricmp(val.c_str(), "Lax")    == 0 ? HttpCookie::SameSite::Lax    :
+                        stricmp(val.c_str(), "None")   == 0 ? HttpCookie::SameSite::None   :
+                                                              HttpCookie::SameSite::Default;
+        }
             else if (stricmp(pkey, "Priority") == 0) {
                 priority =  stricmp(val.c_str(), "Low")    == 0 ? HttpCookie::Priority::Low    :
                             stricmp(val.c_str(), "Medium") == 0 ? HttpCookie::Priority::Medium :
@@ -77,9 +77,9 @@ bool HttpCookie::parse(const std::string& str) {
             }
             else {
                 if (name.empty()) {
-                    name = key;
-                    value = val;
-                }
+            name = key;
+            value = val;
+        }
                 kv[key] = val;
             }
         } else {
@@ -91,10 +91,10 @@ bool HttpCookie::parse(const std::string& str) {
             else if (stricmp(pkey, "HttpOnly") == 0) {
                 httponly = true;
             }
-            else {
+        else {
                 hlogi("Cookie Unrecognized key '%s'", key.c_str());
-            }
         }
+    }
 
     }
     return !name.empty();
@@ -105,9 +105,9 @@ std::string HttpCookie::dump() const {
     std::string res;
 
     if (!name.empty()) {
-        res = name;
-        res += "=";
-        res += value;
+    res = name;
+    res += "=";
+    res += value;
     }
 
     for (auto& pair : kv) {
@@ -524,7 +524,7 @@ void HttpMessage::DumpHeaders(std::string& str) {
                 }
                 str += newStr;
             } else {
-                str += header.second;
+            str += header.second;
             }
             str += "\r\n";
         }

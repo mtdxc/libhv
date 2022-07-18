@@ -188,6 +188,6 @@ if(WITH_MQTT)
 endif()
 
 foreach (TEST_SRC ${EXAMPLES})
-SET_PROPERTY(TARGET ${TEST_SRC} PROPERTY FOLDER "examples")
+SET_PROPERTY(TARGET ${TEST_SRC} PROPERTY FOLDER "example")
 endforeach()
 add_custom_target(examples DEPENDS ${EXAMPLES})

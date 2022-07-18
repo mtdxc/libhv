@@ -38,8 +38,8 @@ static void on_close(hio_t* io) {
     HttpHandler* handler = (HttpHandler*)hevent_userdata(io);
     if (handler == NULL) return;
 
-    hevent_set_userdata(io, NULL);
-    delete handler;
+        hevent_set_userdata(io, NULL);
+        delete handler;
 
     EventLoop* loop = currentThreadEventLoop;
     if (loop) {
@@ -71,7 +71,7 @@ static void on_accept(hio_t* io) {
     hio_setcb_read(io, on_recv);
     hio_read(io);
     if (service->keepalive_timeout > 0) {
-        hio_set_keepalive_timeout(io, service->keepalive_timeout);
+    hio_set_keepalive_timeout(io, service->keepalive_timeout);
     }
 
     // new HttpHandler, delete on_close
@@ -92,11 +92,45 @@ static void on_accept(hio_t* io) {
     hevent_set_userdata(io, handler);
 }
 
+static void first_loop_func(hloop_t* hloop, http_server_t* server)
+{
+    HttpService* service = server->service;
+    HttpServerPrivdata* privdata = (HttpServerPrivdata*)server->privdata;
+    // NOTE: fsync logfile when idle
+    hlog_disable_fsync();
+    hidle_add(hloop, [](hidle_t*) {
+        hlog_fsync();
+        }, INFINITE);
+
+    // NOTE: add timer to update s_date every 1s
+    htimer_add(hloop, [](htimer_t* timer) {
+        gmtime_fmt(hloop_now(hevent_loop(timer)), HttpMessage::s_date);
+        }, 1000);
+
+    // document_root
+    if (service->document_root.size() > 0 && service->GetStaticFilepath("/").empty()) {
+        service->Static("/", service->document_root.c_str());
+    }
+
+    // FileCache
+    FileCache* filecache = &privdata->filecache;
+    filecache->stat_interval = service->file_cache_stat_interval;
+    filecache->expired_time = service->file_cache_expired_time;
+    if (filecache->expired_time > 0) {
+        // NOTE: add timer to remove expired file cache
+        htimer_t* timer = htimer_add(hloop, [](htimer_t* timer) {
+            FileCache* filecache = (FileCache*)hevent_userdata(timer);
+            filecache->RemoveExpiredFileCache();
+            }, filecache->expired_time * 1000);
+        hevent_set_userdata(timer, filecache);
+    }
+}
+
 static void loop_thread(void* userdata) {
     http_server_t* server = (http_server_t*)userdata;
     HttpService* service = server->service;
 
-    auto loop = std::make_shared<EventLoop>();
+    EventLoopPtr loop(new EventLoop);
     hloop_t* hloop = loop->loop();
     // http
     if (server->listenfd[0] >= 0) {
@@ -108,42 +142,12 @@ static void loop_thread(void* userdata) {
         hio_t* listenio = haccept(hloop, server->listenfd[1], on_accept);
         hevent_set_userdata(listenio, server);
         hio_enable_ssl(listenio);
-        if (server->ssl_ctx) {
-            hio_set_ssl_ctx(listenio, server->ssl_ctx);
-        }
     }
 
     HttpServerPrivdata* privdata = (HttpServerPrivdata*)server->privdata;
     privdata->mutex_.lock();
     if (privdata->loops.size() == 0) {
-        // NOTE: fsync logfile when idle
-        hlog_disable_fsync();
-        hidle_add(hloop, [](hidle_t*) {
-            hlog_fsync();
-        }, INFINITE);
-
-        // NOTE: add timer to update s_date every 1s
-        htimer_add(hloop, [](htimer_t* timer) {
-            gmtime_fmt(hloop_now(hevent_loop(timer)), HttpMessage::s_date);
-        }, 1000);
-
-        // document_root
-        if (service->document_root.size() > 0 && service->GetStaticFilepath("/").empty()) {
-            service->Static("/", service->document_root.c_str());
-        }
-
-        // FileCache
-        FileCache* filecache = &privdata->filecache;
-        filecache->stat_interval = service->file_cache_stat_interval;
-        filecache->expired_time = service->file_cache_expired_time;
-        if (filecache->expired_time > 0) {
-            // NOTE: add timer to remove expired file cache
-            htimer_t* timer = htimer_add(hloop, [](htimer_t* timer) {
-                FileCache* filecache = (FileCache*)hevent_userdata(timer);
-                filecache->RemoveExpiredFileCache();
-            },  filecache->expired_time * 1000);
-            hevent_set_userdata(timer, filecache);
-        }
+        first_loop_func(hloop, server);
     }
     privdata->loops.push_back(loop);
     privdata->mutex_.unlock();
@@ -176,6 +180,7 @@ static void WINAPI loop_thread_stdcall(void* userdata) {
  * on_recv -> HttpHandler::FeedRecvData ->
  * on_close -> delete HttpHandler
  */
+#include "EventLoopThreadPool.h"
 int http_server_run(http_server_t* server, int wait) {
     // http_port
     if (server->port > 0) {
@@ -216,6 +221,34 @@ int http_server_run(http_server_t* server, int wait) {
     if (server->worker_processes) {
         // multi-processes
         return master_workers_run(loop_thread, server, server->worker_processes, server->worker_threads, wait);
+    }
+    else if (server->share_pools) {
+        HttpServerPrivdata* privdata = (HttpServerPrivdata*)server->privdata;
+        auto pools = server->share_pools;
+        for (int i = 0; i < pools->threadNum(); i++) {
+            auto loop = pools->loop(i);
+            if (!loop) continue;
+            loop->runInLoop([i, server, loop] {
+                hloop_t* hloop = loop->loop();
+                // http
+                if (server->listenfd[0] >= 0) {
+                    hio_t* listenio = haccept(hloop, server->listenfd[0], on_accept);
+                    hevent_set_userdata(listenio, server);
+                }
+                // https
+                if (server->listenfd[1] >= 0) {
+                    hio_t* listenio = haccept(hloop, server->listenfd[1], on_accept);
+                    hevent_set_userdata(listenio, server);
+                    hio_enable_ssl(listenio);
+                }
+
+                if (i == 0) {
+                    first_loop_func(hloop, server);
+                }
+            });
+            privdata->loops.push_back(loop);
+        }
+        return 0;
     }
     else {
         // multi-threads
@@ -268,14 +301,16 @@ int http_server_stop(http_server_t* server) {
         if (all_loops_running) break;
     }
 
-    // stop all loops
-    for (auto& loop : privdata->loops) {
-        loop->stop();
-    }
+    if (!server->share_pools) {
+        // stop all loops
+        for (auto& loop : privdata->loops) {
+            loop->stop();
+        }
 
-    // join all threads
-    for (auto& thrd : privdata->threads) {
-        hthread_join(thrd);
+        // join all threads
+        for (auto& thrd : privdata->threads) {
+            hthread_join(thrd);
+        }
     }
 
     if (server->alloced_ssl_ctx && server->ssl_ctx) {
