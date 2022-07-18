@@ -13,7 +13,8 @@
 #include "Common/MediaSource.h"
 #include "MP4Recorder.h"
 #include "HlsRecorder.h"
-
+#include "Util/File.h"
+#include "Util/logger.h"
 using std::string;
 using namespace toolkit;
 

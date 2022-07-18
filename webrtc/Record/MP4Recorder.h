@@ -11,13 +11,11 @@
 #ifndef MP4MAKER_H_
 #define MP4MAKER_H_
 
-#include <mutex>
 #include <memory>
-#include "Player/PlayerBase.h"
 #include "Util/util.h"
 #include "Util/TimeTicker.h"
-#include "Util/TimeTicker.h"
 #include "Common/MediaSink.h"
+#include "Record/Recorder.h"
 #include "MP4Muxer.h"
 
 namespace mediakit {

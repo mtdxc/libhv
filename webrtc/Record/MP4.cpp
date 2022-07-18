@@ -13,7 +13,9 @@
 #include "Util/File.h"
 #include "Util/logger.h"
 #include "Common/config.h"
-
+#include "mp4-writer.h"
+#include "mov-writer.h"
+#include "mov-reader.h"
 using namespace toolkit;
 using namespace std;
 

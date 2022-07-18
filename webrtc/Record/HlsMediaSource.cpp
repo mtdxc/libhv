@@ -27,7 +27,7 @@ void HlsCookieData::addReaderCount() {
         if (src) {
             auto added = _added;
             *added = true;
-            _ring_reader = src->getRing()->attach(EventPollerPool::Instance().getPoller());
+            _ring_reader = src->getRing()->attach(hv::EventLoopThreadPool::Instance()->loop());
             _ring_reader->setDetachCB([added]() {
                 // HlsMediaSource已经销毁
                 *added = false;

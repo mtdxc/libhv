@@ -10,6 +10,8 @@
 
 #include "HlsMaker.h"
 #include "Util/logger.h"
+#include "Common/config.h"
+
 namespace mediakit {
 
 HlsMaker::HlsMaker(float seg_duration, uint32_t seg_number, bool seg_keep) {

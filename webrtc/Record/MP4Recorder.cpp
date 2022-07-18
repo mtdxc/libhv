@@ -15,8 +15,8 @@
 #include "Util/logger.h"
 #include "Common/config.h"
 #include "MP4Recorder.h"
-#include "Thread/WorkThreadPool.h"
-
+//#include "Thread/WorkThreadPool.h"
+#include "Util/NoticeCenter.h"
 using namespace std;
 using namespace toolkit;
 
@@ -69,7 +69,7 @@ void MP4Recorder::asyncClose() {
     auto full_path_tmp = _full_path_tmp;
     auto full_path = _full_path;
     auto info = _info;
-    WorkThreadPool::Instance().getExecutor()->async([muxer, full_path_tmp, full_path, info]() mutable {
+    hv::EventLoopThreadPool::Instance()->loop()->async([muxer, full_path_tmp, full_path, info]() mutable {
         //获取文件录制时间，放在关闭mp4之前是为了忽略关闭mp4执行时间
         info.time_len = (float) (::time(NULL) - info.start_time);
         //关闭mp4非常耗时，所以要放在后台线程执行

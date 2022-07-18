@@ -135,7 +135,7 @@ string makeAacConfig(const uint8_t *hex, size_t length){
             return string(buf, len);
         }
     }
-    WarnL << "生成aac config失败, adts header:" << hexdump(hex, length);
+    WarnL << "生成aac config失败, adts header:" << toolkit::hexdump(hex, length);
     return "";
 #endif
 }
@@ -154,7 +154,7 @@ int dumpAacConfig(const string &config, size_t length, uint8_t *out, size_t out_
         ret = mpeg4_aac_adts_save(&aac, length, out, out_size);
     }
     if (ret < 0) {
-        WarnL << "生成adts头失败:" << ret << ", aac config:" << hexdump(config.data(), config.size());
+        WarnL << "生成adts头失败:" << ret << ", aac config:" << toolkit::hexdump(config.data(), config.size());
     }
     assert((int)out_size >= ret);
     return ret;
@@ -176,7 +176,7 @@ bool parseAacConfig(const string &config, int &samplerate, int &channels){
         channels = aac.channels;
         return true;
     }
-    WarnL << "获取aac采样率、声道数失败:" << hexdump(config.data(), config.size());
+    WarnL << "获取aac采样率、声道数失败:" << toolkit::hexdump(config.data(), config.size());
     return false;
 #endif
 }

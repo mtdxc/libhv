@@ -12,7 +12,7 @@
 #include <sys/stat.h>
 #include "HlsMakerImp.h"
 #include "Util/util.h"
-#include "Util/uv_errno.h"
+#include "Util/File.h"
 
 using std::string;
 using namespace toolkit;
@@ -25,7 +25,7 @@ HlsMakerImp::HlsMakerImp(const string &m3u8_file,
                          float seg_duration,
                          uint32_t seg_number,
                          bool seg_keep):HlsMaker(seg_duration, seg_number, seg_keep) {
-    _poller = EventPollerPool::Instance().getPoller();
+    _poller = hv::EventLoopThreadPool::Instance()->loop();
     _path_prefix = m3u8_file.substr(0, m3u8_file.rfind('/'));
     _path_hls = m3u8_file;
     _params = params;
@@ -90,7 +90,7 @@ string HlsMakerImp::onOpenSegment(uint64_t index) {
     _info.url = _info.app + "/" + _info.stream + "/" + segment_name;
 
     if (!_file) {
-        WarnL << "create file failed," << segment_path << " " << get_uv_errmsg();
+        WarnL << "create file failed," << segment_path;
     }
     if (_params.empty()) {
         return segment_name;
@@ -125,7 +125,7 @@ void HlsMakerImp::onWriteHls(const std::string &data) {
             _media_src->setIndexFile(data);
         }
     } else {
-        WarnL << "create hls file " << _path_hls << " failed:" << get_uv_errmsg();
+        WarnL << "create hls file " << _path_hls << " failed";
     }
     //DebugL << "\r\n"  << string(data,len);
 }

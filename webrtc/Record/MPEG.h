@@ -11,6 +11,8 @@
 #ifndef ZLMEDIAKIT_MPEG_H
 #define ZLMEDIAKIT_MPEG_H
 
+#include "Common/MediaSink.h"
+
 #if defined(ENABLE_HLS) || defined(ENABLE_RTPPROXY)
 
 #include <cstdio>
@@ -19,7 +21,6 @@
 #include "Extension/Frame.h"
 #include "Extension/Track.h"
 #include "Util/File.h"
-#include "Common/MediaSink.h"
 #include "Common/Stamp.h"
 
 namespace mediakit {
@@ -76,8 +77,6 @@ private:
 }//mediakit
 
 #else
-
-#include "Common/MediaSink.h"
 
 namespace mediakit {
 
