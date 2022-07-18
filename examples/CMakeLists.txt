@@ -65,6 +65,9 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 if(WITH_EVPP)
     include_directories(../cpputil ../evpp)
 
+    file(GLOB evpp_src ../evpp/*.h)
+    add_library(evpp STATIC ${evpp_src} ../evpp/EventLoop_test.cpp)
+
     file(GLOB evpp_test_list ../evpp/*_test.cpp)
     foreach (TEST_SRC ${evpp_test_list})
         get_filename_component(TEST_EXE_NAME ${TEST_SRC} NAME_WE)

@@ -17,7 +17,7 @@ namespace hv {
 
 class EventLoop : public Status {
 public:
-
+    typedef std::shared_ptr<EventLoop> Ptr;
     typedef std::function<void()> Functor;
 
     // New an EventLoop using an existing hloop_t object,
@@ -173,17 +173,23 @@ public:
         });
     }
 
+    TimerID doDelayTask(int timeout_ms, Functor task) {
+        return setTimer(timeout_ms, [task](TimerID){task();}, 1);
+    }
+
+    void async(Functor fn, bool may_sync = true) {
+        if (may_sync)
+            runInLoop(std::move(fn));
+        else
+            queueInLoop(std::move(fn));
+    }
+
     void postEvent(EventCallback cb) {
         if (loop_ == NULL) return;
 
-        EventPtr ev(new Event(cb));
-        hevent_set_userdata(&ev->event, this);
+        auto ev = new Event(cb);
+        hevent_set_userdata(&ev->event, ev);
         ev->event.cb = onCustomEvent;
-
-        mutex_.lock();
-        customEvents.push(ev);
-        mutex_.unlock();
-
         hloop_post_event(loop_, &ev->event);
     }
 
@@ -214,23 +220,20 @@ private:
     }
 
     static void onCustomEvent(hevent_t* hev) {
-        EventLoop* loop = (EventLoop*)hevent_userdata(hev);
-
-        loop->mutex_.lock();
-        EventPtr ev = loop->customEvents.front();
-        loop->customEvents.pop();
-        loop->mutex_.unlock();
-
-        if (ev && ev->cb) ev->cb(ev.get());
+        Event* ev = (Event*)hevent_userdata(hev);
+        if (ev) {
+            if (ev->cb) 
+                ev->cb(ev);
+            delete ev;
+        }
     }
 
 public:
     std::atomic<uint32_t>       connectionNum;  // for LB_LeastConnections
+    std::atomic<uint64_t>       curTimerID;
 private:
     hloop_t*                    loop_;
     bool                        is_loop_owner;
-    std::mutex                  mutex_;
-    std::queue<EventPtr>        customEvents;   // GUAREDE_BY(mutex_)
     std::map<TimerID, TimerPtr> timers;
     std::atomic<TimerID>        nextTimerID;
 };

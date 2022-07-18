@@ -16,7 +16,15 @@ class UdpServerEventLoopTmpl2 {
 public:
     typedef std::shared_ptr<TSocketChannel> TSocketChannelPtr;
 
-    UdpServerEventLoopTmpl2(EventLoopPtr loop = NULL) {
+    UdpServerEventLoopTmpl2(EventLoopPtr loop = NULL, bool new_worker = false) {
+        owner_worker = new_worker;
+        if (new_worker) {
+            worker_threads = std::make_shared<EventLoopThreadPool>();
+        }
+        else {
+            worker_threads = EventLoopThreadPool::Instance();
+            if (!loop) loop = worker_threads->loop(0);
+        }
         acceptor_loop = loop ? loop : std::make_shared<EventLoop>();
         listenio = NULL;
         max_connections = 0xFFFFFFFF;
@@ -26,12 +34,12 @@ public:
 
     virtual ~UdpServerEventLoopTmpl2() {
     }
-
+    EventLoopThreadPool* loops() { return worker_threads.get(); }
     EventLoopPtr loop(int idx = -1) {
-        return worker_threads.loop(idx);
+        return worker_threads->loop(idx);
     }
     EventLoopPtr nextLoop(sockaddr_u* addr) {
-        return worker_threads.nextLoop(load_balance, addr);
+        return worker_threads->nextLoop(load_balance, addr);
     }
 
     //@retval >=0 listenfd, <0 error
@@ -72,7 +80,7 @@ public:
 
     // NOTE: totalThreadNum = 1 acceptor_thread + N worker_threads (N can be 0)
     void setThreadNum(int num) {
-        worker_threads.setThreadNum(num);
+        worker_threads->setThreadNum(num);
     }
 
     int startAccept() {
@@ -88,15 +96,15 @@ public:
 
     // start thread-safe
     void start(bool wait_threads_started = true) {
-        if (worker_threads.threadNum() > 0) {
-            worker_threads.start(wait_threads_started);
+        if (worker_threads->threadNum() > 0) {
+            worker_threads->start(wait_threads_started);
         }
         acceptor_loop->runInLoop(std::bind(&UdpServerEventLoopTmpl2::startAccept, this));
     }
     // stop thread-safe
     void stop(bool wait_threads_stopped = true) {
-        if (worker_threads.threadNum() > 0) {
-            worker_threads.stop(wait_threads_stopped);
+        if (owner_worker && worker_threads->threadNum() > 0) {
+            worker_threads->stop(wait_threads_stopped);
         }
     }
 
@@ -153,7 +161,7 @@ public:
         sockaddr_u* peerAddr = (sockaddr_u*)hio_peeraddr(io);
         int fd = hio_accept_udp_fd(io);
         if (loop == NULL)
-            loop = worker_threads.nextLoop(load_balance, peerAddr);
+            loop = worker_threads->nextLoop(load_balance, peerAddr);
         if (loop == NULL)
             loop = acceptor_loop;
         ++loop->connectionNum;
@@ -292,16 +300,16 @@ private:
     std::map<uint32_t, TSocketChannelPtr>   channels; // GUAREDE_BY(mutex_)
     std::mutex                              mutex_;
 
-    EventLoopPtr            acceptor_loop;
-    EventLoopThreadPool     worker_threads;
+    EventLoopPtr             acceptor_loop;
+    EventLoopThreadPool::Ptr worker_threads;
+    bool owner_worker;
 };
 
 template<class TSocketChannel = SocketChannel>
 class UdpServerTmpl2 : private EventLoopThread, public UdpServerEventLoopTmpl2<TSocketChannel> {
 public:
-    UdpServerTmpl2(EventLoopPtr loop = NULL)
-        : EventLoopThread()
-        , UdpServerEventLoopTmpl2<TSocketChannel>(EventLoopThread::loop())
+    UdpServerTmpl2(EventLoopPtr loop = NULL, bool new_worker = false) : EventLoopThread(loop)
+        , UdpServerEventLoopTmpl2<TSocketChannel>(loop, new_worker)
     {}
     virtual ~UdpServerTmpl2() {
         stop(true);

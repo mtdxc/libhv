@@ -7,13 +7,14 @@
 
 #include "hloop.h"
 #include "hsocket.h"
-
+#include "EventLoopThreadPool.h"
 #include "Buffer.h"
 
 namespace hv {
 
 class Channel {
 public:
+    typedef std::shared_ptr<Channel> Ptr;
     Channel(hio_t* io = NULL) {
         io_ = io;
         fd_ = -1;
@@ -23,7 +24,7 @@ public:
         if (io) {
             fd_ = hio_fd(io);
             id_ = hio_id(io);
-            ctx_ = hio_context(io);
+            setContext(hio_context(io));
             hio_set_context(io, this);
             if (hio_is_opened(io)) {
                 status = OPENED;
@@ -55,24 +56,27 @@ public:
 
     // context
     void* context() {
-        return ctx_;
+        return ctx_.get();
+    }
+    void setContextPtr(std::shared_ptr<void> ctx) {
+        ctx_ = ctx;
     }
     void setContext(void* ctx) {
-        ctx_ = ctx;
+        ctx_ = std::shared_ptr<void>(ctx, [](void*){});
     }
     template<class T>
     T* newContext() {
-        ctx_ = new T;
-        return (T*)ctx_;
+        ctx_ = std::make_shared<T>();
+        return (T*)ctx_.get();
     }
     template<class T>
     T* getContext() {
-        return (T*)ctx_;
+        return (T*)ctx_.get();
     }
     template<class T>
     void deleteContext() {
         if (ctx_) {
-            delete (T*)ctx_;
+            // delete (T*)ctx_;
             ctx_ = NULL;
         }
     }
@@ -157,7 +161,7 @@ public:
     hio_t*      io_;
     int         fd_;
     uint32_t    id_;
-    void*       ctx_;
+    std::shared_ptr<void> ctx_;
     enum Status {
         OPENED,
         CONNECTING,
@@ -200,6 +204,8 @@ private:
 
 class SocketChannel : public Channel {
 public:
+    typedef std::shared_ptr<SocketChannel> Ptr;
+
     std::function<void()>   onconnect; // only for TcpClient
     std::function<void()>   heartbeat;
 
@@ -303,14 +309,49 @@ public:
         char buf[SOCKADDR_STRLEN] = {0};
         return SOCKADDR_STR(addr, buf);
     }
-
+    std::string get_local_ip() {
+        if (io_ == NULL) return "";
+        sockaddr_u* addr = (sockaddr_u*)hio_localaddr(io_);
+        char buf[SOCKADDR_STRLEN] = {0};
+        return sockaddr_ip(addr, buf, sizeof(buf));
+    }
+    uint16_t get_local_port() {
+        if (io_ == NULL) return 0;
+        return sockaddr_port((sockaddr_u*)hio_localaddr(io_));
+    }
     std::string peeraddr() {
         if (io_ == NULL) return "";
         struct sockaddr* addr = hio_peeraddr(io_);
         char buf[SOCKADDR_STRLEN] = {0};
         return SOCKADDR_STR(addr, buf);
     }
+    std::string get_peer_ip() {
+        if (io_ == NULL) return "";
+        sockaddr_u* addr = (sockaddr_u*)hio_peeraddr(io_);
+        char buf[SOCKADDR_STRLEN] = {0};
+        return sockaddr_ip(addr, buf, sizeof(buf));
+    }    
+    uint16_t get_peer_port() {
+        if (io_ == NULL) return 0;
+        return sockaddr_port((sockaddr_u*)hio_peeraddr(io_));
+    }
 
+    EventLoopPtr getPoller() {
+        return EventLoopThreadPool::Instance()->findLoop(io_);
+    }
+    typedef std::function<void()> Task;
+    void async(Task task) {
+        hevent_t ev = { 0 };
+        ev.userdata = new Task(task);
+        //ev.event_type = (hevent_type_e)(HEVENT_TYPE_CUSTOM + 1);
+        ev.cb = [](hevent_t* ev) {
+            if (Task* task = (Task*)ev->userdata) {
+                (*task)();
+                delete task;
+            }
+        };
+        hloop_post_event(hevent_loop(io_), &ev);
+    }
 private:
     static void on_connect(hio_t* io) {
         SocketChannel* channel = (SocketChannel*)hio_context(io);

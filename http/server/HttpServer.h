@@ -6,9 +6,11 @@
 // #include "WebSocketServer.h"
 namespace hv {
 struct WebSocketService;
+class EventLoopThreadPool;
 }
 using hv::HttpService;
 using hv::WebSocketService;
+using hv::EventLoopThreadPool;
 
 typedef struct http_server_s {
     char host[64];
@@ -18,6 +20,7 @@ typedef struct http_server_s {
     int worker_processes;
     int worker_threads;
     uint32_t worker_connections; // max_connections = workers * worker_connections
+    EventLoopThreadPool* share_pools;
     HttpService* service; // http service
     WebSocketService* ws; // websocket service
     void* userdata;
