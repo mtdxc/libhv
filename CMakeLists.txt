@@ -7,6 +7,7 @@ option(BUILD_STATIC "build static library" ON)
 
 option(BUILD_EXAMPLES "build examples" ON)
 option(BUILD_UNITTEST "build unittest" OFF)
+option(BUILD_WEBRTC "compile webrtc" ON)
 
 # see config.ini
 option(WITH_PROTOCOL "compile protocol" OFF)
@@ -23,7 +24,7 @@ option(USE_MULTIMAP "MultiMap" OFF)
 option(WITH_CURL "with curl library" OFF)
 option(WITH_NGHTTP2 "with nghttp2 library" OFF)
 
-option(WITH_OPENSSL "with openssl library" OFF)
+option(WITH_OPENSSL "with openssl library" ON)
 option(WITH_GNUTLS  "with gnutls library"  OFF)
 option(WITH_MBEDTLS "with mbedtls library" OFF)
 
@@ -257,6 +258,16 @@ if(BUILD_EXAMPLES)
     file(INSTALL etc DESTINATION ${CMAKE_BINARY_DIR})
     file(INSTALL etc DESTINATION ${CMAKE_BINARY_DIR}/bin)
     file(INSTALL etc DESTINATION ${CMAKE_BINARY_DIR}/examples)
+endif()
+
+if (BUILD_WEBRTC AND OpenSSL_FOUND)
+    include_directories(3rdpart/libsrtp/include)
+    set(ENABLE_OPENSSL ON CACHE INTERNAL "")
+    set(TEST_APPS OFF CACHE INTERNAL "")
+    add_subdirectory(3rdpart/libsrtp)
+    unset(TEST_APPS)
+
+    add_subdirectory(webrtc)
 endif()
 
 if(BUILD_UNITTEST)
