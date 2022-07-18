@@ -30,16 +30,16 @@ typedef enum {
 } TrackType;
 
 #define CODEC_MAP(XX) \
-    XX(CodecH264,  TrackVideo, 0, "H264", PSI_STREAM_H264)          \
-    XX(CodecH265,  TrackVideo, 1, "H265", PSI_STREAM_H265)          \
-    XX(CodecAAC,   TrackAudio, 2, "mpeg4-generic", PSI_STREAM_AAC)  \
-    XX(CodecG711A, TrackAudio, 3, "PCMA", PSI_STREAM_AUDIO_G711A)   \
-    XX(CodecG711U, TrackAudio, 4, "PCMU", PSI_STREAM_AUDIO_G711U)   \
-    XX(CodecOpus,  TrackAudio, 5, "opus", PSI_STREAM_AUDIO_OPUS)    \
-    XX(CodecL16,   TrackAudio, 6, "L16", PSI_STREAM_RESERVED)       \
-    XX(CodecVP8,   TrackVideo, 7, "VP8", PSI_STREAM_VP8)            \
-    XX(CodecVP9,   TrackVideo, 8, "VP9", PSI_STREAM_VP9)            \
-    XX(CodecAV1,   TrackVideo, 9, "AV1X", PSI_STREAM_AV1)
+    XX(CodecH264,  TrackVideo, 0, "H264", 0x1b)          \
+    XX(CodecH265,  TrackVideo, 1, "H265", 0x24)          \
+    XX(CodecAAC,   TrackAudio, 2, "mpeg4-generic", 0x0f)  \
+    XX(CodecG711A, TrackAudio, 3, "PCMA", 0x90)   \
+    XX(CodecG711U, TrackAudio, 4, "PCMU", 0x91)   \
+    XX(CodecOpus,  TrackAudio, 5, "opus", 0x9c)    \
+    XX(CodecL16,   TrackAudio, 6, "L16", 0)       \
+    XX(CodecVP8,   TrackVideo, 7, "VP8", 0x9d)            \
+    XX(CodecVP9,   TrackVideo, 8, "VP9", 0x9e)            \
+    XX(CodecAV1,   TrackVideo, 9, "AV1X", 0x9f)
 
 typedef enum {
     CodecInvalid = -1,
