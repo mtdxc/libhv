@@ -13,27 +13,27 @@
 
 #if defined(ENABLE_RTPPROXY)
 
-#include "Network/TcpSession.h"
+#include "Socket.h"
 #include "RtpSplitter.h"
 #include "RtpProcess.h"
 #include "Util/TimeTicker.h"
 
 namespace mediakit{
 
-class RtpSession : public toolkit::Session, public RtpSplitter, public MediaSourceEvent {
+class RtpSession : public toolkit::Session, public RtpSplitter, public MediaSourceEvent,
+    public std::enable_shared_from_this<RtpSession> {
 public:
     static const std::string kStreamID;
     static const std::string kIsUDP;
     static const std::string kSSRC;
 
-    RtpSession(const toolkit::Socket::Ptr &sock);
+    RtpSession(hio_t* io);
     ~RtpSession() override;
 
-    void onRecv(const toolkit::Buffer::Ptr &) override;
+    void onRecv(const toolkit::Buffer::Ptr &);
     void onError(const toolkit::SockException &err) override;
     void onManager() override;
-    void attachServer(const toolkit::Server &server) override;
-
+    //void attachServer(const toolkit::Server &server) override;
 protected:
     // 通知其停止推流
     bool close(MediaSource &sender,bool force) override;
@@ -51,7 +51,7 @@ private:
     uint32_t _ssrc = 0;
     toolkit::Ticker _ticker;
     std::string _stream_id;
-    struct sockaddr_storage _addr;
+    struct sockaddr* _addr;
     RtpProcess::Ptr _process;
     // 负责自动增加和减少对象统计数
     std::shared_ptr<void> _statistic_counter;

@@ -12,7 +12,7 @@
 #define ZLMEDIAKIT_RTPSPLITTER_H
 
 #if defined(ENABLE_RTPPROXY)
-#include "Http/HttpRequestSplitter.h"
+#include "Util/HttpRequestSplitter.h"
 
 namespace mediakit{
 /* 

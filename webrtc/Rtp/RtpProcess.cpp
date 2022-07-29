@@ -11,7 +11,7 @@
 #if defined(ENABLE_RTPPROXY)
 #include "GB28181Process.h"
 #include "RtpProcess.h"
-#include "Http/HttpTSPlayer.h"
+//#include "Http/HttpTSPlayer.h"
 #include "Util/File.h"
 using namespace std;
 using namespace toolkit;
@@ -46,18 +46,18 @@ RtpProcess::RtpProcess(const string &stream_id) {
 
 RtpProcess::~RtpProcess() {
     uint64_t duration = (_last_frame_time.createdTime() - _last_frame_time.elapsedTime()) / 1000;
-    WarnP(this) << "RTP推流器(" << _media_info.shortUrl() << ")断开,耗时(s):" << duration;
+    WarnL << "RTP推流器(" << _media_info.shortUrl() << ")断开,耗时(s):" << duration;
 
     //流量统计事件广播
     GET_CONFIG(uint32_t, iFlowThreshold, General::kFlowThreshold);
     if (_total_bytes >= iFlowThreshold * 1024) {
-        NoticeCenter::Instance().emitEvent(Broadcast::kBroadcastFlowReport, _media_info, _total_bytes, duration, false, static_cast<SockInfo &>(*this));
+        NoticeCenter::Instance().emitEvent(Broadcast::kBroadcastFlowReport, _media_info, _total_bytes, duration, false, _sock);
     }
 }
 
-bool RtpProcess::inputRtp(bool is_udp, const Socket::Ptr &sock, const char *data, size_t len, const struct sockaddr *addr, uint32_t *dts_out) {
+bool RtpProcess::inputRtp(bool is_udp, const Session::Ptr &sock, const char *data, size_t len, const struct sockaddr *addr, uint32_t *dts_out) {
     if (_busy_flag.test_and_set()) {
-        WarnP(this) << "其他线程正在执行本函数";
+        WarnL << "其他线程正在执行本函数";
         return false;
     }
     onceToken token(nullptr, [&]() {
@@ -185,32 +185,6 @@ void RtpProcess::setOnDetach(const function<void()> &cb) {
     _on_detach = cb;
 }
 
-string RtpProcess::get_peer_ip() {
-    if (!_addr) {
-        return "::";
-    }
-    return SockUtil::inet_ntoa((sockaddr *)_addr.get());
-}
-
-uint16_t RtpProcess::get_peer_port() {
-    if (!_addr) {
-        return 0;
-    }
-    return SockUtil::inet_port((sockaddr *)_addr.get());
-}
-
-string RtpProcess::get_local_ip() {
-    return _sock ? _sock->get_local_ip() : "::";
-}
-
-uint16_t RtpProcess::get_local_port() {
-    return _sock ? _sock->get_local_port() : 0;
-}
-
-string RtpProcess::getIdentifier() const {
-    return _media_info._streamid;
-}
-
 int RtpProcess::getTotalReaderCount() {
     return _muxer ? _muxer->totalReaderCount() : 0;
 }
@@ -233,14 +207,14 @@ void RtpProcess::emitOnPublish() {
                                                                           option);
             strong_self->_muxer->setMediaListener(strong_self);
             strong_self->doCachedFunc();
-            InfoP(strong_self) << "允许RTP推流";
+            InfoL << "允许RTP推流";
         } else {
-            WarnP(strong_self) << "禁止RTP推流:" << err;
+            WarnL << "禁止RTP推流:" << err;
         }
     };
 
     //触发推流鉴权事件
-    auto flag = NoticeCenter::Instance().emitEvent(Broadcast::kBroadcastMediaPublish, MediaOriginType::rtp_push, _media_info, invoker, static_cast<SockInfo &>(*this));
+    auto flag = NoticeCenter::Instance().emitEvent(Broadcast::kBroadcastMediaPublish, MediaOriginType::rtp_push, _media_info, invoker, _sock);
     if (!flag) {
         //该事件无人监听,默认不鉴权
         invoker("", ProtocolOption());
@@ -256,7 +230,7 @@ string RtpProcess::getOriginUrl(MediaSource &sender) const {
 }
 
 std::shared_ptr<SockInfo> RtpProcess::getOriginSock(MediaSource &sender) const {
-    return const_cast<RtpProcess *>(this)->shared_from_this();
+    return _sock;
 }
 
 toolkit::EventPoller::Ptr RtpProcess::getOwnerPoller(MediaSource &sender) {

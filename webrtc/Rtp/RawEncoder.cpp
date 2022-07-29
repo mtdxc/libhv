@@ -17,7 +17,7 @@
 #include "Extension/CommonRtp.h"
 #include "Extension/G711Rtp.h"
 #include "Rtsp/RtspMuxer.h"
-
+#include "Common/config.h"
 using namespace toolkit;
 
 namespace mediakit{

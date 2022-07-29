@@ -38,6 +38,7 @@ aux_source_directory(Rtsp RTC_SRCS)
 aux_source_directory(webrtc RTC_SRCS)
 aux_source_directory(Record RTC_SRCS)
 aux_source_directory(srt RTC_SRCS)
+aux_source_directory(Rtp RTC_SRCS)
 
 add_executable(rtc_server ${RTC_SRCS})
 target_link_libraries(rtc_server srtp2 ${HV_LIBRARIES})

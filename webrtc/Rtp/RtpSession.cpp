@@ -11,7 +11,6 @@
 #if defined(ENABLE_RTPPROXY)
 #include "RtpSession.h"
 #include "RtpSelector.h"
-#include "Network/TcpServer.h"
 #include "Rtsp/RtpReceiver.h"
 
 using namespace std;
@@ -22,7 +21,7 @@ namespace mediakit{
 const string RtpSession::kStreamID = "stream_id";
 const string RtpSession::kIsUDP = "is_udp";
 const string RtpSession::kSSRC = "ssrc";
-
+#if 0
 void RtpSession::attachServer(const Server &server) {
     _stream_id = const_cast<Server &>(server)[kStreamID];
     _is_udp = const_cast<Server &>(server)[kIsUDP];
@@ -36,11 +35,11 @@ void RtpSession::attachServer(const Server &server) {
         _statistic_counter = std::make_shared<ObjectStatistic<TcpSession> >();
     }
 }
+#endif
 
-RtpSession::RtpSession(const Socket::Ptr &sock) : Session(sock) {
+RtpSession::RtpSession(hio_t* io) : Session(io) {
     DebugP(this);
-    socklen_t addr_len = sizeof(_addr);
-    getpeername(sock->rawFD(), (struct sockaddr *)&_addr, &addr_len);
+    _addr = hio_peeraddr(io);
 }
 
 RtpSession::~RtpSession() {
@@ -103,7 +102,7 @@ void RtpSession::onRtpPacket(const char *data, size_t len) {
         }
         //tcp情况下，一个tcp链接只可能是一路流，不需要通过多个ssrc来区分，所以不需要频繁getProcess
         _process = RtpSelector::Instance().getProcess(_stream_id, true);
-        _process->setListener(dynamic_pointer_cast<RtpSession>(shared_from_this()));
+        _process->setListener(std::dynamic_pointer_cast<RtpSession>(shared_from_this()));
     }
 
     try {
@@ -113,7 +112,7 @@ void RtpSession::onRtpPacket(const char *data, size_t len) {
             WarnP(this) << "ssrc不匹配,rtp已丢弃:" << rtp_ssrc << " != " << _ssrc;
             return;
         }
-        _process->inputRtp(false, getSock(), data, len, (struct sockaddr *)&_addr);
+        _process->inputRtp(false, shared_from_this(), data, len, (struct sockaddr *)&_addr);
     } catch (RtpTrack::BadRtpException &ex) {
         if (!_is_udp) {
             WarnL << ex.what() << "，开始搜索ssrc以便恢复上下文";
@@ -133,7 +132,7 @@ bool RtpSession::close(MediaSource &sender, bool force) {
         return false;
     }
     string err = StrPrinter << "close media:" << sender.getUrl() << " " << force;
-    safeShutdown(SockException(Err_shutdown, err));
+    shutdown(SockException(Err_shutdown, err), true);
     return true;
 }
 

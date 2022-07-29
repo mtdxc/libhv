@@ -34,7 +34,7 @@ void RtpSelector::clear(){
     _map_rtp_process.clear();
 }
 
-bool RtpSelector::inputRtp(const Socket::Ptr &sock, const char *data, size_t data_len,
+bool RtpSelector::inputRtp(const Session::Ptr &sock, const char *data, size_t data_len,
                            const struct sockaddr *addr,uint32_t *dts_out) {
     uint32_t ssrc = 0;
     if (!getSSRC(data, data_len, ssrc)) {
@@ -78,7 +78,7 @@ void RtpSelector::createTimer() {
             return true;
         }
         return false;
-    }, EventPollerPool::Instance().getPoller());
+    }, hv::EventLoopThreadPool::Instance()->loop());
 }
 
 void RtpSelector::delProcess(const string &stream_id, const RtpProcess *ptr) {
@@ -99,9 +99,9 @@ void RtpSelector::delProcess(const string &stream_id, const RtpProcess *ptr) {
 }
 
 void RtpSelector::onManager() {
-    List<RtpProcess::Ptr> clear_list;
+    std::list<RtpProcess::Ptr> clear_list;
     {
-        lock_guard<decltype(_mtx_map)> lck(_mtx_map);
+        std::lock_guard<decltype(_mtx_map)> lck(_mtx_map);
         for (auto it = _map_rtp_process.begin(); it != _map_rtp_process.end();) {
             if (it->second->getProcess()->alive()) {
                 ++it;
@@ -114,9 +114,9 @@ void RtpSelector::onManager() {
         }
     }
 
-    clear_list.for_each([](const RtpProcess::Ptr &process) {
+    for(auto process : clear_list) {
         process->onDetach();
-    });
+    }
 }
 
 ///////////////////////////////////

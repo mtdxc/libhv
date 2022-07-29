@@ -66,7 +66,7 @@ private:
 private:
     bool _is_connect = false;
     MediaSourceEvent::SendRtpArgs _args;
-    toolkit::Socket::Ptr _socket;
+    toolkit::Session::Ptr _socket;
     toolkit::EventPoller::Ptr _poller;
     toolkit::Timer::Ptr _connect_timer;
     MediaSinkInterface::Ptr _interface;

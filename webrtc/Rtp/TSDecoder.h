@@ -11,7 +11,7 @@
 #ifndef ZLMEDIAKIT_TSDECODER_H
 #define ZLMEDIAKIT_TSDECODER_H
 
-#include "Http/HttpRequestSplitter.h"
+#include "Util/HttpRequestSplitter.h"
 #include "Decoder.h"
 
 #define TS_PACKET_SIZE		188

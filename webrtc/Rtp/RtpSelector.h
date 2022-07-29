@@ -74,7 +74,7 @@ public:
      * @param dts_out 解析出最新的dts
      * @return 是否成功
      */
-    bool inputRtp(const toolkit::Socket::Ptr &sock, const char *data, size_t data_len,
+    bool inputRtp(const toolkit::Session::Ptr &sock, const char *data, size_t data_len,
                   const struct sockaddr *addr, uint32_t *dts_out = nullptr);
 
     /**

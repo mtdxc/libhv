@@ -14,8 +14,8 @@
 #if defined(ENABLE_RTPPROXY)
 #include <memory>
 #include "Socket.h"
-#include "Network/TcpServer.h"
-#include "Network/UdpServer.h"
+#include "TcpServer.h"
+#include "UdpServer2.h"
 #include "RtpSession.h"
 
 namespace mediakit{
@@ -53,9 +53,9 @@ public:
     void setOnDetach(const std::function<void()> &cb);
 
 protected:
-    toolkit::Socket::Ptr _rtp_socket;
-    toolkit::UdpServer::Ptr _udp_server;
-    toolkit::TcpServer::Ptr _tcp_server;
+    toolkit::Session::Ptr _rtp_socket;
+    std::shared_ptr<hv::UdpServerTmpl2<RtpSession>> _udp_server;
+    std::shared_ptr<hv::TcpServerTmpl<RtpSession>> _tcp_server;
     RtpProcess::Ptr _rtp_process;
     std::function<void()> _on_clearup;
 };

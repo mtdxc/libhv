@@ -14,7 +14,7 @@
 #if defined(ENABLE_RTPPROXY)
 #include <stdint.h>
 #include "Decoder.h"
-#include "Http/HttpRequestSplitter.h"
+#include "Util/HttpRequestSplitter.h"
 
 namespace mediakit{
 
