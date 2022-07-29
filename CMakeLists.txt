@@ -261,12 +261,19 @@ if(BUILD_EXAMPLES)
 endif()
 
 if (BUILD_WEBRTC AND OpenSSL_FOUND)
-    include_directories(3rdpart/libsrtp/include)
+    include_directories(3rdpart/libsrtp/include 3rdpart/libmov/include 3rdpart/libmpeg/include)
     set(ENABLE_OPENSSL ON CACHE INTERNAL "")
     set(TEST_APPS OFF CACHE INTERNAL "")
     add_subdirectory(3rdpart/libsrtp)
     unset(TEST_APPS)
 
+    aux_source_directory(3rdpart/libmov/source MOV_SRCS)
+    add_library(libmov STATIC ${MOV_SRCS})
+
+    aux_source_directory(3rdpart/libmpeg/source MPEG_SRCS)
+    add_library(libmpeg STATIC ${MPEG_SRCS})
+
+    add_definitions(-DENABLE_OPENSSL -DENABLE_HLS -DENABLE_MP4 -DENABLE_RTPPROXY)
     add_subdirectory(webrtc)
 endif()
 
