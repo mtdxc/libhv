@@ -10,6 +10,9 @@
 #include "WebRtcServer.h"
 #include "webrtc/IceServer.hpp"
 #include "webrtc/WebRtcTransport.h"
+#include "FMP4/FMP4MediaSource.h"
+#include "Rtmp/RtmpMediaSource.h"
+#include "TS/TSMediaSource.h"
 #include "hstring.h"
 #include "hbase.h"
 #include <string>
@@ -22,8 +25,6 @@ using namespace toolkit;
  //RTC配置项目
 namespace RTC {
 #define RTC_FIELD "rtc."
-//rtp和rtcp接受超时时间
-const string kDocRoot = RTC_FIELD"docRoot";
 //服务器外网ip
 const string kHttpPort = RTC_FIELD"httpPort";
 //设置remb比特率，非0时关闭twcc并开启remb。该设置在rtc推流时有效，可以控制推流画质
@@ -32,7 +33,6 @@ const string kCertFile = RTC_FIELD"certFile";
 const string kKeyFile = RTC_FIELD"keyFile";
 
 static onceToken token([]() {
-    mINI::Instance()[kDocRoot] = "html";
     mINI::Instance()[kCertFile] = "cert/server.crt";
     mINI::Instance()[kKeyFile] = "cert/server.key";
     mINI::Instance()[kHttpPort] = 80;
@@ -316,12 +316,62 @@ hv::Json makeMediaSourceJson(MediaSource &media) {
     return item;
 }
 
+#include "Rtmp/FlvMuxer.h"
+class HttpFlvMuxer : public FlvMuxer, public std::enable_shared_from_this<HttpFlvMuxer>{
+public:
+    HttpFlvMuxer(HttpResponseWriterPtr writer) : _writer(writer) {
+    }
+    HttpFlvMuxer(WebSocketChannelPtr channel) : _channel(channel) {
+    }
+    using FlvMuxer::start;
+protected:
+    WebSocketChannelPtr _channel;
+    HttpResponseWriterPtr _writer;
+    // 写入二进制数据
+    virtual void onWrite(const toolkit::Buffer::Ptr &data, bool flush) {
+        if(_writer)
+            _writer->WriteBody(data->data(), data->size());
+        if(_channel)
+            _channel->send(data->data(), data->size());
+    }
+    // stop或RtmpMediaSource Detach时回调
+    virtual void onDetach() {
+        if(_writer)
+            _writer->close();
+        if(_channel)
+            _channel->close();
+    }
+    // 为了跨线程投递, 为啥不 enable_shared_from_this?
+    virtual std::shared_ptr<FlvMuxer> getSharedPtr() {
+        return shared_from_this();
+    }
+};
+
+static std::string schema_from_stream(std::string& stream) {
+    std::string schema;
+    if (hv::endswith(stream, ".live.flv")) {
+        schema = RTMP_SCHEMA;
+        stream = stream.substr(0, stream.length() - 9);
+    }
+    else if (hv::endswith(stream, ".live.mp4")) {
+        schema = FMP4_SCHEMA;
+        stream = stream.substr(0, stream.length() - 9);
+    }
+    else if (hv::endswith(stream, ".live.ts")) {
+        schema = TS_SCHEMA;
+        stream = stream.substr(0, stream.length() - 8);
+    }
+    return schema;
+}
+
 void WebRtcServer::startHttp()
 {
     GET_CONFIG(std::string, api_secret, "api.secret");
     int port = 80;
     static HttpService http;
-    http.document_root = mINI::Instance()[RTC::kDocRoot];
+    http.document_root = mINI::Instance()[Http::kRootPath];
+    InfoL << "www root:" << http.document_root;
+    // http.error_page = mINI::Instance()[Http::kNotFound];
     http.POST("/echo", [](const HttpContextPtr& ctx) {
         return ctx->send(ctx->body(), ctx->type());
     });
@@ -403,36 +453,185 @@ void WebRtcServer::startHttp()
         });
     });
 
+    // /:field/ => req->query_params["field"]
+    http.GET("/:app/:stream", [this](const HttpContextPtr& context) -> int {
+        auto req = context->request;
+        auto writer = context->writer;
+        InfoL << "stream: " << req->url;
+        MediaInfo mi;
+        //mi.parse(req->url);
+        mi._host = req->host;
+        mi._app = req->query_params["app"];
+        mi._streamid = req->query_params["stream"];
+        std::string stream = mi._streamid;
 
-    static WebSocketService ws;
-#if 0
-    ws.onopen = [](const WebSocketChannelPtr& channel, const std::string& url) {
-        printf("onopen: GET %s\n", url.c_str());
-        MyContext* ctx = channel->newContext<MyContext>();
-        // send(time) every 1s
-        ctx->timerID = setInterval(1000, [channel](TimerID id) {
-            if (channel->isConnected() && channel->isWriteComplete()) {
-                char str[DATETIME_FMT_BUFLEN] = { 0 };
-                datetime_t dt = datetime_now();
-                datetime_fmt(&dt, str);
-                channel->send(str);
+        auto schema = req->query_params["schema"];
+        if (schema.empty()) {
+            schema = schema_from_stream(mi._streamid);
+        }
+        mi._schema = schema;
+        if (mi._app.empty() || mi._streamid.empty() || schema.empty()) {
+            return -1;
+            //url不合法
+            writer->End("stream url error");
+            return HTTP_STATUS_NOT_FOUND;
+        }
+
+        // 解析带上协议+参数完整的url
+        // mi.parse(schema + "://" + req->host + req->path);
+        MediaSource::findAsync(mi, writer, [schema, stream, writer](const MediaSource::Ptr &src){
+            std::weak_ptr<hv::HttpResponseWriter> weak_self = writer;
+            if (!src) {
+                writer->WriteStatus(HTTP_STATUS_NOT_FOUND);
+                writer->End("stream not found");
+                return;
+            }
+            writer->response->SetContentTypeByFilename(stream.c_str());
+            writer->EndHeaders();
+
+            if (schema == RTMP_SCHEMA) {
+                auto rtmp_src = std::dynamic_pointer_cast<RtmpMediaSource>(src);
+                assert(rtmp_src);
+                auto muxer = std::make_shared<HttpFlvMuxer>(writer);
+                uint32_t start_pts = 0;//atoll(_parser.getUrlArgs()["starPts"].data());
+                muxer->start(writer->getPoller(), rtmp_src, start_pts);
+                writer->setContextPtr(muxer);
+            }
+            else if(schema == FMP4_SCHEMA) {
+                auto fmp4_src = std::dynamic_pointer_cast<FMP4MediaSource>(src);
+                assert(fmp4_src);
+                //直播牺牲延时提升发送性能
+                //setSocketFlags();
+
+                // fmp4要先发initSegment
+                writer->WriteBody(fmp4_src->getInitSegment());
+                fmp4_src->pause(false);
+                auto reader = fmp4_src->getRing()->attach(writer->getPoller());
+                reader->setDetachCB([weak_self]() {
+                    if (auto strong_self = weak_self.lock()) {
+                        strong_self->close();//SockException(Err_shutdown, "fmp4 ring buffer detached"));
+                    }
+                });
+                reader->setReadCB([weak_self](const FMP4MediaSource::RingDataType &fmp4_list) {
+                    if (auto strong_self = weak_self.lock()) {
+                        for (auto pkt : *fmp4_list) {
+                            strong_self->WriteBody(pkt->data(), pkt->size());
+                        }
+                    }
+                });
+                writer->setContextPtr(reader);
+            }
+            else if(schema == TS_SCHEMA) {
+                auto ts_src = std::dynamic_pointer_cast<TSMediaSource>(src);
+                assert(ts_src);
+                //直播牺牲延时提升发送性能
+                //setSocketFlags();
+
+                ts_src->pause(false);
+                auto reader = ts_src->getRing()->attach(writer->getPoller());
+                reader->setDetachCB([weak_self]() {
+                    if (auto strong_self = weak_self.lock()) {
+                        strong_self->close();//SockException(Err_shutdown, "ts ring buffer detached"));
+                    }
+                });
+                reader->setReadCB([weak_self](const TSMediaSource::RingDataType &ts_list) {                    
+                    if (auto strong_self = weak_self.lock()) {
+                        for (auto pkt : *ts_list) {
+                            strong_self->WriteBody(pkt->data(), pkt->size());
+                        }
+                    }
+                });
+                writer->setContextPtr(reader);
             }
         });
+        return 0;
+    });
+
+    static WebSocketService ws;
+    ws.onopen = [](const WebSocketChannelPtr& channel, const HttpRequestPtr& req) {
+        MediaInfo mi;
+        mi.parse(req->url);
+        std::string schema = mi._schema;
+        if (schema.empty() || hv::startswith(schema, "ws")) {
+            mi._schema = schema_from_stream(mi._streamid);
+        }
+
+        if (mi._app.empty() || mi._streamid.empty()) {
+            //url不合法
+            channel->close();
+            return;
+        }
+        // 解析带上协议+参数完整的url
+        // mi.parse(schema + "://" + req->host + req->path);
+        MediaSource::findAsync(mi, channel, [schema, channel](const MediaSource::Ptr &src){
+            std::weak_ptr<hv::WebSocketChannel> weak_self = channel;
+            if (!src) {
+                channel->close();
+                return;
+            }
+            if (schema == RTMP_SCHEMA) {
+                auto rtmp_src = std::dynamic_pointer_cast<RtmpMediaSource>(src);
+                assert(rtmp_src);
+                auto muxer = std::make_shared<HttpFlvMuxer>(channel);
+                uint32_t start_pts = 0;//atoll(_parser.getUrlArgs()["starPts"].data());
+                muxer->start(channel->getPoller(), rtmp_src, start_pts);
+                channel->setContextPtr(muxer);
+            }
+            else if(schema == FMP4_SCHEMA) {
+                auto fmp4_src = std::dynamic_pointer_cast<FMP4MediaSource>(src);
+                assert(fmp4_src);
+                //直播牺牲延时提升发送性能
+                //setSocketFlags();
+
+                // fmp4要先发initSegment
+                channel->send(fmp4_src->getInitSegment(), WS_OPCODE_BINARY);
+                fmp4_src->pause(false);
+                auto reader = fmp4_src->getRing()->attach(channel->getPoller());
+                reader->setDetachCB([weak_self]() {
+                    if (auto strong_self = weak_self.lock()) {
+                        strong_self->close();//SockException(Err_shutdown, "fmp4 ring buffer detached"));
+                    }
+                });
+                reader->setReadCB([weak_self](const FMP4MediaSource::RingDataType &fmp4_list) {
+                    if (auto strong_self = weak_self.lock()) {
+                        for (auto pkt : *fmp4_list) {
+                            strong_self->send(pkt->data(), pkt->size());
+                        }
+                    }
+                });
+                channel->setContextPtr(reader);
+            }
+            else if(schema == TS_SCHEMA) {
+                auto ts_src = dynamic_pointer_cast<TSMediaSource>(src);
+                assert(ts_src);
+                //直播牺牲延时提升发送性能
+                //setSocketFlags();
+
+                ts_src->pause(false);
+                auto reader = ts_src->getRing()->attach(channel->getPoller());
+                reader->setDetachCB([weak_self]() {
+                    if (auto strong_self = weak_self.lock()) {
+                        strong_self->close();//SockException(Err_shutdown, "ts ring buffer detached"));
+                    }
+                });
+                reader->setReadCB([weak_self](const TSMediaSource::RingDataType &ts_list) {
+                    if (auto strong_self = weak_self.lock()) {
+                        for (auto pkt : *ts_list) {
+                            strong_self->send(pkt->data(), pkt->size());
+                        }
+                    }
+                });
+                channel->setContextPtr(reader);
+            }
+        });        
     };
     ws.onmessage = [](const WebSocketChannelPtr& channel, const std::string& msg) {
-        MyContext* ctx = channel->getContext<MyContext>();
-        ctx->handleMessage(msg);
+        // MyContext* ctx = channel->getContext<MyContext>();
+        // ctx->handleMessage(msg);
     };
     ws.onclose = [](const WebSocketChannelPtr& channel) {
-        printf("onclose\n");
-        MyContext* ctx = channel->getContext<MyContext>();
-        if (ctx->timerID != INVALID_TIMER_ID) {
-            killTimer(ctx->timerID);
-        }
-        channel->deleteContext<MyContext>();
+        channel->setContextPtr(nullptr);
     };
-    _http.set
-#endif
 
     _http.port = mINI::Instance()[RTC::kHttpPort];
     _http.https_port = mINI::Instance()[RTC::kHttpsPort];

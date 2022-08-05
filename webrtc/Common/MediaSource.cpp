@@ -540,9 +540,13 @@ void MediaInfo::parse(const string &url_in){
     }
 
     auto params = Parser::parseArgs(_param_strs);
-    if (params.find(VHOST_KEY) != params.end()) {
-        _vhost = params[VHOST_KEY];
+    auto it = params.find(VHOST_KEY);
+    if (it != params.end()) {
+        _vhost = it->second;
     }
+    it = params.find("schema");
+    if (it != params.end())
+        _schema = it->second;
 
     GET_CONFIG(bool, enableVhost, General::kEnableVhost);
     if (!enableVhost || _vhost.empty()) {
