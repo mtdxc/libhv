@@ -15,6 +15,7 @@
 #include "Socket.h"
 #include "UdpServer2.h"
 #include "TcpServer.h"
+#include "srt/SrtSession.hpp"
 #include "webrtc/WebRtcSession.h"
 #include "Rtmp/RtmpSession.h"
 #include "Rtsp/RtspSession.h"
@@ -55,6 +56,7 @@ private:
     void onRtcOfferReq(const HttpRequestPtr& req, const HttpResponseWriterPtr& writer);
 
     void startRtc();
+    void startSrt();
     void startRtmp();
     void startRtsp();
     void addItem(const std::string &key, const WebRtcTransportPtr &ptr) {
@@ -70,6 +72,7 @@ private:
 
     std::string _local_ip;
     std::shared_ptr<hv::UdpServerEventLoopTmpl2<WebRtcSession>> _udpRtc;
+    std::shared_ptr<hv::UdpServerEventLoopTmpl2<SRT::SrtSession>> _udpSrt;
     std::shared_ptr<hv::TcpServerEventLoopTmpl<mediakit::RtmpSession>> _rtmp;
     std::shared_ptr<hv::TcpServerEventLoopTmpl<mediakit::RtspSession>> _rtsp;
     websocket_server_t _http;

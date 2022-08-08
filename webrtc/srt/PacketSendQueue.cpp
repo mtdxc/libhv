@@ -1,4 +1,5 @@
-﻿#include "PacketSendQueue.hpp"
+﻿#include "Util/logger.h"
+#include "PacketSendQueue.hpp"
 
 namespace SRT {
 

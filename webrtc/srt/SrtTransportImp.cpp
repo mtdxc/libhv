@@ -8,17 +8,16 @@ SrtTransportImp::SrtTransportImp(const EventPoller::Ptr &poller)
     : SrtTransport(poller) {}
 
 SrtTransportImp::~SrtTransportImp() {
-    InfoP(this);
+    InfoL;
     uint64_t duration = _alive_ticker.createdTime() / 1000;
-    WarnP(this) << (_is_pusher ? "srt 推流器(" : "srt 播放器(") << _media_info._vhost << "/" << _media_info._app << "/"
+    WarnL << (_is_pusher ? "srt 推流器(" : "srt 播放器(") << _media_info._vhost << "/" << _media_info._app << "/"
                 << _media_info._streamid << ")断开,耗时(s):" << duration;
 
     // 流量统计事件广播
     GET_CONFIG(uint32_t, iFlowThreshold, General::kFlowThreshold);
     if (_total_bytes >= iFlowThreshold * 1024) {
         NoticeCenter::Instance().emitEvent(
-            Broadcast::kBroadcastFlowReport, _media_info, _total_bytes, duration, !_is_pusher,
-            static_cast<SockInfo &>(*this));
+            Broadcast::kBroadcastFlowReport, _media_info, _total_bytes, duration, !_is_pusher, this);
     }
 }
 
@@ -97,13 +96,13 @@ bool SrtTransportImp::parseStreamid(std::string &streamid) {
 
 void SrtTransportImp::onSRTData(DataPacket::Ptr pkt) {
     if (!_is_pusher) {
-        WarnP(this)<<"ignore player data";
+        WarnL << "ignore player data";
         return;
     }
     if (_decoder) {
         _decoder->input(reinterpret_cast<const uint8_t *>(pkt->payloadData()), pkt->payloadSize());
     } else {
-        WarnP(this) << " not reach this";
+        WarnL << " not reach this";
     }
 }
 
@@ -167,17 +166,16 @@ void SrtTransportImp::emitOnPublish() {
                 0.0f, option);
             strong_self->_muxer->setMediaListener(strong_self);
             strong_self->doCachedFunc();
-            InfoP(strong_self) << "允许 srt 推流";
+            InfoL << "允许 srt 推流";
         } else {
-            WarnP(strong_self) << "禁止 srt 推流:" << err;
+            WarnL << "禁止 srt 推流:" << err;
             strong_self->onShutdown(SockException(Err_refused, err));
         }
     };
 
     // 触发推流鉴权事件
     auto flag = NoticeCenter::Instance().emitEvent(
-        Broadcast::kBroadcastMediaPublish, MediaOriginType::srt_push, _media_info, invoker,
-        static_cast<SockInfo &>(*this));
+        Broadcast::kBroadcastMediaPublish, MediaOriginType::srt_push, _media_info, invoker, *this);
     if (!flag) {
         // 该事件无人监听,默认不鉴权
         invoker("", ProtocolOption());
@@ -201,7 +199,7 @@ void SrtTransportImp::emitOnPlay() {
     };
 
     auto flag = NoticeCenter::Instance().emitEvent(
-        Broadcast::kBroadcastMediaPlayed, _media_info, invoker, static_cast<SockInfo &>(*this));
+        Broadcast::kBroadcastMediaPlayed, _media_info, invoker, this);
     if (!flag) {
         doPlay();
     }
@@ -238,39 +236,12 @@ void SrtTransportImp::doPlay() {
                 if (auto strong_self = weak_self.lock()) {
                     size_t i = 0;
                     auto size = ts_list->size();
-                    ts_list->for_each([&](const TSPacket::Ptr &ts) { strong_self->onSendTSData(ts, ++i == size); });
+                    for(auto& ts : *ts_list)
+                    { strong_self->onSendTSData(ts, ++i == size); }
                 }
             });
         }
     });
-}
-
-std::string SrtTransportImp::get_peer_ip() {
-    if (!_addr) {
-        return "::";
-    }
-    return SockUtil::inet_ntoa((sockaddr *)_addr.get());
-}
-
-uint16_t SrtTransportImp::get_peer_port() {
-    if (!_addr) {
-        return 0;
-    }
-    return SockUtil::inet_port((sockaddr *)_addr.get());
-}
-
-std::string SrtTransportImp::get_local_ip() {
-    if (auto s = getSession()) {
-        return s->get_local_ip();
-    }
-    return "::";
-}
-
-uint16_t SrtTransportImp::get_local_port() {
-    if (auto s = getSession()) {
-        return s->get_local_port();
-    }
-    return 0;
 }
 
 std::string SrtTransportImp::getIdentifier() const {

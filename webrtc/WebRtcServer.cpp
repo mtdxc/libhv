@@ -10,6 +10,7 @@
 #include "WebRtcServer.h"
 #include "webrtc/IceServer.hpp"
 #include "webrtc/WebRtcTransport.h"
+#include "srt/SrtTransport.hpp"
 #include "FMP4/FMP4MediaSource.h"
 #include "Rtmp/RtmpMediaSource.h"
 #include "TS/TSMediaSource.h"
@@ -85,6 +86,7 @@ void WebRtcServer::start()
 {
     EventLoopThreadPool::Instance()->start();
     startRtc();
+    startSrt();
     startHttp();
     startRtmp();
     startRtsp();
@@ -96,6 +98,7 @@ void WebRtcServer::stop()
     _rtmp = nullptr;
     websocket_server_stop(&_http);
     _udpRtc = nullptr;
+    _udpSrt = nullptr;
     EventLoopThreadPool::Instance()->stop();
 }
 
@@ -704,13 +707,15 @@ void WebRtcServer::onRtcOfferReq(const HttpRequestPtr& req, const HttpResponseWr
 void WebRtcServer::startRtc()
 {
     GET_CONFIG(uint16_t, local_port, RTC::kPort);
+    if (!local_port) return;
+
     _udpRtc = std::make_shared<hv::UdpServerEventLoopTmpl2<WebRtcSession>>();
     int listenfd = _udpRtc->createsocket(local_port);
     if (listenfd < 0) {
         _udpRtc = nullptr;
         return;
     }
-    LOGI("udp listen on %d, listenfd=%d ...\n", local_port, listenfd);
+    LOGI("listen rtc on %d, listenfd=%d ...\n", local_port, listenfd);
 
     _udpRtc->onNewClient = [this](hio_t* io, hv::Buffer* data) {
         // @todo select loop with data or peerAddr
@@ -735,6 +740,42 @@ void WebRtcServer::startRtc()
     _udpRtc->setLoadBalance(LB_LeastConnections);
 
     _udpRtc->start();
+}
+
+void WebRtcServer::startSrt()
+{
+    GET_CONFIG(uint16_t, local_port, SRT::kPort);
+    if (!local_port) return;
+
+    _udpSrt = std::make_shared<hv::UdpServerEventLoopTmpl2<SRT::SrtSession>>();
+    int listenfd = _udpSrt->createsocket(local_port);
+    if (listenfd < 0) {
+        _udpSrt = nullptr;
+        return;
+    }
+    LOGI("listen srt on %d, listenfd=%d ...\n", local_port, listenfd);
+
+    _udpSrt->onNewClient = [this](hio_t* io, hv::Buffer* data) {
+        // @todo select loop with data or peerAddr
+        auto new_poller = SRT::SrtSession::queryPoller((uint8_t*)data->data(), data->size());
+        if (new_poller)
+            _udpSrt->accept(io, new_poller);
+        else 
+            _udpSrt->accept(io, nullptr);
+    };
+    _udpSrt->onMessage = [this](const std::shared_ptr<SRT::SrtSession>& session, hv::Buffer* data) {
+        try {
+            session->onRecv((uint8_t*)data->data(), data->size());
+        }
+        catch (SockException &ex) {
+            session->shutdown(ex);
+        }
+        catch (exception &ex) {
+            session->shutdown(SockException(Err_shutdown, ex.what()));
+        }
+    };
+    _udpSrt->setLoadBalance(LB_LeastConnections);
+    _udpSrt->start();
 }
 
 void WebRtcServer::startRtmp()

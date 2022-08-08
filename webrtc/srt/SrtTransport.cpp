@@ -1,7 +1,7 @@
 ﻿#include "Util/onceToken.h"
 #include <iterator>
 #include <stdlib.h>
-
+#include "Util/logger.h"
 #include "Ack.hpp"
 #include "Packet.hpp"
 #include "SrtTransport.hpp"
@@ -35,9 +35,10 @@ const EventPoller::Ptr &SrtTransport::getPoller() const {
 void SrtTransport::setSession(Session::Ptr session) {
     _history_sessions.emplace(session.get(), session);
     if (_selected_session) {
-        InfoL << _selected_session->getIdentifier() << " network changed: " 
-              << _selected_session->get_peer_ip() << ":" << _selected_session->get_peer_port() 
-              << " -> " << session->get_peer_ip() << ":" << session->get_peer_port();
+        InfoL //<< _selected_session->getIdentifier() 
+              << " network changed: " 
+              << _selected_session->peeraddr() 
+              << " -> " << session->peeraddr();
     }
     _selected_session = session;
 }
@@ -573,17 +574,14 @@ void SrtTransport::sendControlPacket(ControlPacket::Ptr pkt, bool flush) {
 
 void SrtTransport::sendPacket(Buffer::Ptr pkt, bool flush) {
     if (_selected_session) {
-        auto tmp = _packet_pool.obtain2();
-        tmp->assign(pkt->data(), pkt->size());
-        _selected_session->setSendFlushFlag(flush);
-        _selected_session->send(std::move(tmp));
+        _selected_session->write(pkt->data(), pkt->size());
     } else {
         WarnL << "not reach this";
     }
 }
 
 std::string SrtTransport::getIdentifier() {
-    return _selected_session ? _selected_session->getIdentifier() : "";
+    return "";// _selected_session ? _selected_session->getIdentifier() : "";
 }
 
 void SrtTransport::registerSelfHandshake() {
@@ -616,7 +614,8 @@ void SrtTransport::onShutdown(const SockException &ex) {
     for (auto &pr : _history_sessions) {
         auto session = pr.second.lock();
         if (session) {
-            session->shutdown(ex);
+            session->close();
+            //session->shutdown(ex);
         }
     }
 }

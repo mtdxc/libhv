@@ -1,7 +1,7 @@
 ﻿#include <atomic>
-#include "Util/MD5.h"
+#include "util/md5.h"
 #include "Util/logger.h"
-
+#include "hsocket.h"
 #include "Packet.hpp"
 
 namespace SRT {
@@ -455,16 +455,14 @@ uint32_t HandshakePacket::generateSynCookie(
         // SYN cookie
         int64_t timestamp = (DurationCountMicroseconds(SteadyClock::now() - ts) / 60000000) + distractor.load()
             + correction; // secret changes every one minute
-        std::stringstream cookiestr;
-        cookiestr << toolkit::SockUtil::inet_ntoa((struct sockaddr *)addr) << ":" << toolkit::SockUtil::inet_port((struct sockaddr *)addr)
-                  << ":" << timestamp;
+        char str[SOCKADDR_STRLEN];
+        std::string cookiestr = SOCKADDR_STR(addr, str);
+        cookiestr += ":" + std::to_string(timestamp);
         union {
             unsigned char cookie[16];
             uint32_t cookie_val;
         };
-        toolkit::MD5 md5(cookiestr.str());
-        memcpy(cookie, md5.rawdigest().c_str(), 16);
-
+        hv_md5((uint8_t*)cookiestr.data(), cookiestr.length(), cookie);
         if (cookie_val != current_cookie) {
             return cookie_val;
         }

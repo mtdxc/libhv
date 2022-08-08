@@ -13,7 +13,7 @@ using namespace toolkit;
 using namespace mediakit;
 class SrtTransportImp
     : public SrtTransport
-    , public toolkit::SockInfo
+    //, public toolkit::SockInfo
     , public MediaSinkInterface
     , public mediakit::MediaSourceEvent {
 public:
@@ -25,13 +25,13 @@ public:
         _total_bytes += len;
     }
     void onSendTSData(const Buffer::Ptr &buffer, bool flush) override { SrtTransport::onSendTSData(buffer, flush); }
-    /// SockInfo override
+    /* SockInfo override
     std::string get_local_ip() override;
     uint16_t get_local_port() override;
     std::string get_peer_ip() override;
     uint16_t get_peer_port() override;
-    std::string getIdentifier() const override;
-
+    */
+    std::string getIdentifier() const;
 protected:
     ///////SrtTransport override///////
     int getLatencyMul() override;
