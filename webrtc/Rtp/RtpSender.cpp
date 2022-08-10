@@ -152,6 +152,14 @@ void RtpSender::startSend(const MediaSourceEvent::SendRtpArgs &args, const funct
             }
         };//, 5.0F, "::", args.src_port);
         _socket->setConnectTimeout(5000);
+        _socket->onclose = [cb, weak_self]() {
+            auto err = SockException(Err_eof, "socket closed");
+            auto strong_self = weak_self.lock();
+            if (strong_self) {
+                cb(strong_self->_socket->get_local_port(), err);
+            }
+        };
+        // connect(args.dst_url, args.dst_port , 5.0F, "::", args.src_port);
         _socket->startConnect(args.dst_port, args.dst_url.c_str());
     }
 }
@@ -168,7 +176,7 @@ void RtpSender::onConnect(){
     }
     */
     //连接建立成功事件
-    weak_ptr<RtpSender> weak_self = shared_from_this();
+    std::weak_ptr<RtpSender> weak_self = shared_from_this();
     _socket->onclose = [weak_self]() {
         auto strong_self = weak_self.lock();
         if (strong_self) {
@@ -210,11 +218,11 @@ void RtpSender::onFlushRtpList(shared_ptr<std::list<Buffer::Ptr> > rtp_list) {
     _poller->async([rtp_list, is_udp, socket]() {
         size_t i = 0;
         auto size = rtp_list->size();
-        
-        for(auto packet : *rtp_list) {
+        for (auto packet : *rtp_list) {
             if (is_udp) {
                 //udp模式，rtp over tcp前4个字节可以忽略
-                socket->write(packet->data() + 4, packet->size() - 4); //nullptr, 0, ++i == size);
+                socket->write(packet->data() + 4, packet->size() - 4);
+                //socket->send(std::make_shared<BufferRtp>(std::move(packet), 4), nullptr, 0, ++i == size);
             } else {
                 // tcp模式, rtp over tcp前2个字节可以忽略,只保留后续rtp长度的2个字节
                 // socket->send(std::make_shared<BufferRtp>(std::move(packet), 2), nullptr, 0, ++i == size);

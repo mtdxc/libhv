@@ -14,7 +14,7 @@
 #if defined(ENABLE_RTPPROXY)
 #include "ProcessInterface.h"
 #include "Common/MultiMediaSourceMuxer.h"
-#include "Socket.h"
+
 namespace mediakit {
 
 class RtpProcess : public MediaSinkInterface, public MediaSourceEventInterceptor, public std::enable_shared_from_this<RtpProcess>{
@@ -56,14 +56,10 @@ public:
      */
     void setStopCheckRtp(bool is_check=false);
 
-    std::string getIdentifier() const {
-        return _media_info._streamid;
-    }
-
     int getTotalReaderCount();
     void setListener(const std::weak_ptr<MediaSourceEvent> &listener);
 
-
+    std::string getIdentifier() const;
 protected:
     bool inputFrame(const Frame::Ptr &frame) override;
     bool addTrack(const Track::Ptr & track) override;

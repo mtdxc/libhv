@@ -9,6 +9,7 @@
  */
 
 #if defined(ENABLE_RTPPROXY)
+//#include "Util/uv_errno.h"
 #include "RtpServer.h"
 #include "RtpSelector.h"
 #include "Rtcp/RtcpContext.h"
@@ -126,20 +127,19 @@ void RtpServer::start(uint16_t local_port, const string &stream_id, bool enable_
     //设置udp socket读缓存
     // SockUtil::setRecvBuf(rtp_socket->rawFD(), 4 * 1024 * 1024);
 
-    decltype(_tcp_server) tcp_server;
     if (enable_tcp) {
         //创建tcp服务器
-        tcp_server = std::make_shared<hv::TcpServerTmpl<RtpSession>>(rtp_socket->getPoller());
+        _tcp_server = std::make_shared<TcpServer>(rtp_socket->getPoller());
 #if 0
         (*tcp_server)[RtpSession::kStreamID] = stream_id;
         (*tcp_server)[RtpSession::kIsUDP] = 0;
         (*tcp_server)[RtpSession::kSSRC] = ssrc;
 #endif
-        tcp_server->createsocket(rtp_socket->get_local_port(), local_ip);
+        _tcp_server->createsocket(rtp_socket->get_local_port(), local_ip);
+        _tcp_server->start();
     }
 
     //创建udp服务器
-    decltype(_udp_server) udp_server;
     RtpProcess::Ptr process;
     if (!stream_id.empty()) {
         //指定了流id，那么一个端口一个流(不管是否包含多个ssrc的多个流，绑定rtp源后，会筛选掉ip端口不匹配的流)
@@ -164,10 +164,11 @@ void RtpServer::start(uint16_t local_port, const string &stream_id, bool enable_
     } else {
 #if 1
         //单端口多线程接收多个流，根据客户端ip+port区分RtpSession，根据ssrc区分流(RtpSelector)
-        udp_server = std::make_shared<hv::UdpServerTmpl2<RtpSession>>(rtp_socket->getPoller());
-        //(*udp_server)[RtpSession::kIsUDP] = 1;
+        _udp_server = std::make_shared<UdpServer>(rtp_socket->getPoller());
+        // (*udp_server)[RtpSession::kIsUDP] = 1;
         // 此时的rtp_socket只是来判断端口是否可用而已，数据由udp_server接管，后者可以做到一个peer一个线程
-        udp_server->createsocket(rtp_socket->get_local_port(), local_ip);
+        _udp_server->createsocket(rtp_socket->get_local_port(), local_ip);
+        _udp_server->start();
         // 这边的rtp_socket只起到占用端口作用
         rtp_socket = nullptr;
 #else
@@ -190,8 +191,6 @@ void RtpServer::start(uint16_t local_port, const string &stream_id, bool enable_
         }
     };
 
-    _tcp_server = tcp_server;
-    _udp_server = udp_server;
     _rtp_socket = rtp_socket;
     _rtp_process = process;
 }

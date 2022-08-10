@@ -8,7 +8,7 @@
  * may be found in the AUTHORS file in the root of the source tree.
  */
 
-#if defined(ENABLE_RTPPROXY)
+#if defined(ENABLE_RTPPROXY1)
 
 #include "PSDecoder.h"
 #include "mpeg-ps.h"

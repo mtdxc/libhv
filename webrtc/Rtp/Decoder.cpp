@@ -17,7 +17,8 @@
 #include "Extension/AudioTrack.h"
 
 #if defined(ENABLE_RTPPROXY) || defined(ENABLE_HLS)
-#include "mpeg-ts-proto.h"
+//#include "mpeg-ts-proto.h"
+#include "ts_demux.hpp"
 #endif
 
 using namespace toolkit;
@@ -35,7 +36,7 @@ void Decoder::setOnStream(Decoder::onStream cb) {
 static Decoder::Ptr createDecoder_l(DecoderImp::Type type) {
     switch (type){
         case DecoderImp::decoder_ps:
-#ifdef ENABLE_RTPPROXY
+#ifdef ENABLE_RTPPROXY1
             return std::make_shared<PSDecoder>();
 #else
             WarnL << "创建ps解复用器失败，请打开ENABLE_RTPPROXY然后重新编译";
@@ -80,54 +81,72 @@ DecoderImp::DecoderImp(const Decoder::Ptr &decoder, MediaSinkInterface *sink){
     });
 }
 
+#define STREAM_TYPE_VIDEO_MPEG1     0x01
+#define STREAM_TYPE_VIDEO_MPEG2     0x02
+#define STREAM_TYPE_AUDIO_MPEG1     0x03
+#define STREAM_TYPE_AUDIO_MPEG2     0x04
+#define STREAM_TYPE_PRIVATE_SECTION 0x05
+#define STREAM_TYPE_PRIVATE_DATA    0x06
+#define STREAM_TYPE_AUDIO_AAC       0x0f
+#define STREAM_TYPE_AUDIO_AAC_LATM  0x11
+#define STREAM_TYPE_VIDEO_MPEG4     0x10
+#define STREAM_TYPE_METADATA        0x15
+#define STREAM_TYPE_VIDEO_H264      0x1b
+#define STREAM_TYPE_VIDEO_HEVC      0x24
+#define STREAM_TYPE_VIDEO_CAVS      0x42
+#define STREAM_TYPE_VIDEO_VC1       0xea
+#define STREAM_TYPE_VIDEO_DIRAC     0xd1
+
+#define STREAM_TYPE_AUDIO_AC3       0x81
+#define STREAM_TYPE_AUDIO_DTS       0x82
+#define STREAM_TYPE_AUDIO_TRUEHD    0x83
+#define STREAM_TYPE_AUDIO_EAC3      0x87
 #if defined(ENABLE_RTPPROXY) || defined(ENABLE_HLS)
 #define SWITCH_CASE(codec_id) case codec_id : return #codec_id
 static const char *getCodecName(int codec_id) {
     switch (codec_id) {
-        SWITCH_CASE(PSI_STREAM_MPEG1);
-        SWITCH_CASE(PSI_STREAM_MPEG2);
-        SWITCH_CASE(PSI_STREAM_AUDIO_MPEG1);
-        SWITCH_CASE(PSI_STREAM_MP3);
-        SWITCH_CASE(PSI_STREAM_AAC);
-        SWITCH_CASE(PSI_STREAM_MPEG4);
-        SWITCH_CASE(PSI_STREAM_MPEG4_AAC_LATM);
-        SWITCH_CASE(PSI_STREAM_H264);
-        SWITCH_CASE(PSI_STREAM_MPEG4_AAC);
-        SWITCH_CASE(PSI_STREAM_H265);
-        SWITCH_CASE(PSI_STREAM_AUDIO_AC3);
-        SWITCH_CASE(PSI_STREAM_AUDIO_EAC3);
-        SWITCH_CASE(PSI_STREAM_AUDIO_DTS);
-        SWITCH_CASE(PSI_STREAM_VIDEO_DIRAC);
-        SWITCH_CASE(PSI_STREAM_VIDEO_VC1);
-        SWITCH_CASE(PSI_STREAM_VIDEO_SVAC);
-        SWITCH_CASE(PSI_STREAM_AUDIO_SVAC);
-        SWITCH_CASE(PSI_STREAM_AUDIO_G711A);
-        SWITCH_CASE(PSI_STREAM_AUDIO_G711U);
-        SWITCH_CASE(PSI_STREAM_AUDIO_G722);
-        SWITCH_CASE(PSI_STREAM_AUDIO_G723);
-        SWITCH_CASE(PSI_STREAM_AUDIO_G729);
-        SWITCH_CASE(PSI_STREAM_AUDIO_OPUS);
+        SWITCH_CASE(STREAM_TYPE_VIDEO_MPEG1);
+        SWITCH_CASE(STREAM_TYPE_VIDEO_MPEG2);
+        SWITCH_CASE(STREAM_TYPE_AUDIO_MPEG1);
+        SWITCH_CASE(STREAM_TYPE_AUDIO_MPEG2);
+        SWITCH_CASE(STREAM_TYPE_PRIVATE_SECTION);
+        SWITCH_CASE(STREAM_TYPE_PRIVATE_DATA);
+        SWITCH_CASE(STREAM_TYPE_AUDIO_AAC);
+        SWITCH_CASE(STREAM_TYPE_AUDIO_AAC_LATM);
+        SWITCH_CASE(STREAM_TYPE_VIDEO_MPEG4);
+        SWITCH_CASE(STREAM_TYPE_VIDEO_H264);
+        SWITCH_CASE(STREAM_TYPE_VIDEO_HEVC);
+        SWITCH_CASE(STREAM_TYPE_VIDEO_CAVS);
+        SWITCH_CASE(STREAM_TYPE_VIDEO_VC1);
+        SWITCH_CASE(STREAM_TYPE_VIDEO_DIRAC);
+        SWITCH_CASE(STREAM_TYPE_AUDIO_AC3);
+        SWITCH_CASE(STREAM_TYPE_AUDIO_DTS);
+        SWITCH_CASE(STREAM_TYPE_AUDIO_TRUEHD);
+        SWITCH_CASE(STREAM_TYPE_AUDIO_EAC3);
+        //SWITCH_CASE(PSI_STREAM_AUDIO_G711A);
+        //SWITCH_CASE(PSI_STREAM_AUDIO_G711U);
+        //SWITCH_CASE(PSI_STREAM_AUDIO_OPUS);
         default : return "unknown codec";
     }
 }
 
 void DecoderImp::onStream(int stream, int codecid, const void *extra, size_t bytes, int finish){
     switch (codecid) {
-        case PSI_STREAM_H264: {
+        case STREAM_TYPE_VIDEO_H264: {
             onTrack(std::make_shared<H264Track>());
             break;
         }
 
-        case PSI_STREAM_H265: {
+        case STREAM_TYPE_VIDEO_HEVC: {
             onTrack(std::make_shared<H265Track>());
             break;
         }
 
-        case PSI_STREAM_AAC: {
+        case STREAM_TYPE_AUDIO_AAC: {
             onTrack(std::make_shared<AACTrack>());
             break;
         }
-
+#if 0
         case PSI_STREAM_AUDIO_G711A:
         case PSI_STREAM_AUDIO_G711U: {
             auto codec = codecid == PSI_STREAM_AUDIO_G711A ? CodecG711A : CodecG711U;
@@ -140,7 +159,7 @@ void DecoderImp::onStream(int stream, int codecid, const void *extra, size_t byt
             onTrack(std::make_shared<OpusTrack>());
             break;
         }
-
+#endif
         default:
             if(codecid != 0){
                 WarnL<< "unsupported codec type:" << getCodecName(codecid) << " " << (int)codecid;
@@ -161,7 +180,7 @@ void DecoderImp::onDecode(int stream, int codecid, int flags, int64_t pts, int64
     dts /= 90;
 
     switch (codecid) {
-        case PSI_STREAM_H264: {
+        case STREAM_TYPE_VIDEO_H264: {
             if (!_tracks[TrackVideo]) {
                 onTrack(std::make_shared<H264Track>());
             }
@@ -172,7 +191,7 @@ void DecoderImp::onDecode(int stream, int codecid, int flags, int64_t pts, int64
             break;
         }
 
-        case PSI_STREAM_H265: {
+        case STREAM_TYPE_VIDEO_HEVC: {
             if (!_tracks[TrackVideo]) {
                 onTrack(std::make_shared<H265Track>());
             }
@@ -183,7 +202,7 @@ void DecoderImp::onDecode(int stream, int codecid, int flags, int64_t pts, int64
             break;
         }
 
-        case PSI_STREAM_AAC: {
+        case STREAM_TYPE_AUDIO_AAC: {
             uint8_t *ptr = (uint8_t *)data;
             if(!(bytes > ADTS_HEADER_LEN && ptr[0] == 0xFF && (ptr[1] & 0xF0) == 0xF0)){
                 //这不是aac
@@ -195,7 +214,7 @@ void DecoderImp::onDecode(int stream, int codecid, int flags, int64_t pts, int64
             onFrame(std::make_shared<FrameFromPtr>(CodecAAC, (char *) data, bytes, (uint32_t)dts, 0, ADTS_HEADER_LEN));
             break;
         }
-
+#if 0
         case PSI_STREAM_AUDIO_G711A:
         case PSI_STREAM_AUDIO_G711U: {
             auto codec = codecid  == PSI_STREAM_AUDIO_G711A ? CodecG711A : CodecG711U;
@@ -214,7 +233,7 @@ void DecoderImp::onDecode(int stream, int codecid, int flags, int64_t pts, int64
             onFrame(std::make_shared<FrameFromPtr>(CodecOpus, (char *) data, bytes, (uint32_t)dts));
             break;
         }
-
+#endif
         default:
             // 海康的 PS 流中会有 codecid 为 0xBD 的包
             if (codecid != 0 && codecid != 0xBD) {

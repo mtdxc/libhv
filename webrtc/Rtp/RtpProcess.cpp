@@ -11,7 +11,6 @@
 #if defined(ENABLE_RTPPROXY)
 #include "GB28181Process.h"
 #include "RtpProcess.h"
-//#include "Http/HttpTSPlayer.h"
 #include "Util/File.h"
 using namespace std;
 using namespace toolkit;
@@ -51,7 +50,7 @@ RtpProcess::~RtpProcess() {
     //流量统计事件广播
     GET_CONFIG(uint32_t, iFlowThreshold, General::kFlowThreshold);
     if (_total_bytes >= iFlowThreshold * 1024) {
-        NoticeCenter::Instance().emitEvent(Broadcast::kBroadcastFlowReport, _media_info, _total_bytes, duration, false, _sock);
+        NoticeCenter::Instance().emitEvent(Broadcast::kBroadcastFlowReport, _media_info, _total_bytes, duration, false, *this);
     }
 }
 
@@ -183,6 +182,10 @@ void RtpProcess::onDetach() {
 
 void RtpProcess::setOnDetach(const function<void()> &cb) {
     _on_detach = cb;
+}
+
+string RtpProcess::getIdentifier() const {
+    return _media_info._streamid;
 }
 
 int RtpProcess::getTotalReaderCount() {

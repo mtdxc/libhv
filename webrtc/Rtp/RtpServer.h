@@ -54,8 +54,10 @@ public:
 
 protected:
     toolkit::Session::Ptr _rtp_socket;
-    std::shared_ptr<hv::UdpServerTmpl2<RtpSession>> _udp_server;
-    std::shared_ptr<hv::TcpServerTmpl<RtpSession>> _tcp_server;
+    using UdpServer = hv::UdpServerEventLoopTmpl2<RtpSession>;
+    using TcpServer = hv::TcpServerEventLoopTmpl<RtpSession>;
+    std::shared_ptr<UdpServer> _udp_server;
+    std::shared_ptr<TcpServer> _tcp_server;
     RtpProcess::Ptr _rtp_process;
     std::function<void()> _on_clearup;
 };
