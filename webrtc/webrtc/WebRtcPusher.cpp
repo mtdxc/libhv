@@ -9,7 +9,7 @@
  */
 
 #include "WebRtcPusher.h"
-
+using namespace toolkit;
 using namespace mediakit;
 
 WebRtcPusher::Ptr WebRtcPusher::create(const EventPoller::Ptr &poller,

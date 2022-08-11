@@ -194,7 +194,7 @@ const char *RtpExt::getExtName(RtpExtType type) {
 }
 
 std::string RtpExt::dumpString() const {
-    toolkit::_StrPrinter printer;
+    std::ostringstream printer;
     switch (_type) {
         case RtpExtType::ssrc_audio_level : {
             bool vad;
@@ -264,7 +264,7 @@ std::string RtpExt::dumpString() const {
             break;
         }
     }
-    return std::move(printer);
+    return std::move(printer.str());
 }
 
 //https://tools.ietf.org/html/rfc6464

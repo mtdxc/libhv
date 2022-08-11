@@ -20,7 +20,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 // #define MS_LOG_DEV_LEVEL 3
 #include <inttypes.h>
 #include "DtlsTransport.hpp"
-#include "logger.h"
+#include "Util/logger.h"
 #include <openssl/asn1.h>
 #include <openssl/bn.h>
 #include <openssl/err.h>
@@ -506,7 +506,7 @@ namespace RTC
 
 	/* Instance methods. */
 
-	DtlsTransport::DtlsTransport(EventPoller::Ptr poller,Listener* listener) : poller(std::move(poller)), listener(listener)
+	DtlsTransport::DtlsTransport(toolkit::EventPoller::Ptr poller,Listener* listener) : poller(std::move(poller)), listener(listener)
 	{
 		MS_TRACE();
 		env = DtlsEnvironment::Instance().shared_from_this();
@@ -982,7 +982,7 @@ namespace RTC
 			MS_DEBUG_DEV("DTLS timer set in %" PRIu64 "ms", timeoutMs);
 
 			std::weak_ptr<DtlsTransport> weak_self = shared_from_this();
-			this->timer = std::make_shared<Timer>(timeoutMs / 1000.0f, [weak_self](){
+			this->timer = std::make_shared<toolkit::Timer>(timeoutMs / 1000.0f, [weak_self](){
 				auto strong_self = weak_self.lock();
 				if(strong_self){
 					strong_self->OnTimer();

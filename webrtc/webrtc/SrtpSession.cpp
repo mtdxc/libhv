@@ -21,11 +21,9 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 #include "SrtpSession.hpp"
 #include <cstring> // std::memset(), std::memcpy()
-#include "logger.h"
+#include "Util/logger.h"
 #include "Util/util.h"
 #include "Util/logger.h"
-
-using namespace toolkit;
 
 namespace RTC
 {

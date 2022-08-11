@@ -9,7 +9,7 @@
  */
 
 #include "WebRtcPlayer.h"
-
+using namespace toolkit;
 using namespace mediakit;
 
 WebRtcPlayer::Ptr WebRtcPlayer::create(const EventPoller::Ptr &poller,
@@ -44,10 +44,10 @@ void WebRtcPlayer::onStartWebRTC() {
                 return;
             }
             size_t i = 0;
-            pkt->for_each([&](const RtpPacket::Ptr &rtp) {
+            for(auto& rtp : *pkt) {
                 // TraceL << getIdentifier() << " send " << rtp->dump() << " i:"<<i;
                 strongSelf->onSendRtp(rtp, ++i == pkt->size());
-            });
+            }
         });
         _reader->setDetachCB([weak_self]() {
             if (auto strongSelf = weak_self.lock()) {

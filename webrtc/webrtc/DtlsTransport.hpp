@@ -27,9 +27,6 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 #include <string>
 #include <vector>
 #include "Socket.h"
-//#include "Poller/Timer.h"
-//#include "Poller/EventPoller.h"
-using namespace toolkit;
 
 namespace RTC
 {
@@ -174,7 +171,7 @@ namespace RTC
 		static std::vector<SrtpCryptoSuiteMapEntry> srtpCryptoSuites;
 
 	public:
-		DtlsTransport(EventPoller::Ptr poller, Listener* listener);
+		DtlsTransport(toolkit::EventPoller::Ptr poller, Listener* listener);
 		~DtlsTransport();
 
 	public:
@@ -223,20 +220,20 @@ namespace RTC
 		void ExtractSrtpKeys(RTC::SrtpSession::CryptoSuite srtpCryptoSuite);
 		RTC::SrtpSession::CryptoSuite GetNegotiatedSrtpCryptoSuite();
 
-    private:
-	    void OnSslInfo(int where, int ret);
+	private:
+		void OnSslInfo(int where, int ret);
 		void OnTimer();
 
 	private:
 		DtlsEnvironment::Ptr env;
-		EventPoller::Ptr poller;
+		toolkit::EventPoller::Ptr poller;
 		// Passed by argument.
 		Listener* listener{ nullptr };
 		// Allocated by this.
 		SSL* ssl{ nullptr };
 		BIO* sslBioFromNetwork{ nullptr }; // The BIO from which ssl reads.
 		BIO* sslBioToNetwork{ nullptr };   // The BIO in which ssl writes.
-		Timer::Ptr timer;
+		toolkit::Timer::Ptr timer;
 		// Others.
 		DtlsState state{ DtlsState::NEW };
 		Role localRole{ Role::NONE };

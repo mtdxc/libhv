@@ -12,29 +12,27 @@
 #ifndef ZLMEDIAKIT_WEBRTCSESSION_H
 #define ZLMEDIAKIT_WEBRTCSESSION_H
 
-#include "Network/Session.h"
-#include "IceServer.hpp"
-#include "WebRtcTransport.h"
+#include "Socket.h"
+#include "Util/TimeTicker.h"
 
-class WebRtcSession : public UdpSession {
-public:
-    WebRtcSession(const Socket::Ptr &sock);
-    ~WebRtcSession() override;
-
-    void onRecv(const Buffer::Ptr &) override;
-    void onError(const SockException &err) override;
-    void onManager() override;
-    std::string getIdentifier() const override;
-
-    static EventPoller::Ptr queryPoller(const Buffer::Ptr &buffer);
-
-private:
+class WebRtcTransportImp;
+class WebRtcSession : public toolkit::Session,
+    public std::enable_shared_from_this<WebRtcSession> {
     std::string _identifier;
     bool _find_transport = true;
-    Ticker _ticker;
-    struct sockaddr_storage _peer_addr;
+    toolkit::Ticker _ticker;
+    struct sockaddr* _peer_addr;
     std::shared_ptr<WebRtcTransportImp> _transport;
-};
+public:
+    static std::string getUserName(void* buf, int len);
+    WebRtcSession(hio_t* io);
+    std::string getIdentifier() const {
+        return _identifier;
+    }
 
+    void onRecv(hv::Buffer* buf);
+    void onManager();
+    void onError(const toolkit::SockException &err);
+};
 
 #endif //ZLMEDIAKIT_WEBRTCSESSION_H

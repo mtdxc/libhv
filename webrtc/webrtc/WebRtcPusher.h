@@ -12,12 +12,13 @@
 #define ZLMEDIAKIT_WEBRTCPUSHER_H
 
 #include "WebRtcTransport.h"
+#include "Rtsp/RtspMediaSourceImp.h"
 
 class WebRtcPusher : public WebRtcTransportImp, public mediakit::MediaSourceEvent {
 public:
     using Ptr = std::shared_ptr<WebRtcPusher>;
     ~WebRtcPusher() override = default;
-    static Ptr create(const EventPoller::Ptr &poller, const mediakit::RtspMediaSourceImp::Ptr &src,
+    static Ptr create(const toolkit::EventPoller::Ptr &poller, const mediakit::RtspMediaSourceImp::Ptr &src,
                       const std::shared_ptr<void> &ownership, const mediakit::MediaInfo &info, const mediakit::ProtocolOption &option);
 
 protected:
@@ -38,14 +39,14 @@ protected:
     // 获取媒体源url或者文件路径
     std::string getOriginUrl(mediakit::MediaSource &sender) const override;
     // 获取媒体源客户端相关信息
-    std::shared_ptr<SockInfo> getOriginSock(mediakit::MediaSource &sender) const override;
+    std::shared_ptr<toolkit::SockInfo> getOriginSock(mediakit::MediaSource &sender) const override;
     // 获取丢包率
     int getLossRate(mediakit::MediaSource &sender,mediakit::TrackType type) override;
     // 获取MediaSource归属线程
     toolkit::EventPoller::Ptr getOwnerPoller(mediakit::MediaSource &sender) override;
 
 private:
-    WebRtcPusher(const EventPoller::Ptr &poller, const mediakit::RtspMediaSourceImp::Ptr &src,
+    WebRtcPusher(const toolkit::EventPoller::Ptr &poller, const mediakit::RtspMediaSourceImp::Ptr &src,
                  const std::shared_ptr<void> &ownership, const mediakit::MediaInfo &info, const mediakit::ProtocolOption &option);
 
 private:

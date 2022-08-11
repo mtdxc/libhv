@@ -10,6 +10,7 @@
 
 #include "Sdp.h"
 #include "Rtsp/Rtsp.h"
+#include "Common/config.h"
 #include <unordered_set>
 #include <cinttypes>
 

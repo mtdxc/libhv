@@ -9,14 +9,15 @@
  */
 
 #include "WebRtcSession.h"
-#include "Util/util.h"
+#include "WebRtcServer.h"
+#include "StunPacket.hpp"
+#include "Common/config.h"
+#include "WebRtcTransport.h"
 
-//using namespace std;
+using namespace toolkit;
 using namespace mediakit;
 
-static std::string getUserName(const Buffer::Ptr &buffer) {
-    auto buf = buffer->data();
-    auto len = buffer->size();
+std::string WebRtcSession::getUserName(void* buf, int len) {
     if (!RTC::StunPacket::IsStun((const uint8_t *) buf, len)) {
         return "";
     }
@@ -29,60 +30,34 @@ static std::string getUserName(const Buffer::Ptr &buffer) {
         return "";
     }
     //收到binding request请求
-    auto vec = split(packet->GetUsername(), ":");
+    auto vec = hv::split(packet->GetUsername(), ':');
     return vec[0];
 }
 
-EventPoller::Ptr WebRtcSession::queryPoller(const Buffer::Ptr &buffer) {
-    auto user_name = getUserName(buffer);
-    if (user_name.empty()) {
-        return nullptr;
-    }
-    auto ret = WebRtcTransportManager::Instance().getItem(user_name);
-    return ret ? ret->getPoller() : nullptr;
+WebRtcSession::WebRtcSession(hio_t* io) : toolkit::Session(io)
+{
+    _peer_addr = hio_peeraddr(io);
 }
 
-////////////////////////////////////////////////////////////////////////////////
-
-WebRtcSession::WebRtcSession(const Socket::Ptr &sock) : UdpSession(sock) {
-    socklen_t addr_len = sizeof(_peer_addr);
-    getpeername(sock->rawFD(), (struct sockaddr *)&_peer_addr, &addr_len);
-}
-
-WebRtcSession::~WebRtcSession() {
-    InfoP(this);
-}
-
-void WebRtcSession::onRecv(const Buffer::Ptr &buffer) {
+void WebRtcSession::onRecv(hv::Buffer* buf) {
     if (_find_transport) {
         //只允许寻找一次transport
         _find_transport = false;
-        auto user_name = getUserName(buffer);
-        _identifier = std::to_string(getSock()->rawFD()) + '-' + user_name;
-        auto transport = WebRtcTransportManager::Instance().getItem(user_name);
-        CHECK(transport && transport->getPoller()->isCurrentThread());
+        auto user_name = getUserName(buf->data(), buf->size());
+        _identifier = std::to_string(fd()) + '-' + user_name;
+        auto transport = WebRtcServer::Instance().getItem(user_name);
+        CHECK(transport && transport->getPoller()->isInLoopThread());
         transport->setSession(shared_from_this());
         _transport = std::move(transport);
-        InfoP(this);
+        //InfoP(this);
     }
     _ticker.resetTime();
     CHECK(_transport);
-    _transport->inputSockData(buffer->data(), buffer->size(), (struct sockaddr *)&_peer_addr);
-}
-
-void WebRtcSession::onError(const SockException &err) {
-    //udp链接超时，但是rtc链接不一定超时，因为可能存在udp链接迁移的情况
-    //在udp链接迁移时，新的WebRtcSession对象将接管WebRtcTransport对象的生命周期
-    //本WebRtcSession对象将在超时后自动销毁
-    WarnP(this) << err.what();
-
-    if (!_transport) {
-        return;
+    try {
+        _transport->inputSockData((char*)buf->data(), buf->size(), _peer_addr);
     }
-    auto transport = std::move(_transport);
-    getPoller()->async([transport] {
-        //延时减引用，防止使用transport对象时，销毁对象
-    }, false);
+    catch (...) {
+    }
 }
 
 void WebRtcSession::onManager() {
@@ -97,7 +72,20 @@ void WebRtcSession::onManager() {
     }
 }
 
-std::string WebRtcSession::getIdentifier() const {
-    return _identifier;
+void WebRtcSession::onError(const toolkit::SockException &err)
+{
+    //udp链接超时，但是rtc链接不一定超时，因为可能存在udp链接迁移的情况
+    //在udp链接迁移时，新的WebRtcSession对象将接管WebRtcTransport对象的生命周期
+    //本WebRtcSession对象将在超时后自动销毁
+    WarnP(this) << err.what();
+
+    if (!_transport) {
+        return;
+    }
+    auto transport = std::move(_transport);
+    getPoller()->async([transport] {
+        //延时减引用，防止使用transport对象时，销毁对象
+    }, false);
 }
+
 
