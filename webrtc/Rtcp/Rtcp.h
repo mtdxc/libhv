@@ -14,7 +14,8 @@
 #include <stdint.h>
 #include <vector>
 #include "Util/util.h"
-#include "Network/Buffer.h"
+#include <memory>
+#include "Buffer.hpp"
 #include "Common/macros.h"
 
 namespace mediakit {

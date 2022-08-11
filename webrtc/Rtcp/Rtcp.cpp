@@ -13,7 +13,7 @@
 #include "Rtcp.h"
 #include "Util/logger.h"
 #include "RtcpFCI.h"
-
+#include "htime.h"
 using std::string;
 using namespace toolkit;
 
@@ -285,7 +285,9 @@ std::shared_ptr<RtcpSR> RtcpSR::create(size_t item_count) {
 string RtcpSR::getNtpStamp() const {
     struct timeval tv;
     getNtpStamp(tv);
-    return LogChannel::printTime(tv);
+    char timeStr[32];
+    return gmtime_fmt(tv.tv_sec, timeStr);
+    //return LogChannel::printTime(tv);
 }
 
 uint64_t RtcpSR::getNtpUnixStampMS() const {

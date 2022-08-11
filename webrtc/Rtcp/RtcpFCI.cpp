@@ -10,9 +10,9 @@
 
 #include "RtcpFCI.h"
 #include "Util/logger.h"
-
+#include "Util/util.h"
 using namespace std;
-using namespace toolkit;
+using toolkit::_StrPrinter;
 
 namespace mediakit {
 
@@ -257,9 +257,7 @@ uint16_t RunLengthChunk::getRunLength() const {
 }
 
 string RunLengthChunk::dumpString() const{
-    _StrPrinter printer;
-    printer << "run length chunk, symbol:" << (int)symbol << ", run length:" << getRunLength();
-    return std::move(printer);
+    return StrPrinter << "run length chunk, symbol:" << (int)symbol << ", run length:" << getRunLength();
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
