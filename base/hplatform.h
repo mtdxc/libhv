@@ -206,8 +206,8 @@
     typedef int pid_t;
     typedef int gid_t;
     typedef int uid_t;
-    #define strcasecmp  stricmp
-    #define strncasecmp strnicmp
+    #define strcasecmp  _stricmp
+    #define strncasecmp _strnicmp
 #else
     typedef int                 BOOL;
     typedef unsigned char       BYTE;

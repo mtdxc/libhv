@@ -22,20 +22,22 @@ END_EXTERN_C
 #include <string>
 
 namespace hv {
-
-HV_INLINE std::string Base64Encode(const unsigned char* data, unsigned int len) {
-    int encoded_size = BASE64_ENCODE_OUT_SIZE(len);
+HV_INLINE std::string Base64Encode(const unsigned char* data, size_t len) {
+    size_t encoded_size = BASE64_ENCODE_OUT_SIZE(len);
     std::string encoded_str(encoded_size + 1, 0);
-    encoded_size = hv_base64_encode(data, len, (char*)encoded_str.data());
+    encoded_size = hv_base64_encode(data, (unsigned int)len, (char*)encoded_str.data());
     encoded_str.resize(encoded_size);
     return encoded_str;
 }
+HV_INLINE std::string Base64Encode(const std::string& data) {
+    return Base64Encode((unsigned char*)data.data(), data.size());
+}
 
-HV_INLINE std::string Base64Decode(const char* str, unsigned int len = 0) {
+HV_INLINE std::string Base64Decode(const char* str, size_t len = 0) {
     if (len == 0) len = strlen(str);
-    int decoded_size = BASE64_DECODE_OUT_SIZE(len);
+    size_t decoded_size = BASE64_DECODE_OUT_SIZE(len);
     std::string decoded_buf(decoded_size + 1, 0);
-    decoded_size = hv_base64_decode(str, len, (unsigned char*)decoded_buf.data());
+    decoded_size = hv_base64_decode(str, (unsigned int)len, (unsigned char*)decoded_buf.data());
     decoded_buf.resize(decoded_size);
     return decoded_buf;
 }
