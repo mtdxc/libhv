@@ -14,6 +14,7 @@
 #include "FMP4/FMP4MediaSource.h"
 #include "Rtmp/RtmpMediaSource.h"
 #include "TS/TSMediaSource.h"
+#include "Util/File.h"
 #include "hstring.h"
 #include "hbase.h"
 #include <string>
@@ -23,7 +24,66 @@
 using namespace std;
 using namespace mediakit;
 using namespace toolkit;
- //RTC配置项目
+using AutoLock = std::lock_guard<std::recursive_mutex>;
+std::string g_ini_file;
+#if defined(ENABLE_RTPPROXY)
+#include "Rtp/RtpServer.h"
+#include "Rtp/RtpSelector.h"
+static std::unordered_map<std::string, RtpServer::Ptr> s_rtpServerMap;
+static std::recursive_mutex s_rtpServerMapMtx;
+uint16_t openRtpServer(uint16_t local_port, const std::string &stream_id, bool enable_tcp, const std::string &local_ip, bool re_use_port, uint32_t ssrc) {
+    AutoLock lck(s_rtpServerMapMtx);
+    if (s_rtpServerMap.find(stream_id) != s_rtpServerMap.end()) {
+        //为了防止RtpProcess所有权限混乱的问题，不允许重复添加相同的stream_id
+        return 0;
+    }
+
+    RtpServer::Ptr server = std::make_shared<RtpServer>();
+    server->start(local_port, stream_id, enable_tcp, local_ip.c_str(), re_use_port, ssrc);
+    server->setOnDetach([stream_id]() {
+        //设置rtp超时移除事件
+        AutoLock lck(s_rtpServerMapMtx);
+        s_rtpServerMap.erase(stream_id);
+        });
+
+    //保存对象
+    s_rtpServerMap.emplace(stream_id, server);
+    //回复json
+    return server->getPort();
+}
+
+bool closeRtpServer(const std::string &stream_id) {
+    AutoLock lck(s_rtpServerMapMtx);
+    auto it = s_rtpServerMap.find(stream_id);
+    if (it == s_rtpServerMap.end()) {
+        return false;
+    }
+    auto server = it->second;
+    s_rtpServerMap.erase(it);
+    return true;
+}
+#endif
+
+#include "util/md5.h"
+#include "Pusher/PusherProxy.h"
+#include "Player/PlayerProxy.h"
+//拉流代理器列表
+static std::unordered_map<string, PlayerProxy::Ptr> s_proxyMap;
+static std::recursive_mutex s_proxyMapMtx;
+
+//推流代理器列表
+static std::unordered_map<string, PusherProxy::Ptr> s_proxyPusherMap;
+static std::recursive_mutex s_proxyPusherMapMtx;
+static inline string getProxyKey(const string &vhost, const string &app, const string &stream) {
+    return vhost + "/" + app + "/" + stream;
+}
+
+static inline string getPusherKey(const string &schema, const string &vhost, const string &app, const string &stream,
+    const string &dst_url) {
+    return schema + "/" + vhost + "/" + app + "/" + stream + "/" + Md5Str(dst_url);
+}
+
+//RTC配置项目
 namespace RTC {
 #define RTC_FIELD "rtc."
 //服务器外网ip
@@ -99,6 +159,21 @@ void WebRtcServer::stop()
     websocket_server_stop(&_http);
     _udpRtc = nullptr;
     _udpSrt = nullptr;
+#if defined(ENABLE_RTPPROXY)
+    {
+        RtpSelector::Instance().clear();
+        AutoLock lck(s_rtpServerMapMtx);
+        s_rtpServerMap.clear();
+    }
+#endif
+    {
+        AutoLock lck(s_proxyMapMtx);
+        s_proxyMap.clear();
+    }
+    {
+        AutoLock lck(s_proxyPusherMapMtx);
+        s_proxyPusherMap.clear();
+    }
     EventLoopThreadPool::Instance()->stop();
 }
 
@@ -378,9 +453,11 @@ void WebRtcServer::startHttp()
     http.POST("/echo", [](const HttpContextPtr& ctx) {
         return ctx->send(ctx->body(), ctx->type());
     });
+
     http.POST("/index/api/webrtc", [this](const HttpRequestPtr& req, const HttpResponseWriterPtr& writer) {
         onRtcOfferReq(req, writer);
     });
+
     http.GET("/index/api/getStatistic", [this](const HttpRequestPtr& req, const HttpResponseWriterPtr& writer) {
         getStatisticJson([writer](const hv::Json &data) mutable {
             HttpResponse resp;
@@ -388,9 +465,11 @@ void WebRtcServer::startHttp()
             writer->WriteResponse(&resp);
         });
     });
+
     http.GET("/paths", [](HttpRequest* req, HttpResponse* resp) {
         return resp->Json(http.Paths());
     });
+
     http.Any("/index/api/getServerConfig", [](HttpRequest* req, HttpResponse* resp) -> int {
         CHECK_SECRET();
         hv::Json val;
@@ -398,6 +477,42 @@ void WebRtcServer::startHttp()
             val[pr.first] = pr.second;
         }
         return resp->Json(val);
+    });
+
+    //设置服务器配置
+    //测试url(比如关闭http api调试) http://127.0.0.1/index/api/setServerConfig?api.apiDebug=0
+    //你也可以通过http post方式传参，可以通过application/x-www-form-urlencoded或application/json方式传参
+    http.Any("/index/api/setServerConfig", [](HttpRequest* req, HttpResponse* resp) {
+        CHECK_SECRET();
+        auto &ini = mINI::Instance();
+        int changed = 0;
+        //@todo allArgs.getArgs()
+        for (auto &pr : req->kv) {
+            if (ini.find(pr.first) == ini.end()) {
+#if 1
+                //没有这个key
+                continue;
+#else
+                // 新增配置选项,为了动态添加多个ffmpeg cmd 模板
+                ini[pr.first] = pr.second;
+                // 防止changed变化
+                continue;
+#endif
+            }
+            if (ini[pr.first] == pr.second) {
+                continue;
+            }
+            ini[pr.first] = pr.second;
+            //替换成功
+            ++changed;
+        }
+        if (changed > 0) {
+            NoticeCenter::Instance().emitEvent(Broadcast::kBroadcastReloadConfig);
+            // 保存配置文件
+            ini.dumpFile(g_ini_file);
+        }
+        resp->Set("changed", changed);
+        return HTTP_STATUS_OK;
     });
 
     http.GET("/index/api/getMediaList", [](HttpRequest* req, HttpResponse* resp) -> int {
@@ -436,7 +551,7 @@ void WebRtcServer::startHttp()
 
     //主动关断流，包括关断拉流、推流
     //测试url http://127.0.0.1/index/api/close_stream?schema=rtsp&vhost=__defaultVhost__&app=live&stream=obs&force=1
-    http.Any("/index/api/close_stream", [this](const HttpRequestPtr& req, const HttpResponseWriterPtr& writer) {
+    http.Any("/index/api/close_stream", [](const HttpRequestPtr& req, const HttpResponseWriterPtr& writer) {
         CHECK_SECRET();
         CHECK_ARGS("schema", "vhost", "app", "stream");
         //踢掉推流器
@@ -455,6 +570,571 @@ void WebRtcServer::startHttp()
             writer->End(val.dump());
         });
     });
+    //批量主动关断流，包括关断拉流、推流
+    //测试url http://127.0.0.1/index/api/close_streams?schema=rtsp&vhost=__defaultVhost__&app=live&stream=obs&force=1
+    http.Any("/index/api/close_streams", [](HttpRequest* req, HttpResponse* resp) -> int {
+        CHECK_SECRET();
+        //筛选命中个数
+        int count_hit = 0;
+        int count_closed = 0;
+        std::list<MediaSource::Ptr> media_list;
+        MediaSource::for_each_media([&](const MediaSource::Ptr &media) {
+            ++count_hit;
+            media_list.emplace_back(media);
+            }, req->GetString("schema"), req->GetString("vhost"), req->GetString("app"), req->GetString("stream"));
+
+        bool force = req->GetBool("force");
+        for (auto &media : media_list) {
+            if (media->close(force)) {
+                ++count_closed;
+            }
+        }
+        hv::Json val;
+        val["count_hit"] = count_hit;
+        val["count_closed"] = count_closed;
+        resp->Json(val);
+        return HTTP_STATUS_OK;
+    });
+
+    static auto addStreamPusherProxy = [](const string &schema,
+        const string &vhost,
+        const string &app,
+        const string &stream,
+        const string &url,
+        int retry_count,
+        int rtp_type,
+        float timeout_sec,
+        const std::function<void(const SockException &ex, const string &key)> &cb) {
+            auto key = getPusherKey(schema, vhost, app, stream, url);
+            auto src = MediaSource::find(schema, vhost, app, stream);
+            if (!src) {
+                cb(SockException(Err_other, "can not find the source stream"), key);
+                return;
+            }
+
+            AutoLock lck(s_proxyPusherMapMtx);
+            if (s_proxyPusherMap.find(key) != s_proxyPusherMap.end()) {
+                //已经在推流了
+                cb(SockException(Err_success), key);
+                return;
+            }
+
+            //添加推流代理
+            PusherProxy::Ptr pusher(new PusherProxy(src, retry_count ? retry_count : -1));
+            s_proxyPusherMap[key] = pusher;
+
+            //指定RTP over TCP(播放rtsp时有效)
+            (*pusher)[Client::kRtpType] = rtp_type;
+
+            if (timeout_sec > 0.1) {
+                //推流握手超时时间
+                (*pusher)[Client::kTimeoutMS] = timeout_sec * 1000;
+            }
+
+            //开始推流，如果推流失败或者推流中止，将会自动重试若干次，默认一直重试
+            pusher->setPushCallbackOnce([cb, key, url](const SockException &ex) {
+                if (ex) {
+                    WarnL << "Push " << url << " failed, key: " << key << ", err: " << ex.what();
+                    AutoLock lck(s_proxyPusherMapMtx);
+                    s_proxyPusherMap.erase(key);
+                }
+                cb(ex, key);
+            });
+
+            //被主动关闭推流
+            pusher->setOnClose([key, url](const SockException &ex) {
+                WarnL << "Push " << url << " failed, key: " << key << ", err: " << ex.what();
+                AutoLock lck(s_proxyPusherMapMtx);
+                s_proxyPusherMap.erase(key);
+            });
+            pusher->publish(url);
+    };
+
+    //动态添加rtsp/rtmp推流代理
+    //测试url http://127.0.0.1/index/api/addStreamPusherProxy?schema=rtmp&vhost=__defaultVhost__&app=proxy&stream=0&dst_url=rtmp://127.0.0.1/live/obs
+    http.Any("/index/api/addStreamPusherProxy", [](const HttpRequestPtr& req, const HttpResponseWriterPtr& writer) {
+        CHECK_SECRET();
+        CHECK_ARGS("schema", "vhost", "app", "stream", "dst_url");
+        auto dst_url = req->GetString("dst_url");
+        addStreamPusherProxy(req->GetString("schema"),
+            req->GetString("vhost"),
+            req->GetString("app"),
+            req->GetString("stream"),
+            req->GetString("dst_url"),
+            req->GetInt("retry_count"),
+            req->GetInt("rtp_type"),
+            req->GetInt("timeout_sec"),
+            [writer, dst_url](const SockException &ex, const std::string &key) mutable {
+                hv::Json val;
+                if (ex) {
+                    val["code"] = -1;
+                    val["msg"] = ex.what();
+                }
+                else {
+                    val["data"]["key"] = key;
+                    InfoL << "Publish success, please play with player:" << dst_url;
+                }
+                writer->response->Json(val);
+                writer->End();
+            });
+        });
+
+    //关闭推流代理
+    //测试url http://127.0.0.1/index/api/delStreamPusherProxy?key=__defaultVhost__/proxy/0
+    http.Any("/index/api/delStreamPusherProxy", [](HttpRequest* req, HttpResponse* resp) -> int {
+        CHECK_SECRET();
+        CHECK_ARGS("key");
+        AutoLock lck(s_proxyPusherMapMtx);
+        hv::Json val;
+        val["data"]["flag"] = s_proxyPusherMap.erase(req->GetString("key")) == 1;
+        resp->Json(val);
+        return HTTP_STATUS_OK;
+    });
+
+    static auto addStreamProxy = [](const string &vhost, const string &app, const string &stream, const string &url, int retry_count,
+        const ProtocolOption &option, int rtp_type, float timeout_sec,
+        const std::function<void(const SockException &ex, const string &key)> &cb) {
+        auto key = getProxyKey(vhost, app, stream);
+        AutoLock lck(s_proxyMapMtx);
+        if (s_proxyMap.find(key) != s_proxyMap.end()) {
+            //已经在拉流了
+            cb(SockException(Err_success), key);
+            return;
+        }
+        //添加拉流代理
+        auto player = std::make_shared<PlayerProxy>(vhost, app, stream, option, retry_count ? retry_count : -1);
+        s_proxyMap[key] = player;
+
+        //指定RTP over TCP(播放rtsp时有效)
+        (*player)[Client::kRtpType] = rtp_type;
+
+        if (timeout_sec > 0.1) {
+            //播放握手超时时间
+            (*player)[Client::kTimeoutMS] = timeout_sec * 1000;
+        }
+
+        //开始播放，如果播放失败或者播放中止，将会自动重试若干次，默认一直重试
+        player->setPlayCallbackOnce([cb, key](const SockException &ex) {
+            if (ex) {
+                AutoLock lck(s_proxyMapMtx);
+                s_proxyMap.erase(key);
+            }
+            cb(ex, key);
+        });
+
+        //被主动关闭拉流
+        player->setOnClose([key](const SockException &ex) {
+            AutoLock lck(s_proxyMapMtx);
+            s_proxyMap.erase(key);
+        });
+        player->play(url);
+    };
+    //动态添加rtsp/rtmp拉流代理
+    //测试url http://127.0.0.1/index/api/addStreamProxy?vhost=__defaultVhost__&app=proxy&enable_rtsp=1&enable_rtmp=1&stream=0&url=rtmp://127.0.0.1/live/obs
+    http.Any("/index/api/addStreamProxy", [](const HttpRequestPtr& req, const HttpResponseWriterPtr& writer) {
+        CHECK_SECRET();
+        CHECK_ARGS("vhost", "app", "stream", "url");
+
+        ProtocolOption option;
+        option.enable_hls = req->GetBool("enable_hls");
+        option.enable_mp4 = req->GetBool("enable_mp4");
+        option.enable_rtsp = req->GetBool("enable_rtsp");
+        option.enable_rtmp = req->GetBool("enable_rtmp");
+        option.enable_ts = req->GetBool("enable_ts");
+        option.enable_fmp4 = req->GetBool("enable_fmp4");
+        option.enable_audio = req->GetBool("enable_audio");
+        option.add_mute_audio = req->GetBool("add_mute_audio");
+        option.mp4_save_path = req->GetString("mp4_save_path");
+        option.mp4_max_second = req->GetInt("mp4_max_second");
+        option.hls_save_path = req->GetString("hls_save_path");
+
+        addStreamProxy(req->GetString("vhost"),
+            req->GetString("app"),
+            req->GetString("stream"),
+            req->GetString("url"),
+            req->GetInt("retry_count"),
+            option,
+            req->GetInt("rtp_type"),
+            req->GetInt("timeout_sec"),
+            [writer](const SockException &ex, const string &key) mutable {
+                hv::Json val;
+                if (ex) {
+                    val["code"] = -1;
+                    val["msg"] = ex.what();
+                }
+                else {
+                    val["data"]["key"] = key;
+                }
+                writer->response->Json(val);
+                writer->End();
+            });
+        });
+
+    //关闭拉流代理
+    //测试url http://127.0.0.1/index/api/delStreamProxy?key=__defaultVhost__/proxy/0
+    http.Any("/index/api/delStreamProxy", [](HttpRequest* req, HttpResponse* resp) -> int {
+        CHECK_SECRET();
+        CHECK_ARGS("key");
+        AutoLock lck(s_proxyMapMtx);
+        hv::Json val;
+        val["data"]["flag"] = s_proxyMap.erase(req->GetString("key")) == 1;
+        resp->Json(val);
+        return HTTP_STATUS_OK;
+    });
+#if defined(ENABLE_RTPPROXY)
+    http.Any("/index/api/getRtpInfo", [](HttpRequest* req, HttpResponse* resp) -> int {
+        CHECK_SECRET();
+        CHECK_ARGS("stream_id");
+
+        auto process = RtpSelector::Instance().getProcess(req->GetString("stream_id"), false);
+        if (!process) {
+            resp->Set("exist", false);
+        }
+        else {
+            hv::Json val;
+            val["exist"] = true;
+            //SockInfoToJson(val, process.get());
+            resp->Json(val);
+        }
+        return HTTP_STATUS_OK;
+    });
+
+    http.Any("/index/api/openRtpServer", [](HttpRequest* req, HttpResponse* resp) -> int {
+        CHECK_SECRET();
+        CHECK_ARGS("port", "enable_tcp", "stream_id");
+        auto stream_id = req->GetString("stream_id");
+        auto port = openRtpServer(req->GetInt("port"), stream_id, req->GetBool("enable_tcp"), "::",
+            req->GetBool("re_use_port"), req->GetInt("ssrc"));
+        if (port == 0) {
+            resp->Set("error", "该stream_id已存在");
+        }
+        else {
+            //回复json
+            resp->Set("port", port);
+        }
+        return HTTP_STATUS_OK;
+    });
+
+    http.Any("/index/api/closeRtpServer", [](HttpRequest* req, HttpResponse* resp) -> int {
+        CHECK_SECRET();
+        CHECK_ARGS("stream_id");
+
+        bool ret = closeRtpServer(req->GetString("stream_id"));
+        resp->Set("hit", ret);
+        return HTTP_STATUS_OK;
+    });
+
+    http.Any("/index/api/listRtpServer", [](HttpRequest* req, HttpResponse* resp) -> int {
+        CHECK_SECRET();
+
+        hv::Json val;
+        AutoLock lck(s_rtpServerMapMtx);
+        for (auto &pr : s_rtpServerMap) {
+            hv::Json obj;
+            obj["stream_id"] = pr.first;
+            obj["port"] = pr.second->getPort();
+            val.push_back(obj);
+        }
+        resp->Set("data", val);
+        return HTTP_STATUS_OK;
+    });
+
+    http.Any("/index/api/startSendRtp", [](const HttpRequestPtr& req, const HttpResponseWriterPtr& writer) {
+        CHECK_SECRET();
+        CHECK_ARGS("vhost", "app", "stream", "ssrc", "dst_url", "dst_port", "is_udp");
+
+        auto src = MediaSource::find(req->GetString("vhost"), req->GetString("app"), req->GetString("stream"), req->GetBool("from_mp4"));
+        if (!src) {
+            writer->WriteStatus(HTTP_STATUS_NOT_FOUND);
+            writer->End("can not find the source stream");
+            return;
+        }
+
+        MediaSourceEvent::SendRtpArgs args;
+        args.passive = false;
+        args.dst_url = req->GetString("dst_url");
+        args.dst_port = req->GetInt("dst_port");
+        args.ssrc = req->GetInt("ssrc");
+        args.is_udp = req->GetBool("is_udp");
+        args.src_port = req->GetInt("src_port");
+        args.pt = req->GetInt("pt", 96);
+        args.use_ps = req->GetBool("use_ps", true);
+        args.only_audio = req->GetBool("only_audio", false);
+        TraceL << "startSendRtp, pt " << int(args.pt) << " ps " << args.use_ps << " audio " << args.only_audio;
+
+        src->getOwnerPoller()->async([=]() mutable {
+            src->startSendRtp(args, [writer](uint16_t local_port, const SockException &ex) mutable {
+                hv::Json val;
+                if (ex) {
+                    val["code"] = -1;
+                    val["msg"] = ex.what();
+                }
+                val["local_port"] = local_port;
+                writer->response->Json(val);
+                writer->End();
+            });
+        });
+    });
+
+    http.Any("/index/api/startSendRtpPassive", [](const HttpRequestPtr& req, const HttpResponseWriterPtr& writer) {
+        CHECK_SECRET();
+        CHECK_ARGS("vhost", "app", "stream", "ssrc");
+
+        auto src = MediaSource::find(req->GetString("vhost"), req->GetString("app"), req->GetString("stream"), req->GetInt("from_mp4"));
+        if (!src) {
+            writer->WriteStatus(HTTP_STATUS_NOT_FOUND);
+            writer->End("can not find the source stream");
+            return;
+        }
+
+        MediaSourceEvent::SendRtpArgs args;
+        args.passive = true;
+        args.ssrc = req->GetInt("ssrc");
+        args.is_udp = false;
+        args.src_port = req->GetInt("src_port");
+        args.pt = req->GetInt("pt", 96);
+        args.use_ps = req->GetBool("use_ps", true);
+        args.only_audio = req->GetBool("only_audio");
+        TraceL << "startSendRtpPassive, pt " << int(args.pt) << " ps " << args.use_ps << " audio " << args.only_audio;
+
+        src->getOwnerPoller()->async([=]() mutable {
+            src->startSendRtp(args, [writer](uint16_t local_port, const SockException &ex) mutable {
+                hv::Json val;
+                if (ex) {
+                    val["code"] = -1;
+                    val["msg"] = ex.what();
+                }
+                val["local_port"] = local_port;
+                writer->response->Json(val);
+                writer->End();
+            });
+        });
+    });
+
+    http.Any("/index/api/stopSendRtp", [](const HttpRequestPtr& req, const HttpResponseWriterPtr& writer) {
+        CHECK_SECRET();
+        CHECK_ARGS("vhost", "app", "stream");
+
+        auto src = MediaSource::find(req->GetString("vhost"), req->GetString("app"), req->GetString("stream"));
+        if (!src) {
+            writer->WriteStatus(HTTP_STATUS_NOT_FOUND);
+            writer->End("can not find the source stream");
+        }
+
+        src->getOwnerPoller()->async([=]() mutable {
+            // ssrc如果为空，关闭全部
+            if (!src->stopSendRtp(req->GetString("ssrc"))) {
+                hv::Json val;
+                val["code"] = -1;
+                val["msg"] = "stopSendRtp failed";
+                writer->response->Json(val);
+                writer->End();
+                return;
+            }
+            writer->End();
+        });
+    });
+
+    http.Any("/index/api/pauseRtpCheck", [](HttpRequest* req, HttpResponse* resp) -> int {
+        CHECK_SECRET();
+        CHECK_ARGS("stream_id");
+        //只是暂停流的检查，流媒体服务器做为流负载服务，收流就转发，RTSP/RTMP有自己暂停协议
+        auto rtp_process = RtpSelector::Instance().getProcess(req->GetString("stream_id"), false);
+        if (rtp_process) {
+            rtp_process->setStopCheckRtp(true);
+        }
+        else {
+            resp->Set("code", 404);
+        }
+        return HTTP_STATUS_OK;
+    });
+
+    http.Any("/index/api/resumeRtpCheck", [](HttpRequest* req, HttpResponse* resp) -> int {
+        CHECK_SECRET();
+        CHECK_ARGS("stream_id");
+        auto rtp_process = RtpSelector::Instance().getProcess(req->GetString("stream_id"), false);
+        if (rtp_process) {
+            rtp_process->setStopCheckRtp(false);
+        }
+        else {
+            resp->Set("code", 404);
+        }
+        return HTTP_STATUS_OK;
+    });
+
+#endif//ENABLE_RTPPROXY
+
+    // 开始录制hls或MP4
+    http.Any("/index/api/startRecord", [](const HttpRequestPtr& req, const HttpResponseWriterPtr& writer) {
+        CHECK_SECRET();
+        CHECK_ARGS("type", "vhost", "app", "stream");
+
+        auto src = MediaSource::find(req->GetString("vhost"), req->GetString("app"), req->GetString("stream"));
+        if (!src) {
+            writer->WriteStatus(HTTP_STATUS_NOT_FOUND);
+            writer->End("can not find the stream");
+            return;
+        }
+
+        writer->WriteStatus(HTTP_STATUS_OK);
+        src->getOwnerPoller()->async([=]() mutable {
+            auto result = src->setupRecord((Recorder::type)req->GetInt("type"), true, req->GetString("customized_path"), req->GetInt("max_second"));
+            auto resp = writer->response;
+            resp->Set("result", result);
+            resp->Set("code", result ? 0 : -1);
+            resp->Set("msg", result ? "success" : "start record failed");
+            writer->End();
+        });
+    });
+
+    //设置录像流播放速度
+    http.Any("/index/api/setRecordSpeed", [](const HttpRequestPtr& req, const HttpResponseWriterPtr& writer) {
+        CHECK_SECRET();
+        CHECK_ARGS("schema", "vhost", "app", "stream", "speed");
+        auto src = MediaSource::find(req->GetString("schema"), req->GetString("vhost"), req->GetString("app"), req->GetString("stream"));
+        if (!src) {
+            writer->WriteStatus(HTTP_STATUS_NOT_FOUND);
+            writer->End("can not find the stream");
+            return;
+        }
+
+        writer->WriteStatus(HTTP_STATUS_OK);
+        auto speed = req->GetFloat("speed");
+        src->getOwnerPoller()->async([=]() mutable {
+            bool flag = src->speed(speed);
+            auto resp = writer->response;
+            resp->Set("result", flag ? 0 : -1);
+            resp->Set("code", flag ? 0 : -1);
+            resp->Set("msg", flag ? "success" : "set failed");
+            writer->End();
+        });
+    });
+
+    http.Any("/index/api/seekRecordStamp", [](const HttpRequestPtr& req, const HttpResponseWriterPtr& writer) {
+        CHECK_SECRET();
+        CHECK_ARGS("schema", "vhost", "app", "stream", "stamp");
+        auto src = MediaSource::find(req->GetString("schema"), req->GetString("vhost"), req->GetString("app"), req->GetString("stream"));
+        if (!src) {
+            writer->WriteStatus(HTTP_STATUS_NOT_FOUND);
+            writer->End("can not find the stream");
+            return;
+        }
+
+        writer->WriteStatus(HTTP_STATUS_OK);
+        auto stamp = req->GetInt("stamp");
+        src->getOwnerPoller()->async([=]() mutable {
+            bool flag = src->seekTo(stamp);
+            auto resp = writer->response;
+            resp->Set("result", flag ? 0 : -1);
+            resp->Set("code", flag ? 0 : -1);
+            resp->Set("msg", flag ? "success" : "set failed");
+            writer->End();
+        });
+    });
+
+    // 停止录制hls或MP4
+    http.Any("/index/api/stopRecord", [](const HttpRequestPtr& req, const HttpResponseWriterPtr& writer) {
+        CHECK_SECRET();
+        CHECK_ARGS("type", "vhost", "app", "stream");
+
+        auto src = MediaSource::find(req->GetString("vhost"), req->GetString("app"), req->GetString("stream"));
+        if (!src) {
+            writer->WriteStatus(HTTP_STATUS_NOT_FOUND);
+            writer->End("can not find the stream");
+        }
+
+        writer->WriteStatus(HTTP_STATUS_OK);
+        auto type = (Recorder::type)req->GetInt("type");
+        src->getOwnerPoller()->async([=]() mutable {
+            auto result = src->setupRecord(type, false, "", 0);
+            auto resp = writer->response;
+            resp->Set("result", result);
+            resp->Set("code", result ? 0 : -1);
+            resp->Set("msg", result ? "success" : "stop record failed");
+            writer->End();
+        });
+    });
+
+    // 获取hls或MP4录制状态
+    http.Any("/index/api/isRecording", [](const HttpRequestPtr& req, const HttpResponseWriterPtr& writer) {
+        CHECK_SECRET();
+        CHECK_ARGS("type", "vhost", "app", "stream");
+
+        auto src = MediaSource::find(req->GetString("vhost"), req->GetString("app"), req->GetString("stream"));
+        if (!src) {
+            writer->WriteStatus(HTTP_STATUS_NOT_FOUND);
+            writer->End("can not find the stream");
+        }
+
+        writer->WriteStatus(HTTP_STATUS_OK);
+        auto type = (Recorder::type)req->GetInt("type");
+        src->getOwnerPoller()->async([=]() mutable {
+            writer->response->Set("status", src->isRecording(type));
+            writer->End();
+        });
+    });
+    
+    // 删除录像文件夹
+    // http://127.0.0.1/index/api/deleteRecordDirectroy?vhost=__defaultVhost__&app=live&stream=ss&period=2020-01-01
+    http.Any("/index/api/deleteRecordDirectory", [](const HttpRequestPtr& req, const HttpResponseWriterPtr& writer) {
+        CHECK_SECRET();
+        CHECK_ARGS("vhost", "app", "stream");
+        auto record_path = Recorder::getRecordPath(Recorder::type_mp4, 
+            req->GetString("vhost"), req->GetString("app"), req->GetString("stream"), req->GetString("customized_path"));
+        auto period = req->GetString("period");
+        record_path = record_path + period + "/";
+        int result = File::delete_file(record_path.data());
+        if (result) {
+            // 不等于0时代表失败
+            record_path = "delete error";
+        }
+        auto val = writer->response;
+        val->Set("path", record_path);
+        val->Set("code", result);
+        writer->End();
+    });
+
+    //获取录像文件夹列表或mp4文件列表
+    //http://127.0.0.1/index/api/getMp4RecordFile?vhost=__defaultVhost__&app=live&stream=ss&period=2020-01
+    http.Any("/index/api/getMp4RecordFile", [](const HttpRequestPtr& req, const HttpResponseWriterPtr& writer) {
+        CHECK_SECRET();
+        CHECK_ARGS("vhost", "app", "stream");
+        auto record_path = Recorder::getRecordPath(Recorder::type_mp4, 
+            req->GetString("vhost"), req->GetString("app"), req->GetString("stream"), req->GetString("customized_path"));
+        auto period = req->GetString("period");
+
+        //判断是获取mp4文件列表还是获取文件夹列表
+        bool search_mp4 = period.size() == sizeof("2020-02-01") - 1;
+        if (search_mp4) {
+            record_path = record_path + period + "/";
+        }
+
+        hv::Json paths;
+        //这是筛选日期，获取文件夹列表
+        File::scanDir(record_path, [&](const string &path, bool isDir) {
+            auto pos = path.rfind('/');
+            if (pos != string::npos) {
+                string relative_path = path.substr(pos + 1);
+                if (search_mp4) {
+                    if (!isDir) {
+                        //我们只收集mp4文件，对文件夹不感兴趣
+                        paths.push_back(relative_path);
+                    }
+                }
+                else if (isDir && relative_path.find(period) == 0) {
+                    //匹配到对应日期的文件夹
+                    paths.push_back(relative_path);
+                }
+            }
+            return true;
+        }, false);
+        hv::Json val;
+        val["data"]["rootPath"] = record_path;
+        val["data"]["paths"] = paths;
+        writer->response->Json(val);
+        writer->End();
+    });
+
 
     // /:field/ => req->query_params["field"]
     http.GET("/:app/:stream", [this](const HttpContextPtr& context) -> int {
@@ -848,12 +1528,11 @@ void WebRtcServer::startRtsp()
 
 //////////////////////////////////////////////////////////////////////////
 int main(int argc, char** argv) {
-    const char* cfgPath = nullptr;
     if (argc > 1) {
-        cfgPath = argv[1];
+        g_ini_file = argv[1];
     }
     // AP4::Initialize();
-    mediakit::loadIniConfig(cfgPath);
+    mediakit::loadIniConfig(g_ini_file.c_str());
 
     hlog_set_level(LOG_LEVEL_DEBUG);
     hlog_set_handler(stdout_logger);
