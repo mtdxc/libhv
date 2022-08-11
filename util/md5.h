@@ -22,4 +22,12 @@ HV_EXPORT void hv_md5_hex(unsigned char* input, unsigned int inputlen, char* out
 
 END_EXTERN_C
 
+#ifdef __cplusplus
+#include <string>
+HV_INLINE std::string Md5Str(const std::string& input) {
+    char output[33];
+    hv_md5_hex((unsigned char*)input.data(), input.length(), output, sizeof(output));
+    return output;
+}
+#endif
 #endif // HV_MD5_H_

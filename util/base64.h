@@ -31,6 +31,10 @@ HV_INLINE std::string Base64Encode(const unsigned char* data, unsigned int len) 
     return encoded_str;
 }
 
+HV_INLINE std::string Base64Encode(const std::string& data) {
+    return Base64Encode((unsigned char*)data.data(), data.size());
+}
+
 HV_INLINE std::string Base64Decode(const char* str, unsigned int len = 0) {
     if (len == 0) len = strlen(str);
     int decoded_size = BASE64_DECODE_OUT_SIZE(len);
