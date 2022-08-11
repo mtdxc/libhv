@@ -22,13 +22,15 @@ END_EXTERN_C
 #include <string>
 
 namespace hv {
-
 HV_INLINE std::string Base64Encode(const unsigned char* data, unsigned int len) {
     int encoded_size = BASE64_ENCODE_OUT_SIZE(len);
     std::string encoded_str(encoded_size + 1, 0);
     encoded_size = hv_base64_encode(data, len, (char*)encoded_str.data());
     encoded_str.resize(encoded_size);
     return encoded_str;
+}
+HV_INLINE std::string Base64Encode(const std::string& data) {
+    return Base64Encode((unsigned char*)data.data(), data.size());
 }
 
 HV_INLINE std::string Base64Decode(const char* str, unsigned int len = 0) {
