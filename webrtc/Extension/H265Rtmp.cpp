@@ -10,9 +10,7 @@
 
 #include "Rtmp/utils.h"
 #include "H265Rtmp.h"
-#ifdef ENABLE_MP4
-#include "mpeg4-hevc.h"
-#endif//ENABLE_MP4
+#include "Factory.h"
 
 using std::string;
 using namespace toolkit;
@@ -22,7 +20,6 @@ namespace mediakit{
 H265RtmpDecoder::H265RtmpDecoder() {
 }
 
-#ifdef ENABLE_MP4
 /**
  * 返回不带0x00 00 00 01头的sps
  * @return
@@ -34,38 +31,65 @@ static bool getH265ConfigFrame(const RtmpPacket &thiz, string &frame) {
     if (!thiz.isCfgFrame()) {
         return false;
     }
-    if (thiz.buffer.size() < 6) {
+    if (thiz.buffer.size() < 28) {
         WarnL << "bad H265 cfg!";
         return false;
     }
 
-    auto extra = thiz.buffer.data() + 5;
-    auto bytes = thiz.buffer.size() - 5;
+    frame.clear();
+    const char startcode[] = { 0, 0, 0, 1 };
 
-    struct mpeg4_hevc_t hevc = {0};
-    if (mpeg4_hevc_decoder_configuration_record_load((uint8_t *) extra, bytes, &hevc) > 0) {
-        uint8_t *config = new uint8_t[bytes * 2];
-        int size = mpeg4_hevc_to_nalu(&hevc, config, bytes * 2);
-        if (size > 4) {
-            frame.assign((char *) config + 4, size - 4);
+    auto extra = (uint8_t*)thiz.buffer.data() + 5;
+    auto bytes = thiz.buffer.size() - 5;
+    auto end = extra + bytes;
+
+    uint8_t numOfArrays = extra[22];
+    uint8_t* p = extra + 23;
+    for (int i = 0; i < numOfArrays; i++)
+    {
+        if (p + 3 > end)
+            return false;
+
+        uint8_t nalutype = p[0];
+        uint16_t n = load_be16(p + 1);
+        p += 3;
+
+        for (int j = 0; j < n; j++)
+        {
+            if (p + 2 > end)
+                return -1;
+
+            uint16_t k = load_be16(p);
+            if (p + 2 + k > end)
+            {
+                assert(0);
+                return false;
+            }
+
+            assert((nalutype & 0x3F) == ((p[2] >> 1) & 0x3F));
+            /*
+            hevc->nalu[hevc->numOfArrays].array_completeness = (nalutype >> 7) & 0x01;
+            hevc->nalu[hevc->numOfArrays].type = nalutype & 0x3F;
+            hevc->nalu[hevc->numOfArrays].bytes = k;
+            hevc->nalu[hevc->numOfArrays].data = dst;
+            memcpy(hevc->nalu[hevc->numOfArrays].data, p + 2, k);
+            hevc->numOfArrays++;
+            */
+            frame.append(startcode, 4);
+            frame.append((char*)p+2, k);
+            p += 2 + k;
+            // dst += k;
         }
-        delete [] config;
-        return size > 4;
     }
-    return false;
+    return true;
 }
-#endif
 
 void H265RtmpDecoder::inputRtmp(const RtmpPacket::Ptr &pkt) {
     if (pkt->isCfgFrame()) {
-#ifdef ENABLE_MP4
         string config;
-        if (getH265ConfigFrame(*pkt,config)) {
-            onGetH265(config.data(), config.size(), pkt->time_stamp , pkt->time_stamp);
+        if (getH265ConfigFrame(*pkt, config)) {
+            onGetH265(config.data() + 4, config.size() - 4, pkt->time_stamp , pkt->time_stamp);
         }
-#else
-        WarnL << "请开启MP4相关功能并使能\"ENABLE_MP4\",否则对H265-RTMP支持不完善";
-#endif
         return;
     }
 
@@ -199,19 +223,10 @@ void H265RtmpEncoder::makeVideoConfigPkt() {
     //cts
     rtmpPkt->buffer.append("\x0\x0\x0", 3);
 
-    struct mpeg4_hevc_t hevc = {0};
-    string vps_sps_pps = string("\x00\x00\x00\x01", 4) + _vps +
-                         string("\x00\x00\x00\x01", 4) + _sps +
-                         string("\x00\x00\x00\x01", 4) + _pps;
-    h265_annexbtomp4(&hevc, vps_sps_pps.data(), (int)vps_sps_pps.size(), NULL, 0, NULL, NULL);
-    uint8_t extra_data[1024];
-    int extra_data_size = mpeg4_hevc_decoder_configuration_record_save(&hevc, extra_data, sizeof(extra_data));
-    if (extra_data_size == -1) {
-        WarnL << "生成H265 extra_data 失败";
-        return;
-    }
+    Track::Ptr track = std::make_shared<H265Track>(_sps, _pps, _vps, 0, 0, 0);
+    auto extra_data = Factory::getDecodeInfo(track);
     //HEVCDecoderConfigurationRecord
-    rtmpPkt->buffer.append((char *)extra_data, extra_data_size);
+    rtmpPkt->buffer.append((char *)extra_data.data(), extra_data.size());
     rtmpPkt->body_size = rtmpPkt->buffer.size();
     rtmpPkt->chunk_id = CHUNK_VIDEO;
     rtmpPkt->stream_index = STREAM_MEDIA;

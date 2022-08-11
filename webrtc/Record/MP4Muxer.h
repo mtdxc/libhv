@@ -19,8 +19,11 @@
 #include "Extension/H264.h"
 #include "Extension/H265.h"
 #include "Common/Stamp.h"
-#include "MP4.h"
-
+//#include "MP4.h"
+#include "Ap4.h"
+class AP4_Sample;
+class AP4_ByteStream;
+class AP4_SyntheticSampleTable;
 namespace mediakit{
 /*
 Mp4写入基类.
@@ -56,32 +59,31 @@ public:
      */
     bool haveVideo() const;
 
-    /**
-     * 保存fmp4分片
-     */
-    void saveSegment();
-
-    /**
-     * 创建新切片
-     */
-    void initSegment();
-
-protected:
-    // 类厂方法，由子类实现
-    virtual MP4FileIO::Writer createWriter() = 0;
-
 private:
     void stampSync();
 
-private:
+protected:
     bool _started = false;
     bool _have_video = false;
-    MP4FileIO::Writer _mov_writter;
+
     struct track_info {
-        int track_id = -1;
-        Stamp stamp;
+        AP4_SyntheticSampleTable* sample_table = nullptr;
+        Stamp       stamp;
+        uint64_t    last_tsp = 0;
+        CodecId               codec;
+        AP4_UI32              m_TrackId = 0;
+        AP4_UI32              m_Timescale = 1000;
+        AP4_UI64              m_SampleStartNumber = 0;
+        AP4_UI64              m_MediaTimeOrigin = 0;
+        AP4_UI64              m_MediaStartTime = 0;
+        AP4_UI64              m_MediaDuration = 0;
+        AP4_Array<AP4_Sample> m_Samples;
+        int WriteMediaSegment(AP4_ByteStream& stream, unsigned int sequence_number);
+        AP4_Result AddSample(AP4_Sample sample);
     };
     std::unordered_map<int, track_info> _codec_to_trackid;
+    
+    AP4_ByteStream* _file_stream = nullptr;
     FrameMerger _frame_merger{FrameMerger::mp4_nal_size};
 };
 
@@ -112,12 +114,8 @@ public:
      */
     void closeMP4();
 
-protected:
-    MP4FileIO::Writer createWriter() override;
-
 private:
     std::string _file_name;
-    MP4FileDisk::Ptr _mp4_file;
 };
 
 /// 写fmp4到内存
@@ -150,14 +148,11 @@ protected:
      * @param key_frame 是否有关键帧
      */
     virtual void onSegmentData(std::string string, uint32_t stamp, bool key_frame) = 0;
-
-protected:
-    MP4FileIO::Writer createWriter() override;
-
+    
 private:
     bool _key_frame = false;
     std::string _init_segment;
-    MP4FileMemory::Ptr _memory_file;
+    unsigned int _seq_no = 0;
 };
 
 
