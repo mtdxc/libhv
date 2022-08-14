@@ -10,7 +10,6 @@
 #include "WebRtcServer.h"
 #include "webrtc/IceServer.hpp"
 #include "webrtc/WebRtcTransport.h"
-#include "srt/SrtTransport.hpp"
 #include "FMP4/FMP4MediaSource.h"
 #include "Rtmp/RtmpMediaSource.h"
 #include "TS/TSMediaSource.h"
@@ -142,14 +141,34 @@ hv::EventLoopPtr WebRtcServer::getPoller()
     return EventLoopThreadPool::Instance()->nextLoop();
 }
 
-void WebRtcServer::start()
+void WebRtcServer::start(const char* cfgPath)
 {
+    if (cfgPath) {
+        g_ini_file = cfgPath;
+        mediakit::loadIniConfig(g_ini_file.c_str());
+    }
+
+    hlog_set_level(LOG_LEVEL_DEBUG);
+    hlog_set_handler(stdout_logger);
+
     EventLoopThreadPool::Instance()->start();
-    startRtc();
-    startSrt();
+    uint16_t port = mINI::Instance()[RTC::kPort];
+    if (port)
+       _udpRtc = newRtcServer(port);
+
+    port = mINI::Instance()["srt.port"];
+    if (port)
+        _udpSrt = newSrtServer(port);
+
     startHttp();
-    startRtmp();
-    startRtsp();
+
+    port = mINI::Instance()[::Rtmp::kPort];
+    if (port)
+        _rtmp = newRtmpServer(port);
+
+    port = mINI::Instance()[::Rtsp::kPort];
+    if (port)
+        _rtsp = newRtspServer(port);
 }
 
 void WebRtcServer::stop()
@@ -159,6 +178,7 @@ void WebRtcServer::stop()
     websocket_server_stop(&_http);
     _udpRtc = nullptr;
     _udpSrt = nullptr;
+
 #if defined(ENABLE_RTPPROXY)
     {
         RtpSelector::Instance().clear();
@@ -190,7 +210,6 @@ void WebRtcServer::detect_local_ip()
     LOGI("detect localAddr %s", ip);
 }
 
-
 void WebRtcServer::registerPlugin(const std::string &type, Plugin cb) {
     std::lock_guard<std::mutex> lck(_mtx_creator);
     _map_creator[type] = std::move(cb);
@@ -209,7 +228,6 @@ WebRtcTransportPtr WebRtcServer::getItem(const std::string &key) {
     return ret;
 }
 
-using namespace mediakit;
 #ifdef ENABLE_MEM_DEBUG
 extern uint64_t getTotalMemUsage();
 extern uint64_t getTotalMemBlock();
@@ -1384,99 +1402,89 @@ void WebRtcServer::onRtcOfferReq(const HttpRequestPtr& req, const HttpResponseWr
         });
 }
 
-void WebRtcServer::startRtc()
+std::shared_ptr<WebRtcServer::RtcServer> WebRtcServer::newRtcServer(int port)
 {
-    GET_CONFIG(uint16_t, local_port, RTC::kPort);
-    if (!local_port) return;
+    auto rtc = std::make_shared<RtcServer>();
+    int listenfd = rtc->createsocket(port);
+    if (listenfd < 0)
+        return nullptr;
 
-    _udpRtc = std::make_shared<hv::UdpServerEventLoopTmpl2<WebRtcSession>>();
-    int listenfd = _udpRtc->createsocket(local_port);
-    if (listenfd < 0) {
-        _udpRtc = nullptr;
-        return;
-    }
-    LOGI("listen rtc on %d, listenfd=%d ...\n", local_port, listenfd);
+    LOGI("listen rtc on %d, listenfd=%d ...\n", port, listenfd);
 
-    _udpRtc->onNewClient = [this](hio_t* io, hv::Buffer* data) {
+    rtc->onNewClient = [rtc](hio_t* io, hv::Buffer* data) {
         // @todo select loop with data or peerAddr
         auto user_name = WebRtcSession::getUserName(data->data(), data->size());
         if (user_name.empty()) {
             return;
         }
-        if(auto ret = getItem(user_name))
-            _udpRtc->accept(io, ret->getPoller());
+        if (auto item = WebRtcServer::Instance().getItem(user_name))
+            rtc->accept(io, item->getPoller());
     };
-    _udpRtc->onMessage = [this](const std::shared_ptr<WebRtcSession> & session, hv::Buffer* buf) {
+    rtc->onMessage = [](const std::shared_ptr<WebRtcSession>& session, hv::Buffer* buf) {
         try {
             session->onRecv(buf);
         }
-        catch (SockException &ex) {
+        catch (SockException& ex) {
             session->shutdown(ex);
         }
-        catch (exception &ex) {
+        catch (exception& ex) {
             session->shutdown(SockException(Err_shutdown, ex.what()));
         }
     };
-    _udpRtc->setLoadBalance(LB_LeastConnections);
-
-    _udpRtc->start();
+    rtc->setLoadBalance(LB_LeastConnections);
+    rtc->start();
+    return rtc;
 }
 
-void WebRtcServer::startSrt()
+std::shared_ptr<WebRtcServer::SrtServer> WebRtcServer::newSrtServer(int port)
 {
-    GET_CONFIG(uint16_t, local_port, SRT::kPort);
-    if (!local_port) return;
-
-    _udpSrt = std::make_shared<hv::UdpServerEventLoopTmpl2<SRT::SrtSession>>();
-    int listenfd = _udpSrt->createsocket(local_port);
+    auto srt = std::make_shared<SrtServer>();
+    int listenfd = _udpSrt->createsocket(port);
     if (listenfd < 0) {
-        _udpSrt = nullptr;
-        return;
+        return nullptr;
     }
-    LOGI("listen srt on %d, listenfd=%d ...\n", local_port, listenfd);
+    LOGI("listen srt on %d, listenfd=%d ...\n", port, listenfd);
 
-    _udpSrt->onNewClient = [this](hio_t* io, hv::Buffer* data) {
+    srt->onNewClient = [srt](hio_t* io, hv::Buffer* data) {
         // @todo select loop with data or peerAddr
         auto new_poller = SRT::SrtSession::queryPoller((uint8_t*)data->data(), data->size());
         if (new_poller)
-            _udpSrt->accept(io, new_poller);
-        else 
-            _udpSrt->accept(io, nullptr);
+            srt->accept(io, new_poller);
+        else
+            srt->accept(io, nullptr);
     };
-    _udpSrt->onMessage = [this](const std::shared_ptr<SRT::SrtSession>& session, hv::Buffer* data) {
+    srt->onMessage = [](const std::shared_ptr<SRT::SrtSession>& session, hv::Buffer* data) {
         try {
             session->onRecv((uint8_t*)data->data(), data->size());
         }
-        catch (SockException &ex) {
+        catch (SockException& ex) {
             session->shutdown(ex);
         }
-        catch (exception &ex) {
+        catch (exception& ex) {
             session->shutdown(SockException(Err_shutdown, ex.what()));
         }
     };
-    _udpSrt->setLoadBalance(LB_LeastConnections);
-    _udpSrt->start();
+    srt->setLoadBalance(LB_LeastConnections);
+    srt->start();
+    return srt;
 }
 
-void WebRtcServer::startRtmp()
+std::shared_ptr<WebRtcServer::RtmpServer> WebRtcServer::newRtmpServer(int port)
 {
-    GET_CONFIG(uint16_t, port, ::Rtmp::kPort);
-    if (port <= 0) return;
-    _rtmp = std::make_shared<hv::TcpServerEventLoopTmpl<mediakit::RtmpSession>>();
-    int listenfd = _rtmp->createsocket(port);
+    auto rtmp = std::make_shared<RtmpServer>();
+    int listenfd = rtmp->createsocket(port);
     if (listenfd < 0) {
-        _rtmp = nullptr;
-        return;
+        return nullptr;
     }
     LOGI("listen rtmp on %d", port);
-    _rtmp->onConnection = [](const std::shared_ptr<RtmpSession>& session) {
+    rtmp->onConnection = [](const std::shared_ptr<RtmpSession>& session) {
         if (session->isConnected()) {
         }
         else {
             session->onError(SockException(Err_eof, "socket closed"));
         }
     };
-    _rtmp->onMessage = [](const std::shared_ptr<RtmpSession>& session, hv::Buffer* buf) {
+    rtmp->onMessage = [](const std::shared_ptr<RtmpSession>& session, hv::Buffer* buf) {
         try {
             session->onRecv((char*)buf->data(), buf->size());
         }
@@ -1487,29 +1495,28 @@ void WebRtcServer::startRtmp()
             session->shutdown(SockException(Err_shutdown, ex.what()));
         }
     };
-    _rtmp->setLoadBalance(LB_LeastConnections);
-    _rtmp->start();
+    rtmp->setLoadBalance(LB_LeastConnections);
+    rtmp->start();
+    return rtmp;
 }
 
-void WebRtcServer::startRtsp()
+std::shared_ptr<WebRtcServer::RtspServer> WebRtcServer::newRtspServer(int port)
 {
-    GET_CONFIG(uint16_t, port, ::Rtsp::kPort);
-    if (port <= 0) return;
-    _rtsp = std::make_shared<hv::TcpServerEventLoopTmpl<mediakit::RtspSession>>();
-    int listenfd = _rtsp->createsocket(port);
+    auto rtsp = std::make_shared<RtspServer>();
+    int listenfd = rtsp->createsocket(port);
     if (listenfd < 0) {
-        _rtsp = nullptr;
-        return;
+        return nullptr;
     }
+
     LOGI("listen rtsp on %d", port);
-    _rtsp->onConnection = [](const std::shared_ptr<RtspSession>& session) {
+    rtsp->onConnection = [](const std::shared_ptr<RtspSession>& session) {
         if (session->isConnected()) {
         }
         else {
             session->onError(SockException(Err_eof, "socket closed"));
         }
     };
-    _rtsp->onMessage = [](const std::shared_ptr<RtspSession>& session, hv::Buffer* buf) {
+    rtsp->onMessage = [](const std::shared_ptr<RtspSession>& session, hv::Buffer* buf) {
         try {
             auto buffer = BufferRaw::create();
             buffer->assign((char*)buf->data(), buf->size());
@@ -1522,44 +1529,8 @@ void WebRtcServer::startRtsp()
             session->shutdown(SockException(Err_shutdown, ex.what()));
         }
     };
-    _rtsp->setLoadBalance(LB_LeastConnections);
-    _rtsp->start();
+    rtsp->setLoadBalance(LB_LeastConnections);
+    rtsp->start();
+    return rtsp;
 }
 
-//////////////////////////////////////////////////////////////////////////
-int main(int argc, char** argv) {
-    if (argc > 1) {
-        g_ini_file = argv[1];
-    }
-    // AP4::Initialize();
-    mediakit::loadIniConfig(g_ini_file.c_str());
-
-    hlog_set_level(LOG_LEVEL_DEBUG);
-    hlog_set_handler(stdout_logger);
-
-    WebRtcServer::Instance().start();
-
-    std::string line, cmd;
-    std::vector<std::string> cmds;
-    printf("press quit key to exit\n");
-    while (getline(cin, line))
-    {
-        cmds = hv::split(line);
-        if (cmds.empty()) {
-            continue;
-        }
-        cmd = cmds[0];
-        if (cmd == "quit" || cmd == "q") {
-            cout << "use quit app" << endl;
-            break;
-        }
-        else if (cmd == "count" || cmd == "c") {
-            getStatisticJson([](hv::Json& val) {
-                cout << val.dump() << endl;
-            });
-        }
-    }
-    
-    WebRtcServer::Instance().stop();
-    // AP4::Terminate();
-}

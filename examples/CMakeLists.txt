@@ -65,9 +65,6 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 if(WITH_EVPP)
     include_directories(../cpputil ../evpp)
 
-    file(GLOB evpp_src ../evpp/*.h)
-    add_library(evpp STATIC ${evpp_src} ../evpp/EventLoop_test.cpp)
-
     file(GLOB evpp_test_list ../evpp/*_test.cpp)
     foreach (TEST_SRC ${evpp_test_list})
         get_filename_component(TEST_EXE_NAME ${TEST_SRC} NAME_WE)
@@ -171,6 +168,6 @@ if(WITH_MQTT)
 endif()
 
 foreach (TEST_SRC ${EXAMPLES})
-SET_PROPERTY(TARGET ${TEST_SRC} PROPERTY FOLDER "examples")
+SET_PROPERTY(TARGET ${TEST_SRC} PROPERTY FOLDER "example")
 endforeach()
 add_custom_target(examples DEPENDS ${EXAMPLES})

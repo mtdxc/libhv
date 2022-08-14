@@ -33,7 +33,7 @@ public:
     WebRtcServer();
     ~WebRtcServer();
 
-    void start();
+    void start(const char* cfg);
     void stop();
 
     static WebRtcServer& Instance();
@@ -51,14 +51,26 @@ public:
         return _local_ip;
     }
     void detect_local_ip();
+
+    using RtcServer = hv::UdpServerEventLoopTmpl2<WebRtcSession>;
+    using SrtServer = hv::UdpServerEventLoopTmpl2<SRT::SrtSession>;
+    using RtmpServer = hv::TcpServerEventLoopTmpl<mediakit::RtmpSession>;
+    using RtspServer = hv::TcpServerEventLoopTmpl<mediakit::RtspSession>;
+    std::shared_ptr<RtcServer> newRtcServer(int port);
+    std::shared_ptr<SrtServer> newSrtServer(int port);
+    std::shared_ptr<RtmpServer> newRtmpServer(int port);
+    std::shared_ptr<RtspServer> newRtspServer(int port);
 private:
+    std::shared_ptr<RtcServer> _udpRtc;
+    std::shared_ptr<SrtServer> _udpSrt;
+    std::shared_ptr<RtmpServer> _rtmp;
+    std::shared_ptr<RtspServer> _rtsp;
+
+    websocket_server_t _http;
     void startHttp();
+
     void onRtcOfferReq(const HttpRequestPtr& req, const HttpResponseWriterPtr& writer);
 
-    void startRtc();
-    void startSrt();
-    void startRtmp();
-    void startRtsp();
     void addItem(const std::string &key, const WebRtcTransportPtr &ptr) {
         std::lock_guard<std::mutex> lck(_mtx);
         _map[key] = ptr;
@@ -71,11 +83,6 @@ private:
     std::unordered_map<std::string, std::weak_ptr<WebRtcTransportImp> > _map;
 
     std::string _local_ip;
-    std::shared_ptr<hv::UdpServerEventLoopTmpl2<WebRtcSession>> _udpRtc;
-    std::shared_ptr<hv::UdpServerEventLoopTmpl2<SRT::SrtSession>> _udpSrt;
-    std::shared_ptr<hv::TcpServerEventLoopTmpl<mediakit::RtmpSession>> _rtmp;
-    std::shared_ptr<hv::TcpServerEventLoopTmpl<mediakit::RtspSession>> _rtsp;
-    websocket_server_t _http;
     mutable std::mutex _mtx_creator;
     std::unordered_map<std::string, Plugin> _map_creator;
 };
