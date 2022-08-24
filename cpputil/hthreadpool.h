@@ -52,6 +52,10 @@ public:
     int idleThreadNum() {
         return idle_thread_num;
     }
+    size_t taskNum() {
+        std::lock_guard<std::mutex> locker(task_mutex);
+        return tasks.size();
+    }
     bool isStarted() {
         return status != STOP;
     }
@@ -183,6 +187,7 @@ protected:
         data.id = thread->get_id();
         data.status = RUNNING;
         data.start_time = time(NULL);
+        data.stop_time = 0;
         threads.emplace_back(data);
         thread_mutex.unlock();
     }

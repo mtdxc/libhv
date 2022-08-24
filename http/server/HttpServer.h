@@ -19,6 +19,7 @@ typedef struct http_server_s {
     int http_version;
     int worker_processes;
     int worker_threads;
+    uint32_t worker_connections; // max_connections = workers * worker_connections
     EventLoopThreadPool* share_pools;
     HttpService* service; // http service
     WebSocketService* ws; // websocket service
@@ -38,6 +39,7 @@ typedef struct http_server_s {
         http_version = 1;
         worker_processes = 0;
         worker_threads = 0;
+        worker_connections = 1024;
         service = NULL;
         ws = NULL;
         listenfd[0] = listenfd[1] = -1;
