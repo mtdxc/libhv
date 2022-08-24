@@ -941,24 +941,9 @@ hio_t* hio_create_socket(hloop_t* loop, const char* host, int port, hio_type_e t
     }
     hio_t* io = NULL;
     if (side == HIO_SERVER_SIDE) {
-#ifdef SO_REUSEADDR
-        // NOTE: SO_REUSEADDR allow to reuse sockaddr of TIME_WAIT status
-        int reuseaddr = 1;
-        if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, (const char*)&reuseaddr, sizeof(int)) < 0) {
-            perror("setsockopt");
-            closesocket(sockfd);
-            return NULL;
-        }
-#endif
-#ifdef SO_REUSEPORT
-        // NOTE: SO_REUSEPORT allow to reuse sockaddr of TIME_WAIT status
-        int reuseport = 1;
-        if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEPORT, (const char*)&reuseport, sizeof(int)) < 0) {
-            perror("setsockopt SO_REUSEPORT");
-            closesocket(sockfd);
-            return NULL;
-        }
-#endif
+        so_reuseaddr(sockfd, 1);
+        so_reuseport(sockfd, 1);
+
         if (bind(sockfd, &addr.sa, sockaddr_len(&addr)) < 0) {
             perror("bind");
             closesocket(sockfd);
@@ -1035,24 +1020,9 @@ int hio_accept_udp_fd(hio_t* server) {
         return NULL;
     }
 
-#ifdef SO_REUSEADDR
-    // NOTE: SO_REUSEADDR allow to reuse sockaddr of TIME_WAIT status
-    int reuseaddr = 1;
-    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, (const char*)&reuseaddr, sizeof(int)) < 0) {
-        perror("setsockopt SO_REUSEADDR");
-        closesocket(sockfd);
-        return NULL;
-    }
-#endif
-#ifdef SO_REUSEPORT
-    // NOTE: SO_REUSEPORT allow to reuse sockaddr of TIME_WAIT status
-    int reuseport = 1;
-    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEPORT, (const char*)&reuseport, sizeof(int)) < 0) {
-        perror("setsockopt SO_REUSEPORT");
-        closesocket(sockfd);
-        return NULL;
-    }
-#endif
+    so_reuseaddr(sockfd, 1);
+    so_reuseport(sockfd, 1);
+
     if (bind(sockfd, (struct sockaddr*)localAddr, addrlen) < 0) {
         perror("bind");
         closesocket(sockfd);
