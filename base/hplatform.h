@@ -55,6 +55,10 @@
     #define ARCH_ARM
 #elif defined(__aarch64__) || defined(__ARM64__)
     #define ARCH_ARM64
+#elif defined(__mips__)
+    #define ARCH_MIPS
+#elif defined(__mips64__)
+    #define ARCH_MIPS64
 #else
     #warning "Untested hardware architecture!"
 #endif
@@ -109,7 +113,6 @@
 #pragma warning (disable: 4100) // unused param
 #pragma warning (disable: 4102) // unreferenced label
 #pragma warning (disable: 4244) // conversion loss of data
-#pragma warning (disable: 4251) // STL dll
 #pragma warning (disable: 4267) // size_t => int
 #pragma warning (disable: 4819) // Unicode
 #pragma warning (disable: 4996) // _CRT_SECURE_NO_WARNINGS
@@ -136,9 +139,15 @@
     #ifndef WIN32_LEAN_AND_MEAN
     #define WIN32_LEAN_AND_MEAN
     #endif
+    #ifndef _CRT_NONSTDC_NO_DEPRECATE
     #define _CRT_NONSTDC_NO_DEPRECATE
+    #endif
+    #ifndef _CRT_SECURE_NO_WARNINGS
     #define _CRT_SECURE_NO_WARNINGS
+    #endif
+    #ifndef _WINSOCK_DEPRECATED_NO_WARNINGS
     #define _WINSOCK_DEPRECATED_NO_WARNINGS
+    #endif
     #include <winsock2.h>
     #include <ws2tcpip.h>   // for inet_pton,inet_ntop
     #include <windows.h>

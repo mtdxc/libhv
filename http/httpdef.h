@@ -20,7 +20,8 @@ enum http_parser_state {
     HP_CHUNK_HEADER,
     HP_BODY,
     HP_CHUNK_COMPLETE,
-    HP_MESSAGE_COMPLETE
+    HP_MESSAGE_COMPLETE,
+    HP_ERROR
 };
 
 // http_status
@@ -167,7 +168,7 @@ enum http_method {
     XX(IMAGE_PNG,               image/png,                png)          \
     XX(IMAGE_GIF,               image/gif,                gif)          \
     XX(IMAGE_BMP,               image/bmp,                bmp)          \
-    XX(IMAGE_SVG,               image/svg,                svg)          \
+    XX(IMAGE_SVG,               image/svg+xml,            svg)          \
     XX(VIDEO_AVI,               video/x-msvideo,          avi)          \
     XX(VIDEO_TS,                video/mp2t,               ts)           \
     XX(VIDEO_WEBM,              video/webm,               webm)         \
