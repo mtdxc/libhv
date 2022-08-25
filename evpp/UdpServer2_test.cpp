@@ -39,11 +39,11 @@ int main(int argc, char* argv[]) {
         if (channel->isConnected()) {
             sprintf(msg, "%s connected! connfd=%d id=%d tid=%ld\n", peeraddr.c_str(), channel->fd(), channel->id(), currentThreadEventLoop->tid());
             srv.broadcast(msg);
-            printf(msg);
+            printf("%s", msg);
         } else {
             sprintf(msg, "%s disconnected! connfd=%d id=%d tid=%ld\n", peeraddr.c_str(), channel->fd(), channel->id(), currentThreadEventLoop->tid());
             srv.broadcast(msg);
-            printf(msg);
+            printf("%s", msg);
         }
     };
     srv.onMessage = [](const SocketChannelPtr& channel, Buffer* buf) {

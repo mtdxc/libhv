@@ -65,6 +65,7 @@ set(EVPP_HEADERS
     evpp/TcpServer.h
     evpp/UdpClient.h
     evpp/UdpServer.h
+    evpp/UdpServer2.h
 )
 
 set(PROTOCOL_HEADERS
