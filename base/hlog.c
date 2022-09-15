@@ -298,7 +298,14 @@ static int i2a(int i, char* buf, int len) {
     return len;
 }
 
-int logger_print(logger_t* logger, int level, const char* file, int line, const char* fmt, ...) {
+int logger_print(logger_t* logger, int level, const char* file, int line, const char* func, const char* fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    logger_vprint(logger, level, file, line, func, fmt, ap);
+    va_end(ap);
+}
+
+int logger_vprint(logger_t* logger, int level, const char* file, int line, const char* func, const char* fmt, va_list vl) {
     if (level < logger->level)
         return -10;
 
@@ -383,9 +390,17 @@ int logger_print(logger_t* logger, int level, const char* file, int line, const 
                 case 'p':
                     len += sprintf(buf + len, "%ld", hv_getpid());
                     break;
+                case 'F':
+                    if (func) {
+                        const char* p = strchr(func, ':');
+                        if(p) 
+                            func = p + 1;
+                        len += sprintf(buf + len, "%s", func);
+                    }
+                    break;                    
                 case 'f':
                     len += sprintf(buf + len, "%s", file);
-                    break;
+                    break;                    
                 case 'n':
                     len += sprintf(buf + len, "%d", line);
                     break;
@@ -398,12 +413,7 @@ int logger_print(logger_t* logger, int level, const char* file, int line, const 
                     }
                     break;
                 case 's':
-                {
-                    va_list ap;
-                    va_start(ap, fmt);
-                    len += vsnprintf(buf + len, bufsize - len, fmt, ap);
-                    va_end(ap);
-                }
+                    len += vsnprintf(buf + len, bufsize - len, fmt, vl);
                     break;
                 case '%':
                     buf[len++] = '%';
@@ -420,10 +430,7 @@ int logger_print(logger_t* logger, int level, const char* file, int line, const 
             year, month, day, hour, min, sec, us/1000,
             hv_gettid(), file, line, plevel);
 
-        va_list ap;
-        va_start(ap, fmt);
-        len += vsnprintf(buf + len, bufsize - len, fmt, ap);
-        va_end(ap);
+        len += vsnprintf(buf + len, bufsize - len, fmt, vl);
     }
 
     if (logger->enable_color) {

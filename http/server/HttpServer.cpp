@@ -162,8 +162,8 @@ static void on_recv(hio_t* io, void* _buf, int readbytes) {
     }
 
     // LOG
-    hlogi("[%ld-%ld][%s:%d][%s %s]=>[%d %s]",
-        hloop_pid(loop), hloop_tid(loop),
+    hlogi("[%s:%d][%s %s]=>[%d %s]",
+        //hloop_pid(loop), hloop_tid(loop),
         handler->ip, handler->port,
         http_method_str(req->method), req->path.c_str(),
         resp->status_code, resp->status_message());

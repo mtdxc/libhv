@@ -6,7 +6,7 @@
  */
 
 #include <string.h>
-
+#include <stdarg.h>
 #ifdef _WIN32
 #define DIR_SEPARATOR       '\\'
 #define DIR_SEPARATOR_STR   "\\"
@@ -99,13 +99,17 @@ HV_EXPORT void logger_set_level_by_str(logger_t* logger, const char* level);
  * %Z us
  * %l First character of level
  * %L All characters of level
+ * %F function name
+ * %f file name
+ * %n line number
  * %s message
  * %% %
  */
 HV_EXPORT void logger_set_format(logger_t* logger, const char* format);
 HV_EXPORT void logger_set_max_bufsize(logger_t* logger, unsigned int bufsize);
 HV_EXPORT void logger_enable_color(logger_t* logger, int on);
-HV_EXPORT int  logger_print(logger_t* logger, int level, const char* file, int line, const char* fmt, ...);
+HV_EXPORT int  logger_print(logger_t* logger, int level, const char* file, int line, const char* func, const char* fmt, ...);
+HV_EXPORT int  logger_vprint(logger_t* logger, int level, const char* file, int line, const char* func, const char* fmt, va_list vl);
 
 // below for file logger
 HV_EXPORT void logger_set_file(logger_t* logger, const char* filepath);
@@ -138,11 +142,11 @@ HV_EXPORT void      hv_destroy_default_logger(void);
 #define hlog_fsync()                    logger_fsync(hlog)
 #define hlog_get_cur_file()             logger_get_cur_file(hlog)
 
-#define hlogd(fmt, ...) logger_print(hlog, LOG_LEVEL_DEBUG, __FILENAME__, __LINE__, fmt , ## __VA_ARGS__)
-#define hlogi(fmt, ...) logger_print(hlog, LOG_LEVEL_INFO,  __FILENAME__, __LINE__, fmt , ## __VA_ARGS__)
-#define hlogw(fmt, ...) logger_print(hlog, LOG_LEVEL_WARN,  __FILENAME__, __LINE__, fmt , ## __VA_ARGS__)
-#define hloge(fmt, ...) logger_print(hlog, LOG_LEVEL_ERROR, __FILENAME__, __LINE__, fmt , ## __VA_ARGS__)
-#define hlogf(fmt, ...) logger_print(hlog, LOG_LEVEL_FATAL, __FILENAME__, __LINE__, fmt , ## __VA_ARGS__)
+#define hlogd(fmt, ...) logger_print(hlog, LOG_LEVEL_DEBUG, __FILENAME__, __LINE__, __FUNCTION__, fmt , ## __VA_ARGS__)
+#define hlogi(fmt, ...) logger_print(hlog, LOG_LEVEL_INFO,  __FILENAME__, __LINE__, __FUNCTION__, fmt , ## __VA_ARGS__)
+#define hlogw(fmt, ...) logger_print(hlog, LOG_LEVEL_WARN,  __FILENAME__, __LINE__, __FUNCTION__, fmt , ## __VA_ARGS__)
+#define hloge(fmt, ...) logger_print(hlog, LOG_LEVEL_ERROR, __FILENAME__, __LINE__, __FUNCTION__, fmt , ## __VA_ARGS__)
+#define hlogf(fmt, ...) logger_print(hlog, LOG_LEVEL_FATAL, __FILENAME__, __LINE__, __FUNCTION__, fmt , ## __VA_ARGS__)
 
 // below for android
 #if defined(ANDROID) || defined(__ANDROID__)
