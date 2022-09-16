@@ -15,12 +15,14 @@ public:
 
     UdpClientEventLoopTmpl(EventLoopPtr loop = NULL) {
         loop_ = loop ? loop : std::make_shared<EventLoop>();
+        local_addr = NULL;
 #if WITH_KCP
         enable_kcp = false;
 #endif
     }
 
     virtual ~UdpClientEventLoopTmpl() {
+        HV_FREE(local_addr);
     }
 
     const EventLoopPtr& loop() {
@@ -30,10 +32,45 @@ public:
     //NOTE: By default, not bind local port. If necessary, you can call system api bind() after createsocket().
     //@retval >=0 sockfd, <0 error
     int createsocket(int remote_port, const char* remote_host = "127.0.0.1") {
-        hio_t* io = hloop_create_udp_client(loop_->loop(), remote_host, remote_port);
-        if (io == NULL) return -1;
+        int ret = connect(remote_port, remote_host);
+        if (ret == 0) {
+            start();
+        }
+        return ret;
+    }
+
+    int connect(int remote_port, const char* remote_host = "127.0.0.1") {
         this->remote_host = remote_host;
         this->remote_port = remote_port;
+        return sockaddr_set_ipport(&remote_addr, remote_host, remote_port);
+    }
+
+    int bind(int local_port, const char* local_host = "0.0.0.0") {
+        if (!local_addr) {
+            HV_ALLOC(local_addr, sizeof(sockaddr_u));
+        }
+        memset(local_addr, 0, sizeof(sockaddr_u));
+        return sockaddr_set_ipport(local_addr, local_host, local_port);
+    }
+
+    int createsocket() {
+        int sockfd = socket(remote_addr.sa.sa_family, SOCK_DGRAM, 0);
+        if (sockfd < 0) {
+            perror("socket");
+            return -1;
+        }
+        if (local_addr) {
+            if (::bind(sockfd, (sockaddr*)local_addr, sockaddr_len(local_addr)) < 0) {
+                perror("bind error");
+                ::closesocket(sockfd);
+                return -1;
+            }
+        }
+
+        // hio_t* io = hloop_create_udp_client(loop_->loop(), remote_host, remote_port);
+        hio_t* io = hio_get(loop_->loop(), sockfd);
+        if (io == NULL) return -1;
+        hio_set_peeraddr(io, &remote_addr.sa, sockaddr_len(&remote_addr));
         channel.reset(new TSocketChannel(io));
         return channel->fd();
     }
@@ -46,7 +83,7 @@ public:
 
     int startRecv() {
         if (channel == NULL || channel->isClosed()) {
-            int sockfd = createsocket(remote_port, remote_host.c_str());
+            int sockfd = createsocket();
             if (sockfd < 0) {
                 hloge("createsocket %s:%d return %d!\n", remote_host.c_str(), remote_port, sockfd);
                 return sockfd;
@@ -110,9 +147,10 @@ public:
 
 public:
     TSocketChannelPtr       channel;
-
     std::string             remote_host;
     int                     remote_port;
+    sockaddr_u              remote_addr;
+    sockaddr_u*             local_addr;
 
 #if WITH_KCP
     bool                    enable_kcp;

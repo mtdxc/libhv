@@ -22,12 +22,14 @@ public:
         tls_setting = NULL;
         reconn_setting = NULL;
         unpack_setting = NULL;
+        local_addr = NULL;
     }
 
     virtual ~TcpClientEventLoopTmpl() {
         HV_FREE(tls_setting);
         HV_FREE(reconn_setting);
         HV_FREE(unpack_setting);
+        HV_FREE(local_addr);
     }
 
     const EventLoopPtr& loop() {
@@ -37,26 +39,46 @@ public:
     //NOTE: By default, not bind local port. If necessary, you can call system api bind() after createsocket().
     //@retval >=0 connfd, <0 error
     int createsocket(int remote_port, const char* remote_host = "127.0.0.1") {
-        memset(&remote_addr, 0, sizeof(remote_addr));
-        int ret = sockaddr_set_ipport(&remote_addr, remote_host, remote_port);
-        if (ret != 0) {
-            return -1;
+        int ret = connect(remote_port, remote_host);
+        if (ret == 0) {
+            start();
         }
+        return ret;
+    }
+
+    int connect(int remote_port, const char* remote_host = "127.0.0.1") {
         this->remote_host = remote_host;
         this->remote_port = remote_port;
-        return createsocket(&remote_addr.sa);
+        memset(&remote_addr, 0, sizeof(remote_addr));
+        return sockaddr_set_ipport(&remote_addr, remote_host, remote_port);
     }
-    int createsocket(struct sockaddr* remote_addr) {
-        int connfd = socket(remote_addr->sa_family, SOCK_STREAM, 0);
+
+    int bind(int local_port, const char* local_host = "0.0.0.0") {
+        if (!local_addr) {
+            HV_ALLOC(local_addr, sizeof(sockaddr_u));
+        }
+        memset(local_addr, 0, sizeof(sockaddr_u));
+        return sockaddr_set_ipport(local_addr, local_host, local_port);
+    }
+
+    int createsocket() {
+        int connfd = socket(remote_addr.sa.sa_family, SOCK_STREAM, 0);
         // SOCKADDR_PRINT(remote_addr);
         if (connfd < 0) {
             perror("socket");
             return -2;
         }
+        if (local_addr) {
+            if (::bind(connfd, (sockaddr*)local_addr, sockaddr_len(local_addr)) < 0) {
+                perror("bind error");
+                ::closesocket(connfd);
+                return -1;
+            }
+        }
 
         hio_t* io = hio_get(loop_->loop(), connfd);
         assert(io != NULL);
-        hio_set_peeraddr(io, remote_addr, SOCKADDR_LEN(remote_addr));
+        hio_set_peeraddr(io, &remote_addr.sa, SOCKADDR_LEN(&remote_addr));
         channel.reset(new TSocketChannel(io));
         return connfd;
     }
@@ -70,7 +92,7 @@ public:
 
     int startConnect() {
         if (channel == NULL || channel->isClosed()) {
-            int connfd = createsocket(&remote_addr.sa);
+            int connfd = createsocket();
             if (connfd < 0) {
                 hloge("createsocket %s:%d return %d!\n", remote_host.c_str(), remote_port, connfd);
                 return connfd;
@@ -205,6 +227,8 @@ public:
     std::string             remote_host;
     int                     remote_port;
     sockaddr_u              remote_addr;
+    sockaddr_u*             local_addr;
+    
     int                     connect_timeout;
     bool                    tls;
     hssl_ctx_opt_t*         tls_setting;
