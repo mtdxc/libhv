@@ -135,6 +135,12 @@ if(WITH_HTTP_CLIENT)
     add_executable(wget wget.cpp)
     target_link_libraries(wget ${HV_LIBRARIES})
 
+    # dlna
+    glob_headers_and_sources(DLNA_FILES dlna)
+    add_executable(dlna ${DLNA_FILES})
+    # target_compile_definitions(dlna PRIVATE PRINT_DEBUG)
+    target_link_libraries(dlna ${HV_LIBRARIES})
+    
     # consul
     glob_headers_and_sources(CONSUL_FILES consul)
     add_executable(consul ${CONSUL_FILES})
