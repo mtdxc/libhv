@@ -90,7 +90,7 @@ int UPnPAction::invoke(Device::Ptr dev, RpcCB cb)
     };
   }
 
-  requests::async(req, [cb, id, respTag](HttpResponsePtr resp) {
+  Upnp::Instance()->httpClient()->send(req, [cb, id, respTag](HttpResponsePtr resp) {
     ArgMap args;
     if (!resp) {
       args["error"] = "without response";

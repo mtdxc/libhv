@@ -2,7 +2,6 @@
 #include "hlog.h"
 #include <strstream>
 #include "UdpClient.h"
-#include "AsyncHttpClient.h"
 #include "requests.h"
 #include "pugixml.hpp"
 
@@ -124,11 +123,13 @@ void Upnp::start()
     this->onUdpRecv((char*)buf->data(), buf->size());
   };
   _socket.start();
+  _http_client = std::make_shared<hv::AsyncHttpClient>(loop());
 }
 
 void Upnp::stop()
 {
   _socket.stop();
+  _http_client = nullptr;
 }
 
 void Upnp::search()
@@ -244,7 +245,7 @@ void Upnp::loadDeviceWithLocation(std::string loc, std::string usn)
 {
   auto req = std::make_shared<HttpRequest>();
   req->url = loc;
-  requests::async(req, [this,loc, usn](HttpResponsePtr resp) {
+  _http_client->send(req, [this,loc, usn](HttpResponsePtr resp) {
     if (!resp || resp->status_code != HTTP_STATUS_OK)
       return;
 
@@ -284,7 +285,7 @@ void Upnp::loadDeviceWithLocation(std::string loc, std::string usn)
         }
       }
       if (auto url = root.child("URLBase")) {
-        device->URLHeader = url.child_value();
+        device->URLHeader = hv::rtrim(url.child_value(), "/");
       }
       device->set_location(loc);
       addDevice(device);

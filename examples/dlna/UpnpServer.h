@@ -1,7 +1,9 @@
 ﻿#pragma once
-
+#include <map>
+#include <string>
 #include <memory>
 #include "UdpClient.h"
+#include "AsyncHttpClient.h"
 extern const char* ssdpAddres;
 extern const unsigned short ssdpPort;
 
@@ -51,6 +53,7 @@ class Upnp
 {
   MapDevices _devices; //已经发现的设备
   hv::UdpClient _socket;
+  std::shared_ptr<hv::AsyncHttpClient> _http_client;
   void onUdpRecv(char* buf, int size);
 
   void loadDeviceWithLocation(std::string loc, std::string usn);
@@ -67,6 +70,7 @@ public:
   ~Upnp();
 
   hv::EventLoopPtr loop() { return _socket.loop(); }
+  hv::AsyncHttpClient* httpClient() { return _http_client.get(); }
   void start();
   void stop();
   void search();
