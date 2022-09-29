@@ -4,6 +4,7 @@
 #include <memory>
 #include "UdpClient.h"
 #include "AsyncHttpClient.h"
+#include "HttpServer.h"
 extern const char* ssdpAddres;
 extern const unsigned short ssdpPort;
 
@@ -65,17 +66,31 @@ class Upnp
 public:
   void setListener(UpnpListener* l) { _listener = l; }
   UpnpListener* getListener() const {return _listener;}
-  
   static Upnp* Instance();
   ~Upnp();
 
   hv::EventLoopPtr loop() { return _socket.loop(); }
   hv::AsyncHttpClient* httpClient() { return _http_client.get(); }
   void start();
+
+  void startHttp();
+
   void stop();
   void search();
 
   MapDevices getDevices() { return _devices; }
   Device::Ptr getDevice(const std::string& usn);
+
+  void setCurFile(const std::string& path) { _cur_file = path; }
+  std::string getCurFile() const { return _cur_file; }
+  std::string getCurUrl() const;
+
+  void detectLocalIP();
+
+private:
+  std::string _cur_file;
+  hv::HttpServer _http_server;
+  hv::HttpService _http_service;
+  std::string local_ip;
 };
 

@@ -108,6 +108,28 @@ Upnp::~Upnp()
   stop();
 }
 
+std::string Upnp::getCurUrl() const
+{
+  char line[1024];
+  sprintf(line, "http://%s:%d/media", local_ip.c_str(), _http_server.port);
+  return line;
+}
+
+void Upnp::detectLocalIP()
+{
+  int sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
+  sockaddr_u addr;
+  sockaddr_set_ipport(&addr, "8.8.8.8", 553);
+  socklen_t addrlen = sockaddr_len(&addr);
+  connect(sock_fd, &addr.sa, addrlen);
+  getsockname(sock_fd, &addr.sa, &addrlen);
+  char tmp[32];
+  sockaddr_ip(&addr, tmp, sizeof(tmp));
+  closesocket(sock_fd);
+  local_ip = tmp;
+  hlogi("got localIP: %s", tmp);
+}
+
 void Upnp::start()
 {
   int fd = _socket.createsocket(ssdpPort, ssdpAddres);
@@ -124,11 +146,32 @@ void Upnp::start()
   };
   _socket.start();
   _http_client = std::make_shared<hv::AsyncHttpClient>(loop());
+  startHttp();
+  return;
+}
+
+void Upnp::startHttp()
+{
+  // start local httpServer
+  _http_service.GET("/live.flv", [](const HttpContextPtr& ctx) {
+    return 0;
+  });
+  _http_service.GET("/media", [this](const HttpContextPtr& ctx) {
+    if (_cur_file.empty())
+      return 404;
+    ctx->writer->ResponseFile(_cur_file.c_str(), ctx->request.get(), _http_service.limit_rate);
+    return 0;
+  });
+  _http_server.registerHttpService(&_http_service);
+  _http_server.setPort(9701);
+  _http_server.start();
+  detectLocalIP();
 }
 
 void Upnp::stop()
 {
   _socket.stop();
+  _http_server.stop();
   _http_client = nullptr;
 }
 
