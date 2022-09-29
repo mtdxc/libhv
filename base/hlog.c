@@ -6,7 +6,7 @@
 #include <string.h>
 #include <stdarg.h>
 #include <time.h>
-
+#include "hthread.h"
 //#include "hmutex.h"
 #ifdef _WIN32
 #pragma warning (disable: 4244) // conversion loss of data
@@ -358,7 +358,15 @@ static int i2a(int i, char* buf, int len) {
     return len;
 }
 
-int logger_print(logger_t* logger, int level, const char* fmt, ...) {
+int logger_print(logger_t* logger, int level, const char* file, int line, const char* func, const char* fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    int ret = logger_vprint(logger, level, file, line, func, fmt, ap);
+    va_end(ap);
+    return ret;
+}
+
+int logger_vprint(logger_t* logger, int level, const char* file, int line, const char* func, const char* fmt, va_list vl) {
     if (level < logger->level)
         return -10;
 
@@ -438,6 +446,26 @@ int logger_print(logger_t* logger, int level, const char* fmt, ...) {
                 case 'Z':
                     len += i2a(us, buf + len, 6);
                     break;
+                case 't':
+                    len += sprintf(buf + len, "%ld", hv_gettid());
+                    break;
+                case 'p':
+                    len += sprintf(buf + len, "%ld", hv_getpid());
+                    break;
+                case 'F':
+                    if (func) {
+                        const char* p = strchr(func, ':');
+                        if(p) 
+                            func = p + 1;
+                        len += sprintf(buf + len, "%s", func);
+                    }
+                    break;
+                case 'f':
+                    len += sprintf(buf + len, "%s", file);
+                    break;
+                case 'n':
+                    len += sprintf(buf + len, "%d", line);
+                    break;
                 case 'l':
                     buf[len++] = *plevel;
                     break;
@@ -447,12 +475,7 @@ int logger_print(logger_t* logger, int level, const char* fmt, ...) {
                     }
                     break;
                 case 's':
-                {
-                    va_list ap;
-                    va_start(ap, fmt);
-                    len += vsnprintf(buf + len, bufsize - len, fmt, ap);
-                    va_end(ap);
-                }
+                    len += vsnprintf(buf + len, bufsize - len, fmt, vl);
                     break;
                 case '%':
                     buf[len++] = '%';
@@ -465,20 +488,18 @@ int logger_print(logger_t* logger, int level, const char* fmt, ...) {
             ++p;
         }
     } else {
-        len += snprintf(buf + len, bufsize - len, "%04d-%02d-%02d %02d:%02d:%02d.%03d %s ",
+        len += snprintf(buf + len, bufsize - len, "%04d-%02d-%02d %02d:%02d:%02d.%03d %ld %s:%d %s ",
             year, month, day, hour, min, sec, us/1000,
-            plevel);
+            hv_gettid(), file, line, plevel);
 
-        va_list ap;
-        va_start(ap, fmt);
-        len += vsnprintf(buf + len, bufsize - len, fmt, ap);
-        va_end(ap);
+        len += vsnprintf(buf + len, bufsize - len, fmt, vl);
     }
 
     if (logger->enable_color) {
         len += snprintf(buf + len, bufsize - len, "%s", CLR_CLR);
     }
-
+    if (buf[len-1] != '\n')
+        buf[len++] = '\n';
     if(len < bufsize) {
         buf[len++] = '\n';
     }
