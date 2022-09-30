@@ -165,9 +165,14 @@ int UPnPAction::invoke(Device::Ptr dev, RpcCB cb)
   return id;
 }
 
+const char* UpnpRender::devId() const{
+  return model_->friendlyName.c_str();
+}
+
 int UpnpRender::setAVTransportURL(const char* urlStr, RpcCB cb)
 {
   url_ = urlStr;
+  hlogi("%s url %s", devId(), urlStr);  
   UPnPAction action("SetAVTransportURI");
   action.setArgs("InstanceID", "0");
   action.setArgs("CurrentURI", urlStr);
@@ -190,6 +195,7 @@ int UpnpRender::setAVTransportURL(const char* urlStr, RpcCB cb)
 
 int UpnpRender::play(RpcCB cb)
 {
+  hlogi("%s", devId());
   UPnPAction action("Play");
   action.setArgs("InstanceID", "0");
   return action.invoke(model_, [cb](int code, ArgMap& args) {
@@ -199,6 +205,7 @@ int UpnpRender::play(RpcCB cb)
 
 int UpnpRender::pause(RpcCB cb)
 {
+  hlogi("%s", devId());
   UPnPAction action("Pause");
   action.setArgs("InstanceID", "0");
   return action.invoke(model_, [cb](int code, ArgMap& args) {
@@ -208,6 +215,7 @@ int UpnpRender::pause(RpcCB cb)
 
 int UpnpRender::stop(RpcCB cb)
 {
+  hlogi("%s", devId());
   UPnPAction action("Stop");
   action.setArgs("InstanceID", "0");
   return action.invoke(model_, [cb](int code, ArgMap& args) {
@@ -225,6 +233,7 @@ int UpnpRender::seek(float relTime, RpcCB cb)
 
 int UpnpRender::seekToTarget(const char* target, const char* unit, RpcCB cb)
 {
+  hlogi("%s %s", devId(), target);
   UPnPAction action("Seek");
   action.setArgs("InstanceID", "0");
   action.setArgs("Unit", unit);
@@ -318,6 +327,7 @@ int UpnpRender::setVolume(int value, RpcCB cb)
 
 int UpnpRender::setVolumeWith(const char* value, RpcCB cb)
 {
+  hlogi("%s %s", devId(), value);
   UPnPAction action("SetVolume");
   action.setServiceType(USRenderingControl);
   action.setArgs("InstanceID", "0");
