@@ -17,7 +17,7 @@ class UpnpRender
   std::string url_;
   float duration_;
 public:
-
+  const char* devId() const;
   UpnpRender(Device::Ptr dev) :model_(dev) {}
   
   typedef std::function<void(int, std::string)> RpcCB;
@@ -25,37 +25,37 @@ public:
    设置投屏地址
    @param urlStr 视频url
    */
-  int setAVTransportURL(const char* urlStr, RpcCB cb);
+  int setAVTransportURL(const char* urlStr, RpcCB cb = nullptr);
   std::string getURL() const { return url_; }
   float getDuration() const { return duration_; }
   /**
    播放
    */
-   int play(RpcCB cb);
+   int play(RpcCB cb = nullptr);
 
   /**
    暂停
    */
-   int pause(RpcCB cb);
+   int pause(RpcCB cb = nullptr);
 
   /**
    结束
    */
-   int stop(RpcCB cb);
+   int stop(RpcCB cb = nullptr);
 
 
   /**
    跳转进度
    @param relTime 进度时间(单位秒)
    */
-   int seek(float relTime, RpcCB cb);
+   int seek(float relTime, RpcCB cb = nullptr);
 
   /**
    跳转至特定进度或视频
    @param target 目标值，可以是 00:02:21 格式的进度或者整数的 TRACK_NR。
    @param unit   REL_TIME（跳转到某个进度）或 TRACK_NR（跳转到某个视频）。
    */
-   int seekToTarget(const char* target, const char* unit, RpcCB cb);
+   int seekToTarget(const char* target, const char* unit, RpcCB cb = nullptr);
 
   /**
    获取播放进度,可通过协议回调使用
@@ -72,13 +72,13 @@ public:
    */
    int getVolume(std::function<void(int, int)> cb);
    // 0-100
-   int setVolume(int value, RpcCB cb);
+   int setVolume(int value, RpcCB cb = nullptr);
 
   /**
    设置音频值
    @param value 值—>整数
    */
-   int setVolumeWith(const char* value, RpcCB cb);
+   int setVolumeWith(const char* value, RpcCB cb = nullptr);
 
 };
 
