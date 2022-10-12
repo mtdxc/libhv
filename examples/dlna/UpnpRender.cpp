@@ -2,43 +2,44 @@
 #include <sstream>
 #include "requests.h"
 #include "pugixml.hpp"
+
 using namespace pugi;
 template<typename T>
 bool create_attr_node(xml_node& node, const char_t* pAttrName, const T& attrVal) {
-	pugi::xml_attribute attr = node.append_attribute(pAttrName);
-	return (attr && attr.set_value(attrVal));
+  pugi::xml_attribute attr = node.append_attribute(pAttrName);
+  return (attr && attr.set_value(attrVal));
 }
 const char* unitREL_TIME = "REL_TIME";
 const char* unitTRACK_NR = "TRACK_NR";
 
 typedef std::map<std::string, std::string> ArgMap;
 class UPnPAction {
-    UpnpServiceType type_;
-    std::string action_;
-    xml_document doc_;
-    xml_node ele_;
+  UpnpServiceType type_;
+  std::string action_;
+  xml_document doc_;
+  xml_node ele_;
 public:
-    UPnPAction(const char* name) : action_(name) {
-      type_ = USAVTransport;
-      std::string t = "u:" + action_;
-      auto ele = doc_.append_child("s:Envelope");
-      create_attr_node(ele, "s:encodingStyle", "http://schemas.xmlsoap.org/soap/encoding/");
-      create_attr_node(ele, "xmlns:s", "http://schemas.xmlsoap.org/soap/envelope/");
-      ele_ = ele.append_child("s:Body").append_child(t.c_str());
-    }
+  UPnPAction(const char* name) : action_(name) {
+    type_ = USAVTransport;
+    std::string t = "u:" + action_;
+    auto ele = doc_.append_child("s:Envelope");
+    create_attr_node(ele, "s:encodingStyle", "http://schemas.xmlsoap.org/soap/encoding/");
+    create_attr_node(ele, "xmlns:s", "http://schemas.xmlsoap.org/soap/envelope/");
+    ele_ = ele.append_child("s:Body").append_child(t.c_str());
+  }
 
-    void setArgs(const char* name, const char* value);
+  void setArgs(const char* name, const char* value);
 
-    void setServiceType(UpnpServiceType t) {
-      type_ = t;
-    }
-    UpnpServiceType getServiceType() const {return type_;}
+  void setServiceType(UpnpServiceType t) {
+    type_ = t;
+  }
+  UpnpServiceType getServiceType() const { return type_; }
 
-    std::string getSOAPAction() const;
-    std::string getPostXML();
+  std::string getSOAPAction() const;
+  std::string getPostXML();
 
-    typedef std::function<void(int, ArgMap&)> RpcCB;
-    int invoke(Device::Ptr dev, RpcCB cb);
+  typedef std::function<void(int, ArgMap&)> RpcCB;
+  int invoke(Device::Ptr dev, RpcCB cb);
 };
 
 void UPnPAction::setArgs(const char* name, const char* value)
@@ -73,10 +74,12 @@ int UPnPAction::invoke(Device::Ptr dev, RpcCB cb)
   req->SetHeader("SOAPAction", getSOAPAction());
   static std::atomic<int> action_id(0);
   int id = action_id++;
-  hlogd("soap %d> %s", id, req->body.c_str());
   std::string respTag = "u:" + action_ + "Response";
   auto cb1 = [id](int code, std::map<std::string, std::string>& args) {
-    if (auto listener = Upnp::Instance()->getListener())
+    if (code) {
+      hlogw("soap %d error %d %s %s", id, code, args["error"].c_str(), args["detail"].c_str());
+    }
+    for (auto listener : Upnp::Instance()->getListeners())
       listener->unppActionResponse(id, code, args);
   };
   if (!cb) {
@@ -90,7 +93,13 @@ int UPnPAction::invoke(Device::Ptr dev, RpcCB cb)
     };
   }
 
-  Upnp::Instance()->httpClient()->send(req, [cb, id, respTag](HttpResponsePtr resp) {
+  auto http = Upnp::Instance()->httpClient();
+  if (!http) {
+    hlogw("skip soap %d> %s", id, req->body.c_str());
+    return 0;
+  }
+  hlogd("soap %d> %s", id, req->body.c_str());
+  http->send(req, [cb, id, respTag](HttpResponsePtr resp) {
     ArgMap args;
     if (!resp) {
       args["error"] = "without response";
@@ -165,40 +174,68 @@ int UPnPAction::invoke(Device::Ptr dev, RpcCB cb)
   return id;
 }
 
-const char* UpnpRender::devId() const{
+UpnpRender::~UpnpRender()
+{
+  hlogi("%s", devId());
+  if (!url_.empty())
+    stop();
+}
+
+const char* UpnpRender::devId() const {
   return model_->friendlyName.c_str();
 }
 
 int UpnpRender::setAVTransportURL(const char* urlStr, RpcCB cb)
 {
-  url_ = urlStr;
-  hlogi("%s url %s", devId(), urlStr);  
+  std::string url = urlStr;
+  hlogi("%s url %s", devId(), urlStr);
   UPnPAction action("SetAVTransportURI");
   action.setArgs("InstanceID", "0");
   action.setArgs("CurrentURI", urlStr);
   action.setArgs("CurrentURIMetaData", "");
-  return action.invoke(model_, [cb, this](int code, ArgMap& args) {
-    if(cb) cb(code, args["error"]);
-    if (code) return;
-    getTransportInfo([this](int code, TransportInfo ti) {
+  std::weak_ptr<UpnpRender> weak_ptr = shared_from_this();
+  return action.invoke(model_, [cb, weak_ptr, url](int code, ArgMap& args) {
+    auto strong_ptr = weak_ptr.lock();
+    if (!strong_ptr) return;
+    if (code) { // return error
+      if (cb) cb(code, args["error"]);
+      return;
+    }
+    strong_ptr->url_ = url;
+    strong_ptr->getTransportInfo([weak_ptr](int code, TransportInfo ti) {
       if (code) return;
-      printf("state=%s, status=%s, speed=%f\n", ti.currentTransportState.c_str(), ti.currentTransportStatus.c_str(), ti.currentSpeed);
-      if (ti.currentTransportState != "PLAYING" && ti.currentTransportState != "TRANSITIONING")
-        play(nullptr);
-      getPositionInfo([this](int code, AVPositionInfo pos) {
-        printf("%d duration=%f, curTime=%f\n", code, pos.trackDuration, pos.absTime);
-        this->duration_ = pos.trackDuration;
-      });
+      auto strong_ptr = weak_ptr.lock();
+      if (!strong_ptr) return;
+      printf("state=%s, status=%s, speed=%f\n", ti.state, ti.status, ti.speed);
+      strong_ptr->speed_ = ti.speed;
+      std::string state = ti.state;
+      if (state != "PLAYING" && state != "TRANSITIONING")
+        strong_ptr->play();
+    });
+    strong_ptr->getPositionInfo([weak_ptr, cb](int code, AVPositionInfo pos) {
+      auto strong_ptr = weak_ptr.lock();
+      if (!strong_ptr) return;
+      printf("%d duration=%f, curTime=%f\n", code, pos.trackDuration, pos.absTime);
+      strong_ptr->duration_ = pos.trackDuration;
+      if (cb) cb(code, "");
     });
   });
 }
 
-int UpnpRender::play(RpcCB cb)
+int UpnpRender::play(float speed, RpcCB cb)
 {
-  hlogi("%s", devId());
+  hlogi("%s speed=%f", devId(), speed);
   UPnPAction action("Play");
   action.setArgs("InstanceID", "0");
-  return action.invoke(model_, [cb](int code, ArgMap& args) {
+  char buf[32];
+  sprintf(buf, "%f", speed);
+  action.setArgs("Speed", buf);
+  //this->speed_ = speed;
+  std::weak_ptr<UpnpRender> weak_ptr = shared_from_this();
+  return action.invoke(model_, [=](int code, ArgMap& args) {
+    auto strong_ptr = weak_ptr.lock();
+    if (strong_ptr && !code)
+      strong_ptr->speed_ = speed;
     if (cb) cb(code, args["error"]);
   });
 }
@@ -218,6 +255,8 @@ int UpnpRender::stop(RpcCB cb)
   hlogi("%s", devId());
   UPnPAction action("Stop");
   action.setArgs("InstanceID", "0");
+  url_.clear();
+  duration_ = 0;
   return action.invoke(model_, [cb](int code, ArgMap& args) {
     if (cb) cb(code, args["error"]);
   });
@@ -248,7 +287,7 @@ float strToDuraton(std::string str) {
   if (list.size() < 3)
     return -1.0f;
   float ret = 0;
-  for (int i=0; i< list.size(); i++)
+  for (int i = 0; i < list.size(); i++)
   {
     int val = std::stoi(list[i]);
     switch (i)
@@ -275,13 +314,15 @@ int UpnpRender::getPositionInfo(std::function<void(int, AVPositionInfo)> cb)
 {
   UPnPAction action("GetPositionInfo");
   action.setArgs("InstanceID", "0");
-  return action.invoke(model_, [cb, this](int code, ArgMap& args) {
-    if (!cb) return;
+  std::weak_ptr<UpnpRender> weak_ptr = shared_from_this();
+  return action.invoke(model_, [cb, weak_ptr](int code, ArgMap& args) {
+    auto strong_ptr = weak_ptr.lock();
+    if (!cb || !strong_ptr) return;
     AVPositionInfo pos;
     if (code == 0) {
       pos.trackDuration = strToDuraton(args["TrackDuration"]);
       if (pos.trackDuration > 0)
-        this->duration_ = pos.trackDuration;
+        strong_ptr->duration_ = pos.trackDuration;
       pos.relTime = strToDuraton(args["RelTime"]);
       pos.absTime = strToDuraton(args["AbsTime"]);
     }
@@ -297,9 +338,9 @@ int UpnpRender::getTransportInfo(std::function<void(int, TransportInfo)> cb)
     if (!cb) return;
     TransportInfo ti;
     if (code == 0) {
-      ti.currentTransportState = args["CurrentTransportState"];
-      ti.currentTransportStatus = args["CurrentTransportStatus"];
-      ti.currentSpeed = std::stof(args["CurrentSpeed"]);
+      ti.setState(args["CurrentTransportState"].c_str());
+      ti.setStatus(args["CurrentTransportStatus"].c_str());
+      ti.speed = std::stof(args["CurrentSpeed"]);
     }
     cb(code, ti);
   });
@@ -336,4 +377,21 @@ int UpnpRender::setVolumeWith(const char* value, RpcCB cb)
   return action.invoke(model_, [cb](int code, ArgMap& args) {
     if (cb) cb(code, args["error"]);
   });
+}
+
+TransportInfo::TransportInfo()
+{
+  state[0] = status[0] = 0; speed = 1.0f;
+}
+
+void TransportInfo::setState(const char* v)
+{
+  if (v)
+    strncpy(state, v, sizeof(state));
+}
+
+void TransportInfo::setStatus(const char* v)
+{
+  if (v)
+    strncpy(status, v, sizeof(status));
 }
