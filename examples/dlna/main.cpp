@@ -2,9 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <iostream>
-#include "hlog.h"
 #include "UpnpServer.h"
-#include "UpnpRender.h"
 
 void PrintDevices(MapDevices devs)
 {
@@ -30,10 +28,9 @@ int main(int argc, char* argv[]) {
   MyListener listener;
   Upnp* upnp = Upnp::Instance();
   upnp->start();
-  upnp->setListener(&listener);
+  upnp->addListener(&listener);
   upnp->search();
-
-  std::unique_ptr<UpnpRender> render;
+  std::string cur_dev;
   std::string line;
   while (getline(std::cin, line)) {
     auto cmds = hv::split(line, ' ');
@@ -61,52 +58,50 @@ int main(int argc, char* argv[]) {
         it++;
         pos--;
       }
-      if (render)
-        render->stop();
-      render.reset(new UpnpRender(it->second));
+      if (cur_dev.length())
+        upnp->close(cur_dev.c_str());
+      cur_dev = it->first;
       auto file = cmds[2];
-      if (hv::startswith(file, "http"))
-        render->setAVTransportURL(cmds[2].c_str());
-      else {
-        upnp->setCurFile(file);
-        render->setAVTransportURL(upnp->getCurUrl().c_str());
+      if (-1 == file.find("://")) {
+        file = upnp->setCurFile(file.c_str());
       }
+      upnp->openUrl(cur_dev.c_str(), file.c_str());
     }
     else if (cmd == "seek") {
-      if (!render) continue;
-      render->seekToTarget(cmds[1].c_str(), "REL_TIME");
+      if (cur_dev.empty()) continue;
+      upnp->seek(cur_dev.c_str(), std::stof(cmds[1]));
     }
     else if (cmd == "pause") {
-      if (!render) continue;
-      render->pause();
+      if (cur_dev.empty()) continue;
+      upnp->pause(cur_dev.c_str());
     }
     else if (cmd == "resume") {
-      if (!render) continue;
-      render->play();
+      if (cur_dev.empty()) continue;
+      upnp->resume(cur_dev.c_str());
     }
     else if (cmd == "stop") {
-      if (!render) continue;
-      render->stop();
+      if (cur_dev.empty()) continue;
+      upnp->close(cur_dev.c_str());
     }
     else if (cmd == "pos") {
-      if (!render) continue;
-      render->getPositionInfo([](int code, AVPositionInfo pos) {
+      if (cur_dev.empty()) continue;
+      upnp->getPosition(cur_dev.c_str(), [](int code, AVPositionInfo pos) {
         printf("goPos %d %f/%f\n", code, pos.relTime, pos.trackDuration);
       });
     }
     else if (cmd == "vol") {
-      if (!render) continue;
-      render->getVolume([](int code, int vol) {
+      if (cur_dev.empty()) continue;
+      upnp->getVolume(cur_dev.c_str(), [](int code, int vol) {
         printf("gotVolume %d %d\n", code, vol);
       });
     }
     else if (cmd == "setVol") {
-      if (!render) continue;
+      if (cur_dev.empty()) continue;
       int val = atoi(cmds[1].c_str());
-      render->setVolume(val);
+      upnp->setVolume(cur_dev.c_str(), val);
     }
   }
-  upnp->setListener(nullptr);
+  upnp->delListener(&listener);
   upnp->stop();
   return 0;
 }

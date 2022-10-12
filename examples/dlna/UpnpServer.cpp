@@ -4,6 +4,7 @@
 #include "UdpClient.h"
 #include "requests.h"
 #include "pugixml.hpp"
+#include "UpnpRender.h"
 
 const char* ssdpAddres = "239.255.255.250";
 const unsigned short ssdpPort = 1900;
@@ -68,11 +69,11 @@ void Device::set_location(const std::string& loc)
 
 std::string Device::getPostUrl(UpnpServiceType t) const {
   auto model = getService(t);
-  if(!model || model->controlURL.empty())
+  if (!model || model->controlURL.empty())
     return "";
   std::string ret = URLHeader;
   if (model->controlURL[0] != '/')
-      ret += "/";
+    ret += "/";
   return ret + model->controlURL;
 }
 
@@ -96,7 +97,8 @@ std::string Device::description() const
   return stm.str();
 }
 
-
+//////////////////////////////////////////////////
+// Upnp
 Upnp* Upnp::Instance()
 {
   static Upnp upnp;
@@ -108,11 +110,56 @@ Upnp::~Upnp()
   stop();
 }
 
-std::string Upnp::getCurUrl() const
+const char* Upnp::getUrlPrefix()
 {
-  char line[1024];
-  sprintf(line, "http://%s:%d/media", local_ip.c_str(), _http_server.port);
-  return line;
+  if (!url_prefix_[0]) {
+    detectLocalIP();
+  }
+  return url_prefix_;
+}
+
+std::string Upnp::getUrl(const char* loc)
+{
+  std::string ret(getUrlPrefix());
+  if (loc && loc[0]) {
+    if (loc[0] != '/')
+      ret += '/';
+    ret += loc;
+  }
+  return ret;
+}
+
+std::string Upnp::setFile(const char* path, const char* loc) {
+  std::string ret;
+  if (!loc || !loc[0]) {
+    loc = strrchr(path, '/');
+    if (!loc) loc = strrchr(path, '\\');
+    if (!loc || !loc[0]) return ret;
+  }
+  if (path && path[0]) {
+    file_maps_[loc] = path;
+    ret = getUrl(loc);
+  }
+  else {
+    file_maps_.erase(loc);
+  }
+  return ret;
+}
+
+void Upnp::addListener(UpnpListener* l)
+{
+  auto it = std::find(_listeners.begin(), _listeners.end(), l);
+  if (it == _listeners.end()) {
+    _listeners.push_back(l);
+  }
+}
+
+void Upnp::delListener(UpnpListener* l)
+{
+  auto it = std::find(_listeners.begin(), _listeners.end(), l);
+  if (it != _listeners.end()) {
+    _listeners.erase(it);
+  }
 }
 
 void Upnp::detectLocalIP()
@@ -121,13 +168,19 @@ void Upnp::detectLocalIP()
   sockaddr_u addr;
   sockaddr_set_ipport(&addr, "8.8.8.8", 553);
   socklen_t addrlen = sockaddr_len(&addr);
-  connect(sock_fd, &addr.sa, addrlen);
+  int ret = connect(sock_fd, &addr.sa, addrlen);
+  if (-1 == ret) {
+    hlogw("connect error %d", ret);
+    closesocket(sock_fd);
+    return;
+  }
   getsockname(sock_fd, &addr.sa, &addrlen);
+  closesocket(sock_fd);
+
   char tmp[32];
   sockaddr_ip(&addr, tmp, sizeof(tmp));
-  closesocket(sock_fd);
-  local_ip = tmp;
-  hlogi("got localIP: %s", tmp);
+  sprintf(url_prefix_, "http://%s:%d", tmp, _http_server.port);
+  hlogi("got url_prefix: %s", url_prefix_);
 }
 
 void Upnp::start()
@@ -152,14 +205,16 @@ void Upnp::start()
 
 void Upnp::startHttp()
 {
-  // start local httpServer
+  // start local httpServer @todo
   _http_service.GET("/live.flv", [](const HttpContextPtr& ctx) {
     return 0;
-  });
-  _http_service.GET("/media", [this](const HttpContextPtr& ctx) {
-    if (_cur_file.empty())
+    });
+
+  _http_service.GET("/*", [this](const HttpContextPtr& ctx) {
+    auto it = file_maps_.find(ctx->request->path);
+    if (it == file_maps_.end())
       return 404;
-    ctx->writer->ResponseFile(_cur_file.c_str(), ctx->request.get(), _http_service.limit_rate);
+    ctx->writer->ResponseFile(it->second.c_str(), ctx->request.get(), _http_service.limit_rate);
     return 0;
   });
   _http_server.registerHttpService(&_http_service);
@@ -170,6 +225,8 @@ void Upnp::startHttp()
 
 void Upnp::stop()
 {
+  _devices.clear();
+  _renders.clear();
   _socket.stop();
   _http_server.stop();
   _http_client = nullptr;
@@ -181,7 +238,7 @@ void Upnp::search()
   onChange();
 
   char line[1024];
-  int size = sprintf(line, "M-SEARCH * HTTP/1.1\r\nHOST: %s:%d\r\nMAN: \"ssdp:discover\"\r\nMX: 3\r\nST: %s\r\nUSER-AGENT: iOS UPnP/1.1 Tiaooo/1.0\r\n\r\n", 
+  int size = sprintf(line, "M-SEARCH * HTTP/1.1\r\nHOST: %s:%d\r\nMAN: \"ssdp:discover\"\r\nMX: 3\r\nST: %s\r\nUSER-AGENT: iOS UPnP/1.1 Tiaooo/1.0\r\n\r\n",
     ssdpAddres, ssdpPort, getServiceTypeStr(USAVTransport));
   sockaddr_u dst;
   sockaddr_set_ipport(&dst, ssdpAddres, ssdpPort);
@@ -189,13 +246,132 @@ void Upnp::search()
   _socket.sendto(line, size, &dst.sa);
 }
 
-Device::Ptr Upnp::getDevice(const std::string& usn)
+Device::Ptr Upnp::getDevice(const char* usn)
 {
   auto it = _devices.find(usn);
   if (it != _devices.end()) {
     return it->second;
   }
   return nullptr;
+}
+
+UpnpRender::Ptr Upnp::getRender(const char* usn)
+{
+  UpnpRender::Ptr ret;
+  auto it = _renders.find(usn);
+  if (_renders.end() == it) {
+    auto dev = getDevice(usn);
+    if (!dev)
+      return nullptr;
+    ret = std::make_shared<UpnpRender>(dev);
+    _renders[usn] = ret;
+  }
+  else {
+    ret = it->second;
+  }
+  return ret;
+}
+
+int Upnp::openUrl(const char* id, const char* url, RpcCB cb)
+{
+  int ret = 0;
+  if (auto render = getRender(id))
+    ret = render->setAVTransportURL(url, cb);
+  return ret;
+}
+
+int Upnp::pause(const char* id, RpcCB cb)
+{
+  int ret = 0;
+  if (auto render = getRender(id))
+    ret = render->pause(cb);
+  return ret;
+}
+
+int Upnp::resume(const char* id, RpcCB cb)
+{
+  int ret = 0;
+  if (auto render = getRender(id))
+    ret = render->play(render->speed(), cb);
+  return ret;
+}
+
+int Upnp::seek(const char* id, float val, RpcCB cb)
+{
+  int ret = 0;
+  if (auto render = getRender(id))
+    ret = render->seek(val, cb);
+  return ret;
+}
+
+int Upnp::setVolume(const char* id, int val, RpcCB cb)
+{
+  int ret = 0;
+  if (auto render = getRender(id))
+    ret = render->setVolume(val, cb);
+  return ret;
+}
+
+int Upnp::getVolume(const char* id, std::function<void(int, int)> cb)
+{
+  int ret = 0;
+  if (auto render = getRender(id))
+    ret = render->getVolume(cb);
+  return ret;
+}
+
+int Upnp::getPosition(const char* id, std::function<void(int, AVPositionInfo)> cb)
+{
+  int ret = 0;
+  if (auto render = getRender(id))
+    ret = render->getPositionInfo(cb);
+  return ret;
+}
+
+int Upnp::getInfo(const char* id, std::function<void(int, TransportInfo)> cb)
+{
+  int ret = 0;
+  if (auto render = getRender(id))
+    ret = render->getTransportInfo(cb);
+  return ret;
+}
+
+int Upnp::setSpeed(const char* id, float speed, RpcCB cb)
+{
+  int ret = 0;
+  if (auto render = getRender(id))
+    ret = render->play(speed, cb);
+  return ret;
+}
+
+float Upnp::getSpeed(const char* id)
+{
+  float ret = 1.0f;
+  if (auto render = getRender(id))
+    ret = render->speed();
+  return ret;
+}
+
+float Upnp::getDuration(const char* id)
+{
+  float ret = 0.0f;
+  if (auto render = getRender(id))
+    ret = render->duration();
+  return ret;
+}
+
+int Upnp::close(const char* id, RpcCB cb)
+{
+  int ret = 0;
+  auto it = _renders.find(id);
+  if (_renders.end() != it) {
+    auto render = it->second;
+    _renders.erase(it);
+    if (render) {
+      ret = render->stop(cb);
+    }
+  }
+  return ret;
 }
 
 void parseHttpHeader(char* buff, int size, http_headers& header, std::string* fline) {
@@ -220,7 +396,7 @@ void parseHttpHeader(char* buff, int size, http_headers& header, std::string* fl
         // This server's response does have a version.
       }
       else {
-        
+
       }
       //resp_code = temp_scode;
     }
@@ -235,7 +411,6 @@ void parseHttpHeader(char* buff, int size, http_headers& header, std::string* fl
     }
   }
 }
-
 
 void Upnp::onUdpRecv(char* buff, int size)
 {
@@ -288,7 +463,7 @@ void Upnp::loadDeviceWithLocation(std::string loc, std::string usn)
 {
   auto req = std::make_shared<HttpRequest>();
   req->url = loc;
-  _http_client->send(req, [this,loc, usn](HttpResponsePtr resp) {
+  _http_client->send(req, [this, loc, usn](HttpResponsePtr resp) {
     if (!resp || resp->status_code != HTTP_STATUS_OK)
       return;
 
@@ -344,8 +519,7 @@ void Upnp::addDevice(Device::Ptr device)
 }
 
 void Upnp::onChange() {
-  if (_listener) {
-    _listener->upnpSearchChangeWithResults(_devices);
+  for (auto l : _listeners) {
+    l->upnpSearchChangeWithResults(_devices);
   }
 }
-
