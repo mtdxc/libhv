@@ -22,7 +22,7 @@ const char* getServiceTypeStr(UpnpServiceType t);
 const char* getServiceIdStr(UpnpServiceType t);
 UpnpServiceType getServiceType(const std::string& p);
 UpnpServiceType getServiceId(const std::string& p);
-
+float strToDuraton(std::string str);
 struct ServiceModel {
   std::string serviceType, serviceId;
   std::string controlURL, eventSubURL, SCPDURL;
@@ -38,7 +38,8 @@ struct Device {
   std::map<UpnpServiceType, ServiceModel::Ptr> services_;
   void set_location(const std::string& loc);
   std::string description() const;
-  std::string getPostUrl(UpnpServiceType t) const;
+  std::string getControlUrl(UpnpServiceType t) const;
+  std::string getEventUrl(UpnpServiceType t) const;
   ServiceModel::Ptr getService(UpnpServiceType t) const;
   typedef std::shared_ptr<Device> Ptr;
 };
@@ -65,9 +66,13 @@ class UpnpListener {
 public:
   virtual void upnpSearchChangeWithResults(const MapDevices& devs) = 0;
   // 调用UPnPAction时,会返回一个id, 可通过hook此方法来获取所有soap调用的返回值
-  virtual void unppActionResponse(int id, int code, const std::map<std::string, std::string>& args) {}
+  virtual void upnpActionResponse(int id, int code, const std::map<std::string, std::string>& args) {}
+  virtual void upnpPropChanged(const char* id, const char* name, const char* vaule) {}
 };
-
+class UpnpSidListener {
+public:
+  virtual void onSidMsg(const std::string& sid, const std::string& body) = 0;
+};
 class Upnp
 {
   // 打开的Render
@@ -96,7 +101,11 @@ class Upnp
   Device::Ptr getDevice(const char* usn);
   std::shared_ptr<UpnpRender> getRender(const char* usn);
   void detectLocalIP();
+  std::map<std::string, UpnpSidListener*> sid_maps_;
 public:
+  void addSidListener(const std::string& sid, UpnpSidListener* l);
+  void delSidListener(const std::string& sid);
+
   const char* getUrlPrefix();
   // return local_uri_ + "/" + loc
   std::string getUrl(const char* path);
@@ -127,6 +136,9 @@ public:
 
   // 搜索设备
   void search();
+  int subscribe(const char* id, int type, int sec);
+  int unsubscribe(const char* id, int type);
+
   // 返回设备列表
   const MapDevices& getDevices() { return _devices; }
 

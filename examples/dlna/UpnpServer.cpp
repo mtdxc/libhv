@@ -67,7 +67,7 @@ void Device::set_location(const std::string& loc)
   }
 }
 
-std::string Device::getPostUrl(UpnpServiceType t) const {
+std::string Device::getControlUrl(UpnpServiceType t) const {
   auto model = getService(t);
   if (!model || model->controlURL.empty())
     return "";
@@ -75,6 +75,16 @@ std::string Device::getPostUrl(UpnpServiceType t) const {
   if (model->controlURL[0] != '/')
     ret += "/";
   return ret + model->controlURL;
+}
+
+std::string Device::getEventUrl(UpnpServiceType t) const {
+  auto model = getService(t);
+  if (!model || model->eventSubURL.empty())
+    return "";
+  std::string ret = URLHeader;
+  if (model->eventSubURL[0] != '/')
+    ret += "/";
+  return ret + model->eventSubURL;
 }
 
 ServiceModel::Ptr Device::getService(UpnpServiceType t) const
@@ -108,6 +118,16 @@ Upnp* Upnp::Instance()
 Upnp::~Upnp()
 {
   stop();
+}
+
+void Upnp::addSidListener(const std::string& sid, UpnpSidListener* l)
+{
+  sid_maps_[sid] = l;
+}
+
+void Upnp::delSidListener(const std::string& sid)
+{
+  sid_maps_.erase(sid);
 }
 
 const char* Upnp::getUrlPrefix()
@@ -208,7 +228,7 @@ void Upnp::startHttp()
   // start local httpServer @todo
   _http_service.GET("/live.flv", [](const HttpContextPtr& ctx) {
     return 0;
-    });
+  });
 
   _http_service.GET("/*", [this](const HttpContextPtr& ctx) {
     auto it = file_maps_.find(ctx->request->path);
@@ -216,6 +236,32 @@ void Upnp::startHttp()
       return 404;
     ctx->writer->ResponseFile(it->second.c_str(), ctx->request.get(), _http_service.limit_rate);
     return 0;
+  });
+  _http_service.Handle("NOTIFY", "/", [this](const HttpContextPtr& ctx) {
+    /*
+    NOTIFY delivery_path HTTP/1.1
+    HOST:delivery_host:delivery_port
+    CONTENT-TYPE:  text/xml
+    CONTENT-LENGTH: Bytes in body
+    NT: upnp:event
+    NTS: upnp:propchange
+    SID: uuid:subscription-UUID
+    SEQ: event key
+
+    <e:propertyset xmlns:e="urn:schemas-upnp-org:event-1-0">
+    <e:property>
+    <variableName>new value</variableName>
+    <e:property>
+    Other variable names and values (if any) go here.
+    </e:propertyset>
+    */
+    auto req = ctx->request;
+    auto sid = req->GetHeader("SID");
+    auto it = sid_maps_.find(sid);
+    if (it!=sid_maps_.end()) {
+      it->second->onSidMsg(sid, req->body);
+    }
+    return 200;
   });
   _http_server.registerHttpService(&_http_service);
   _http_server.setPort(9701);
@@ -244,6 +290,22 @@ void Upnp::search()
   sockaddr_set_ipport(&dst, ssdpAddres, ssdpPort);
   // printf("udp< %s", line);
   _socket.sendto(line, size, &dst.sa);
+}
+
+int Upnp::subscribe(const char* id, int type, int sec)
+{
+  int ret = 0;
+  if (auto render = getRender(id))
+    render->subscribe(type, sec);
+  return ret;
+}
+
+int Upnp::unsubscribe(const char* id, int type)
+{
+  int ret = 0;
+  if (auto render = getRender(id))
+    render->unsubscribe(type);
+  return ret;
 }
 
 Device::Ptr Upnp::getDevice(const char* usn)
