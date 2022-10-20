@@ -68,7 +68,7 @@ int UPnPAction::invoke(Device::Ptr dev, RpcCB cb)
 {
   auto req = std::make_shared<HttpRequest>();
   req->method = HTTP_POST;
-  req->url = dev->getPostUrl(type_);
+  req->url = dev->getControlUrl(type_);
   req->body = getPostXML();
   req->SetHeader("Content-Type", "text/xml");
   req->SetHeader("SOAPAction", getSOAPAction());
@@ -80,7 +80,7 @@ int UPnPAction::invoke(Device::Ptr dev, RpcCB cb)
       hlogw("soap %d error %d %s %s", id, code, args["error"].c_str(), args["detail"].c_str());
     }
     for (auto listener : Upnp::Instance()->getListeners())
-      listener->unppActionResponse(id, code, args);
+      listener->upnpActionResponse(id, code, args);
   };
   if (!cb) {
     cb = cb1;
@@ -179,14 +179,176 @@ UpnpRender::~UpnpRender()
   hlogi("%s", devId());
   if (!url_.empty())
     stop();
+  auto sids = sid_map_;
+  for (auto it : sids)
+    unsubscribe(it.first);
 }
 
 const char* UpnpRender::devId() const {
   return model_->friendlyName.c_str();
 }
 
+
+void UpnpRender::subscribe(int type, int sec)
+{
+  auto url = model_->getEventUrl((UpnpServiceType)type);
+  if (url.empty())
+    return;
+
+  /*
+  SUBSCRIBE publisher_path HTTP/1.1
+  HOST: publisher_host:publisher_port
+  CALLBACK: <delivery URL>
+  NT: upnp:event
+  TIMEOUT: second-[requested subscription duration]
+  */
+  auto req = std::make_shared<HttpRequest>();
+  req->method = HTTP_SUBSCRIBE;
+  req->url = url;
+
+  auto it = sid_map_.find(type);
+  if (it == sid_map_.end()) { // È«ÐÂ¶©ÔÄ
+    req->SetHeader("NT", "upnp:event");
+    req->SetHeader("CALLBACK", std::string("<") + Upnp::Instance()->getUrlPrefix() + "/>");
+  }
+  else { // Ðø¶©
+    req->SetHeader("SID", it->second);
+  }
+  char timeout[64];
+  if (sec > 0) {
+    sprintf(timeout, "Second-%d", sec);
+  }
+  else {
+    strcpy(timeout, "Second-infinite");
+  }
+  req->SetHeader("TIMEOUT", timeout);
+
+  std::weak_ptr<UpnpRender> weak_ptr = shared_from_this();
+  Upnp::Instance()->httpClient()->send(req, [weak_ptr, type](HttpResponsePtr res){
+    if (!res) {
+      hlogi("subscribe error");
+      return;
+    }
+    if (res->status_code != 200) {
+      hlogi("subscribe error %d, %s", res->status_code, res->body.c_str());
+      return;
+    }
+    /*
+    HTTP/1.1 200 OK
+    DATE£ºwhen response was generated
+    SERVER: OS/version UPnP/1.0 product/version
+    SID: uuid:subscription-UUID
+    TIMEOUT: second-[actual subscription duration]
+    */
+    std::string sid = res->GetHeader("SID");
+    hlogi("subscribe return %s, timeout=%s", sid.c_str(), res->GetHeader("TIMEOUT").c_str());
+    auto strong_ptr = weak_ptr.lock();
+    if (!strong_ptr) return;
+    auto oldsid = strong_ptr->sid_map_[type];
+    if (oldsid != sid) {
+      if (oldsid.length())
+        Upnp::Instance()->delSidListener(oldsid);
+      strong_ptr->sid_map_[type] = sid;
+      Upnp::Instance()->addSidListener(sid, strong_ptr.get());
+    }
+  });
+}
+
+void UpnpRender::unsubscribe(int type)
+{
+  auto it = sid_map_.find(type);
+  if (it == sid_map_.end())
+    return;
+  std::string sid = it->second;
+  sid_map_.erase(it);
+  Upnp::Instance()->delSidListener(sid);
+
+  auto url = model_->getEventUrl((UpnpServiceType)type);
+  if (url.empty())
+    return;
+  /*
+  UNSUBSCRIBE publisher_path HTTP/1.1
+  HOST:  publisher_host:publisher_port
+  SID: uuid: subscription UUID
+  */
+  auto req = std::make_shared<HttpRequest>();
+  req->method = HTTP_UNSUBSCRIBE;
+  req->url = url;
+  req->SetHeader("SID", sid);
+  Upnp::Instance()->httpClient()->send(req, [=](HttpResponsePtr res) {
+    if (!res) {
+      hlogi("unsubscribe error");
+    }
+    else if (res->status_code != 200) {
+      hlogi("unsubscribe error %d, %s", res->status_code, res->body.c_str());
+    }
+    else {
+      hlogi("unsubscribe %s ok", sid.c_str());
+    }
+  });
+}
+
+void UpnpRender::onPropChange(const std::string& name, const std::string& value)
+{
+  hlogi("%s onPropChange %s=%s", model_->uuid.c_str(), name.c_str(), value.c_str());
+  if (name == "CurrentMediaDuration") {
+    duration_ = strToDuraton(value.c_str());
+  }
+  for (auto l : Upnp::Instance()->getListeners()) {
+    l->upnpPropChanged(model_->uuid.c_str(), name.c_str(), value.c_str());
+  }
+}
+
+void UpnpRender::onSidMsg(const std::string& sid, const std::string& body)
+{
+  // hlogi("%s onSidMsg %s", model_->uuid.c_str(), body.c_str());
+  xml_document doc;
+  auto ret = doc.load_string(body.c_str());
+  if (ret.status) {
+    hlogi("onSidMsg xml parse %s error %s", body.c_str(), ret.description());
+    return;
+  }
+  /*
+  <e:propertyset xmlns:e="urn:schemas-upnp-org:event-1-0"><e:property>
+  <LastChange>&lt;Event xmlns = &quot;urn:schemas-upnp-org:metadata-1-0/AVT/&quot;&gt;&lt;/Event&gt;</LastChange>
+  </e:property></e:propertyset>
+  */
+  for (xml_node prop = doc.first_child(); prop; prop = prop.next_sibling()) {
+    // property
+    for (xml_node change = prop.first_child(); change; change = change.next_sibling()) {
+      for (auto child : change.children()) {
+        std::string name = child.name();
+        std::string value = child.text().as_string();
+        if (name == "LastChange") {
+          if (value.empty()) return;
+          /*
+          <Event xmlns = "urn:schemas-upnp-org:metadata-1-0/AVT/"><InstanceID val="0">
+          <TransportState val="PLAYING"/><TransportStatus val="OK"/>
+          </InstanceID></Event>
+          */
+          xml_document event;
+          auto ret = event.load_string(value.c_str());
+          if (ret.status) {
+            hlogi("onSidMsg xml parse %s error %s", value.c_str(), ret.description());
+            continue;
+          }
+          for (auto inst : event.first_child().first_child()) {
+            std::string name = inst.name();
+            std::string value = inst.attribute("val").as_string();
+            onPropChange(name, value);
+          }
+        }
+        else {
+          onPropChange(name, value);
+        }
+      }
+    }
+  }
+}
+
 int UpnpRender::setAVTransportURL(const char* urlStr, RpcCB cb)
 {
+  subscribe(USAVTransport, 3600);
   std::string url = urlStr;
   hlogi("%s url %s", devId(), urlStr);
   UPnPAction action("SetAVTransportURI");
