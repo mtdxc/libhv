@@ -264,7 +264,7 @@ void Upnp::startHttp()
     return 200;
   });
   _http_server.registerHttpService(&_http_service);
-  _http_server.setPort(9701);
+  _http_server.bindHttp(0);
   _http_server.start();
   detectLocalIP();
 }

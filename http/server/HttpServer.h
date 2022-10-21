@@ -110,7 +110,36 @@ public:
         if (fd >= 0) this->listenfd[0] = fd;
         if (ssl_fd >= 0) this->listenfd[1] = ssl_fd;
     }
-
+    int bindHttp(int port) {
+      int fd = Listen(port, host);
+      if (fd < 0) return fd;
+      if (!port) {
+        sockaddr_u addr;
+        socklen_t len = sizeof(addr);
+        getsockname(fd, &addr.sa, &len);
+        port = sockaddr_port(&addr);
+      }
+      this->port = port;
+      if (this->listenfd[0] > 0)
+        closesocket(this->listenfd[0]);
+      this->listenfd[0] = fd;
+      return fd;
+    }
+    int bindHttps(int port) {
+      int fd = Listen(port, host);
+      if (fd < 0) return fd;
+      if (!port) {
+        sockaddr_u addr;
+        socklen_t len = sizeof(addr);
+        getsockname(fd, &addr.sa, &len);
+        port = sockaddr_port(&addr);
+      }
+      this->https_port = port;
+      if (this->listenfd[1] > 0)
+        closesocket(this->listenfd[1]);
+      this->listenfd[1] = fd;
+      return fd;
+    }
     void setProcessNum(int num) {
         this->worker_processes = num;
     }
