@@ -173,7 +173,8 @@ static void loop_thread(void* userdata) {
 int http_server_run(http_server_t* server, int wait) {
     // http_port
     if (server->port > 0) {
-        server->listenfd[0] = Listen(server->port, server->host);
+        if (server->listenfd[0] < 0)
+            server->listenfd[0] = Listen(server->port, server->host);
         if (server->listenfd[0] < 0) return server->listenfd[0];
         hlogi("http server listening on %s:%d", server->host, server->port);
     }
