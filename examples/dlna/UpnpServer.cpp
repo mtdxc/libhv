@@ -49,6 +49,114 @@ UpnpServiceType getServiceId(const std::string& str)
   return it == codec_map.end() ? USInvalid : it->second;
 }
 
+std::string concatUrl(const std::string& prefix, const std::string& tail) {
+	if (prefix.empty())
+		return tail;
+	if (tail.empty())
+		return prefix;
+	if (*prefix.rbegin() != '/' && *tail.begin() != '/')
+		return prefix + "/" + tail;
+	return prefix + tail;
+}
+
+bool ServiceModel::parseScpd(const std::string& baseUrl)
+{
+	if (scpdURL.empty() || baseUrl.empty())
+		return false;
+
+	std::string url = concatUrl(baseUrl, scpdURL);
+  auto req = std::make_shared<HttpRequest>();
+  req->url = url;
+  Upnp::Instance()->httpClient()->send(req, [this, url](HttpResponsePtr resp) {
+    if (!resp || resp->status_code != HTTP_STATUS_OK)
+      return;
+
+	this->actions_.clear();
+	this->stateVals_.clear();
+	pugi::xml_document doc;
+	doc.load_string(resp->body.c_str());
+	auto root = doc.first_child(); // scpd
+	auto actions = root.select_nodes("actionList/action");
+	hlogi("%s got %d actions", url.c_str(), actions.size());
+	for (int j = 0; j < actions.size(); j++) {
+		/* <action><name>SelectPreset</name><argumentList><argument/>...</argumentList></action> */
+		auto action = actions[j].node();
+		auto action_name = action.child("name").child_value();
+		hlogi("action%d> %s", j, action_name);
+		auto& act = this->actions_[action_name];
+		auto args = action.select_nodes("argumentList/argument");
+		for (int i = 0; i < args.size(); i++) {
+/*
+<argument>
+	<name>InstanceID</name>
+	<direction>in</direction>
+	<relatedStateVariable>A_ARG_TYPE_InstanceID</relatedStateVariable>
+</argument>
+*/
+			auto arg = args[i].node();
+			auto dir = arg.child("direction").child_value();
+			auto name = arg.child("name").child_value();
+			auto ref = arg.child("relatedStateVariable").child_value();
+			hlogi("[%d] %s %s ref=%s", i, dir, name, ref);
+			act[name] = std::string(strcasecmp(dir, "in") ? "0" : "1") + ref;
+		}
+	}
+
+	auto vals = root.select_nodes("serviceStateTable/stateVariable");
+	hlogi("%s got %d stateVariables", url.c_str(), vals.size());
+	for (int i =0; i<vals.size(); i++)
+	{
+		auto val = vals[i].node();
+/* 
+<stateVariable sendEvents="no">
+	<name>GreenVideoGain</name>
+	<dataType>ui2</dataType>
+	<allowedValueRange>
+		<minimum>0</minimum>
+		<maximum>100</maximum>
+		<step>1</step>
+	</allowedValueRange>
+	<allowedValueList>
+	  <allowedValue>Master</allowedValue>
+	  <allowedValue>LF</allowedValue>
+	  <allowedValue>RF</allowedValue>
+	</allowedValueList>
+</stateVariable> 
+*/
+		auto name = val.child("name").child_value();
+		auto type = val.child("dataType").child_value();
+		std::ostringstream stm;
+		auto range = val.child("allowedValueRange");
+		if (range){
+			stm << "[" << range.child("minimum").child_value() << "-" << range.child("maximum").child_value() 
+				<< "/" << range.child("step").child_value() << "]";
+		}
+		else if(auto list = val.child("allowedValueList")) {
+			stm << "[";
+			for (auto node = list.first_child(); node; node = node.next_sibling()){
+				stm << node.child_value() << ",";
+			}
+			stm << "]";
+		}
+		hlogi("[%d] %s %s%s", i, name, type, stm.str().c_str());
+		stateVals_[name] = type;
+	}
+  });
+	return true;
+}
+
+const char* ServiceModel::findActionArg(const char* name, const char* arg) const
+{
+	auto it = actions_.find(name);
+	if (it != actions_.end()) {
+		auto it2 = it->second.find(arg);
+		if (it2 != it->second.end()) {
+			return it2->second.c_str();
+		}
+	}
+	return nullptr;
+}
+
 void Device::set_location(const std::string& loc)
 {
   this->location = loc;
@@ -71,20 +179,14 @@ std::string Device::getControlUrl(UpnpServiceType t) const {
   auto model = getService(t);
   if (!model || model->controlURL.empty())
     return "";
-  std::string ret = URLHeader;
-  if (model->controlURL[0] != '/')
-    ret += "/";
-  return ret + model->controlURL;
+  return concatUrl(URLHeader, model->controlURL);
 }
 
 std::string Device::getEventUrl(UpnpServiceType t) const {
   auto model = getService(t);
   if (!model || model->eventSubURL.empty())
     return "";
-  std::string ret = URLHeader;
-  if (model->eventSubURL[0] != '/')
-    ret += "/";
-  return ret + model->eventSubURL;
+  return concatUrl(URLHeader, model->eventSubURL);
 }
 
 ServiceModel::Ptr Device::getService(UpnpServiceType t) const
@@ -545,6 +647,10 @@ void Upnp::loadDeviceWithLocation(std::string loc, std::string usn)
       }
       device->friendlyName = dev.child("friendlyName").child_value();
       device->modelName = dev.child("modelName").child_value();
+      if (auto url = root.child("URLBase")) {
+        device->URLHeader = hv::rtrim(url.child_value(), "/");
+      }
+      device->set_location(loc);
       for (auto service : dev.child("serviceList").children("service")) {
         /*
 <service>
@@ -560,20 +666,16 @@ void Upnp::loadDeviceWithLocation(std::string loc, std::string usn)
         sm->serviceId = service.child("serviceId").child_value();
         sm->controlURL = service.child("controlURL").child_value();
         sm->eventSubURL = service.child("eventSubURL").child_value();
-        sm->SCPDURL = service.child("SCPDURL").child_value();
-        auto type1 = getServiceId(sm->serviceId);
-        auto type2 = getServiceType(sm->serviceType);
-        if (type1 != USInvalid) {
-          device->services_[type1] = sm;
-        }
-        else if (type2 != USInvalid) {
-          device->services_[type2] = sm;
+        sm->scpdURL = service.child("SCPDURL").child_value();
+        UpnpServiceType type = getServiceId(sm->serviceId);
+        if (type == USInvalid)
+          type = getServiceType(sm->serviceType);
+        if (type != USInvalid) {
+          device->services_[type] = sm;
+          // if (type == USAVTransport)
+          sm->parseScpd(device->URLHeader);
         }
       }
-      if (auto url = root.child("URLBase")) {
-        device->URLHeader = hv::rtrim(url.child_value(), "/");
-      }
-      device->set_location(loc);
       addDevice(device);
     }
   });

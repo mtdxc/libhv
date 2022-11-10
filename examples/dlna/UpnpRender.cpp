@@ -174,6 +174,13 @@ int UPnPAction::invoke(Device::Ptr dev, RpcCB cb)
   return id;
 }
 
+UpnpRender::UpnpRender(Device::Ptr dev) :model_(dev) {
+  if (auto service = model_->getService(USAVTransport)) {
+    support_speed_ = service->hasActionArg("Play", "Speed");
+    hlogi("support_speed=%d", support_speed_);
+  }
+}
+
 UpnpRender::~UpnpRender()
 {
   hlogi("%s", devId());
@@ -207,11 +214,11 @@ void UpnpRender::subscribe(int type, int sec)
   req->url = url;
 
   auto it = sid_map_.find(type);
-  if (it == sid_map_.end()) { // È«ÐÂ¶©ÔÄ
+  if (it == sid_map_.end()) { // å…¨æ–°è®¢é˜…
     req->SetHeader("NT", "upnp:event");
     req->SetHeader("CALLBACK", std::string("<") + Upnp::Instance()->getUrlPrefix() + "/>");
   }
-  else { // Ðø¶©
+  else { // ç»­è®¢
     req->SetHeader("SID", it->second);
   }
   char timeout[64];
@@ -235,7 +242,7 @@ void UpnpRender::subscribe(int type, int sec)
     }
     /*
     HTTP/1.1 200 OK
-    DATE£ºwhen response was generated
+    DATE: when response was generated
     SERVER: OS/version UPnP/1.0 product/version
     SID: uuid:subscription-UUID
     TIMEOUT: second-[actual subscription duration]
@@ -389,14 +396,25 @@ int UpnpRender::play(float speed, RpcCB cb)
   hlogi("%s speed=%f", devId(), speed);
   UPnPAction action("Play");
   action.setArgs("InstanceID", "0");
-  char buf[32];
-  sprintf(buf, "%f", speed);
-  action.setArgs("Speed", buf);
+  if (support_speed_) {
+    char buf[32];
+    sprintf(buf, "%f", speed);
+    action.setArgs("Speed", buf);
+  }
   //this->speed_ = speed;
   std::weak_ptr<UpnpRender> weak_ptr = shared_from_this();
   return action.invoke(model_, [=](int code, ArgMap& args) {
     auto strong_ptr = weak_ptr.lock();
-    if (strong_ptr && !code)
+    if (!strong_ptr) return ;
+    if (code) {
+      if (strong_ptr->support_speed_ && -1 != args["error"].find("Speed not support")) {
+        hlogi("reset support_speed and try");
+        strong_ptr->support_speed_ = false;
+        strong_ptr->play(1.0f, cb);
+        return;
+      }
+    }
+    else
       strong_ptr->speed_ = speed;
     if (cb) cb(code, args["error"]);
   });

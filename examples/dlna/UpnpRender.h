@@ -11,12 +11,13 @@ class UpnpRender : public UpnpSidListener,
   std::string url_;
   float duration_;
   float speed_ = 1.0f;
+  bool support_speed_ = true;
   std::map<int, std::string> sid_map_;
   void onSidMsg(const std::string& sid, const std::string& body) override;
   void onPropChange(const std::string& name, const std::string& value);
 public:
   typedef std::shared_ptr<UpnpRender> Ptr;
-  UpnpRender(Device::Ptr dev) :model_(dev) {}
+  UpnpRender(Device::Ptr dev);
   ~UpnpRender();
 
   const char* devId() const;
