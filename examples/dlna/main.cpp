@@ -3,6 +3,7 @@
 #include <string.h>
 #include <iostream>
 #include "UpnpServer.h"
+#include <string>
 
 void PrintDevices(MapDevices devs)
 {
@@ -42,7 +43,7 @@ int main(int argc, char* argv[]) {
     else if (cmd == "search") {
       upnp->search();
     }
-    else if (cmd == "list") {
+    else if (cmd == "list" || cmd == "l") {
       auto devs = upnp->getDevices();
       PrintDevices(devs);
     }
@@ -50,7 +51,8 @@ int main(int argc, char* argv[]) {
       if (cmds.size() < 3) continue;
       auto devs = upnp->getDevices();
       int pos = atoi(cmds[1].c_str());
-      if (pos < 0 || pos > devs.size()) {
+      if (pos < 0 || pos >= devs.size()) {
+        printf("pos %d error\n", pos);
         continue;
       }
       auto it = devs.begin();
@@ -88,6 +90,43 @@ int main(int argc, char* argv[]) {
       upnp->getPosition(cur_dev.c_str(), [](int code, AVPositionInfo pos) {
         printf("goPos %d %f/%f\n", code, pos.relTime, pos.trackDuration);
       });
+    }
+    else if (cmd == "tinfo") {
+      if (cur_dev.empty()) continue;
+      upnp->getTransportInfo(cur_dev.c_str(), [](int code, TransportInfo info) {
+        printf("goInfo %d %s %s %f\n", code, info.state, info.status, info.speed);
+      });
+    }
+    else if (cmd == "minfo") {
+      if (cur_dev.empty()) continue;
+      upnp->getMediaInfo(cur_dev.c_str());
+    }
+    else if (cmd == "next") {
+      if (cur_dev.empty()) continue;
+      upnp->next(cur_dev.c_str());
+    }
+    else if (cmd == "prev") {
+      if (cur_dev.empty()) continue;
+      upnp->previous(cur_dev.c_str());
+    }
+    else if (cmd == "subscribe" || cmd == "subs") {
+      if (cur_dev.empty()) continue;
+      int type = USAVTransport;
+      int timeout = 3600;
+      if (cmds.size() > 1) {
+        type = std::stoi(cmds[1]);
+        if (cmd.size() > 2)
+          timeout = std::stoi(cmds[2]);
+      }
+      upnp->subscribe(cur_dev.c_str(), type, timeout);
+    }
+    else if (cmd == "unsubscribe" || cmd == "unsubs") {
+      if (cur_dev.empty()) continue;
+      int type = USAVTransport;
+      if (cmds.size() > 1) {
+        type = std::stoi(cmds[1]);
+      }
+      upnp->unsubscribe(cur_dev.c_str(), type);
     }
     else if (cmd == "vol") {
       if (cur_dev.empty()) continue;

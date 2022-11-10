@@ -64,6 +64,12 @@ std::string UPnPAction::getPostXML()
   return stm.str();
 }
 
+void dumpArgs(const ArgMap& map){
+  for (auto it : map) {
+    hlogi(" %s=%s", it.first.c_str(), it.second.c_str());
+  }
+}
+
 int UPnPAction::invoke(Device::Ptr dev, RpcCB cb)
 {
   auto req = std::make_shared<HttpRequest>();
@@ -353,9 +359,7 @@ void UpnpRender::onSidMsg(const std::string& sid, const std::string& body)
   }
 }
 
-int UpnpRender::setAVTransportURL(const char* urlStr, RpcCB cb)
-{
-  subscribe(USAVTransport, 3600);
+int UpnpRender::setAVTransportURL(const char* urlStr, RpcCB cb){
   std::string url = urlStr;
   hlogi("%s url %s", devId(), urlStr);
   UPnPAction action("SetAVTransportURI");
@@ -363,11 +367,23 @@ int UpnpRender::setAVTransportURL(const char* urlStr, RpcCB cb)
   action.setArgs("CurrentURI", urlStr);
   action.setArgs("CurrentURIMetaData", "");
   std::weak_ptr<UpnpRender> weak_ptr = shared_from_this();
-  return action.invoke(model_, [cb, weak_ptr, url](int code, ArgMap& args) {
+  return action.invoke(model_, [cb, url](int code, ArgMap& args) {
+    if (cb)
+      cb(code, code ? args["error"] : url);
+  });
+}
+
+int UpnpRender::play(const char* urlStr, RpcCB cb)
+{
+  subscribe(USAVTransport, 3600);
+  hlogi("%s url %s", devId(), urlStr);
+  std::string url = urlStr;
+  std::weak_ptr<UpnpRender> weak_ptr = shared_from_this();
+  return setAVTransportURL(urlStr, [cb, weak_ptr, url](int code, std::string resp){
     auto strong_ptr = weak_ptr.lock();
     if (!strong_ptr) return;
     if (code) { // return error
-      if (cb) cb(code, args["error"]);
+      if (cb) cb(code, resp);
       return;
     }
     strong_ptr->url_ = url;
@@ -496,6 +512,8 @@ int UpnpRender::getPositionInfo(std::function<void(int, AVPositionInfo)> cb)
   action.setArgs("InstanceID", "0");
   std::weak_ptr<UpnpRender> weak_ptr = shared_from_this();
   return action.invoke(model_, [cb, weak_ptr](int code, ArgMap& args) {
+    hlogi("getPositionInfo return %d", code);
+    dumpArgs(args);
     auto strong_ptr = weak_ptr.lock();
     if (!cb || !strong_ptr) return;
     AVPositionInfo pos;
@@ -515,6 +533,8 @@ int UpnpRender::getTransportInfo(std::function<void(int, TransportInfo)> cb)
   UPnPAction action("GetTransportInfo");
   action.setArgs("InstanceID", "0");
   return action.invoke(model_, [cb](int code, ArgMap& args) {
+    hlogi("getTransportInfo return %d", code);
+    dumpArgs(args);
     if (!cb) return;
     TransportInfo ti;
     if (code == 0) {
@@ -523,6 +543,57 @@ int UpnpRender::getTransportInfo(std::function<void(int, TransportInfo)> cb)
       ti.speed = std::stof(args["CurrentSpeed"]);
     }
     cb(code, ti);
+  });
+}
+
+int UpnpRender::getMediaInfo(std::function<void(int, std::map<std::string, std::string>)> cb) {
+  UPnPAction action("GetMediaInfo");
+  action.setArgs("InstanceID", "0");
+  return action.invoke(model_, [cb](int code, ArgMap& args) {
+    hlogi("getMediaInfo return %d", code);
+    dumpArgs(args);
+    if(cb) cb(code, args);
+  });
+}
+
+int UpnpRender::getDeviceCapabilities(std::function<void(int, DeviceCap)> cb) {
+  UPnPAction action("GetDeviceCapabilities");
+  action.setArgs("InstanceID", "0");
+  return action.invoke(model_, [cb](int code, ArgMap& args) {
+    hlogi("getDeviceCapabilities return %d", code);
+    dumpArgs(args);
+    if(!cb) return;
+    DeviceCap cap;
+    if (!code) {
+      cap.PlayMedia = args["PlayMedia"];
+      cap.RecMedia = args["RecMedia"];
+      cap.RecQualityModes = args["RecQualityModes"];
+    }
+  });
+}
+
+int UpnpRender::setPlayMode(const char* mode, RpcCB cb) {
+  UPnPAction action("SetPlayMode");
+  action.setArgs("InstanceID", "0");
+  action.setArgs("NewPlayMode", mode);
+  return action.invoke(model_, [cb](int code, ArgMap& args) {
+    if(cb) cb(code, args["error"]);
+  });
+}
+
+int UpnpRender::Previous(RpcCB cb){
+  UPnPAction action("Previous");
+  action.setArgs("InstanceID", "0");
+  return action.invoke(model_, [cb](int code, ArgMap& args) {
+    if(cb) cb(code, args["error"]);
+  });
+}
+
+int UpnpRender::Next(RpcCB cb) {
+  UPnPAction action("Next");
+  action.setArgs("InstanceID", "0");
+  return action.invoke(model_, [cb](int code, ArgMap& args) {
+    if(cb) cb(code, args["error"]);
   });
 }
 
