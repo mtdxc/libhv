@@ -387,7 +387,7 @@ void Upnp::search()
 
   char line[1024];
   int size = sprintf(line, "M-SEARCH * HTTP/1.1\r\nHOST: %s:%d\r\nMAN: \"ssdp:discover\"\r\nMX: 3\r\nST: %s\r\nUSER-AGENT: iOS UPnP/1.1 Tiaooo/1.0\r\n\r\n",
-    ssdpAddres, ssdpPort, getServiceTypeStr(USAVTransport));
+    ssdpAddres, ssdpPort, "unpn::rootdevice");//getServiceTypeStr(USAVTransport));
   sockaddr_u dst;
   sockaddr_set_ipport(&dst, ssdpAddres, ssdpPort);
   // printf("udp< %s", line);
@@ -492,12 +492,40 @@ int Upnp::getPosition(const char* id, std::function<void(int, AVPositionInfo)> c
   return ret;
 }
 
-int Upnp::getInfo(const char* id, std::function<void(int, TransportInfo)> cb)
+int Upnp::getTransportInfo(const char* id, std::function<void(int, TransportInfo)> cb)
 {
   int ret = 0;
   if (auto render = getRender(id))
     ret = render->getTransportInfo(cb);
   return ret;
+}
+
+int Upnp::getMediaInfo(const char* id) {
+  int ret = 0;
+  if (auto render = getRender(id))
+    ret = render->getMediaInfo(nullptr);
+  return ret;  
+}
+
+int Upnp::setPlayMode(const char* id, const char* mode, RpcCB cb) {
+  int ret = 0;
+  if (auto render = getRender(id))
+    ret = render->setPlayMode(mode, cb);
+  return ret;  
+}
+
+int Upnp::next(const char* id, RpcCB cb) {
+  int ret = 0;
+  if (auto render = getRender(id))
+    ret = render->Next(cb);
+  return ret;  
+}
+
+int Upnp::previous(const char* id, RpcCB cb) {
+  int ret = 0;
+  if (auto render = getRender(id))
+    ret = render->Previous(cb);
+  return ret;  
 }
 
 int Upnp::setSpeed(const char* id, float speed, RpcCB cb)

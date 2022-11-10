@@ -64,7 +64,11 @@ struct Device {
   typedef std::shared_ptr<Device> Ptr;
 };
 typedef std::map<std::string, Device::Ptr> MapDevices;
-
+struct DeviceCap{
+  std::string RecQualityModes;
+	std::string RecMedia;
+	std::string PlayMedia;
+};
 struct AVPositionInfo {
   float trackDuration;
   float absTime;
@@ -169,7 +173,11 @@ public:
   int resume(const char* id, RpcCB cb = nullptr);
   int seek(const char* id, float val, RpcCB cb = nullptr);
   int getPosition(const char* id, std::function<void(int, AVPositionInfo)> cb = nullptr);
-  int getInfo(const char* id, std::function<void(int, TransportInfo)> cb = nullptr);
+  int getTransportInfo(const char* id, std::function<void(int, TransportInfo)> cb = nullptr);
+  int getMediaInfo(const char* id);
+  int setPlayMode(const char* id, const char* mode, RpcCB cb = nullptr);
+  int next(const char* id, RpcCB cb = nullptr);
+  int previous(const char* id, RpcCB cb = nullptr);
   int setSpeed(const char* id, float speed, RpcCB cb = nullptr);
   float getSpeed(const char* id);
   float getDuration(const char* id);

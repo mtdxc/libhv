@@ -31,6 +31,7 @@ public:
    @param urlStr 视频url
    */
   int setAVTransportURL(const char* urlStr, RpcCB cb = nullptr);
+  int play(const char* urlStr, RpcCB cb = nullptr);
   std::string getURL() const { return url_; }
   /**
    播放
@@ -70,7 +71,12 @@ public:
    获取播放状态,可通过协议回调使用
    */
   int getTransportInfo(std::function<void(int, TransportInfo)> cb);
-
+  int getMediaInfo(std::function<void(int, std::map<std::string, std::string>)> cb);
+  int setPlayMode(const char* mode, RpcCB cb);
+  int getDeviceCapabilities(std::function<void(int, DeviceCap)> cb);
+  
+  int Previous(RpcCB cb);
+  int Next(RpcCB cb);
   /**
    获取音频,可通过协议回调使用
    */
