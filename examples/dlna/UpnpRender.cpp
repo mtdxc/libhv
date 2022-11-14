@@ -2,6 +2,7 @@
 #include <sstream>
 #include "requests.h"
 #include "pugixml.hpp"
+#include "htime.h"
 
 using namespace pugi;
 template<typename T>
@@ -81,9 +82,13 @@ int UPnPAction::invoke(Device::Ptr dev, RpcCB cb)
   static std::atomic<int> action_id(0);
   int id = action_id++;
   std::string respTag = "u:" + action_ + "Response";
-  auto cb1 = [id](int code, std::map<std::string, std::string>& args) {
+  auto cb1 = [id, dev](int code, std::map<std::string, std::string>& args) {
     if (code) {
       hlogw("soap %d error %d %s %s", id, code, args["error"].c_str(), args["detail"].c_str());
+      dev->tick -= DEVICE_TIMEOUT / 3;
+    }
+    else{
+      dev->tick = gettick_ms();
     }
     for (auto listener : Upnp::Instance()->getListeners())
       listener->upnpActionResponse(id, code, args);
@@ -182,7 +187,7 @@ int UPnPAction::invoke(Device::Ptr dev, RpcCB cb)
 
 UpnpRender::UpnpRender(Device::Ptr dev) :model_(dev) {
   if (auto service = model_->getService(USAVTransport)) {
-    support_speed_ = service->hasActionArg("Play", "Speed");
+    support_speed_ = service->desc.hasActionArg("Play", "Speed");
     hlogi("support_speed=%d", support_speed_);
   }
 }

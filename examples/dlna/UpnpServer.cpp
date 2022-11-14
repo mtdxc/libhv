@@ -1,5 +1,6 @@
 #include "UpnpServer.h"
 #include "hlog.h"
+#include "htime.h"
 #include <strstream>
 #include "UdpClient.h"
 #include "requests.h"
@@ -59,12 +60,11 @@ std::string concatUrl(const std::string& prefix, const std::string& tail) {
 	return prefix + tail;
 }
 
-bool ServiceModel::parseScpd(const std::string& baseUrl)
+bool ServiceDesc::parseScpd(const std::string& url)
 {
-	if (scpdURL.empty() || baseUrl.empty())
+	if (url.empty())
 		return false;
 
-	std::string url = concatUrl(baseUrl, scpdURL);
   auto req = std::make_shared<HttpRequest>();
   req->url = url;
   Upnp::Instance()->httpClient()->send(req, [this, url](HttpResponsePtr resp) {
@@ -145,7 +145,7 @@ bool ServiceModel::parseScpd(const std::string& baseUrl)
 	return true;
 }
 
-const char* ServiceModel::findActionArg(const char* name, const char* arg) const
+const char* ServiceDesc::findActionArg(const char* name, const char* arg) const
 {
 	auto it = actions_.find(name);
 	if (it != actions_.end()) {
@@ -380,14 +380,29 @@ void Upnp::stop()
   _http_client = nullptr;
 }
 
-void Upnp::search()
+void Upnp::search(int type, bool use_cache)
 {
-  _devices.clear();
-  onChange();
-
+  auto oldSize = _devices.size();
+  if (use_cache) {
+    unsigned int now = gettick_ms();
+    auto it = _devices.begin();
+    while (it!=_devices.end()) {
+      if (now > it->second->tick + DEVICE_TIMEOUT)
+        it = _devices.erase(it);
+      else
+        it++;
+    }
+  }
+  else
+    _devices.clear();
+  if (oldSize != _devices.size())
+    onChange();
+  const char* sType = getServiceTypeStr(USAVTransport);
+  if (!sType || !sType[0])
+    sType = "unpn::rootdevice";
   char line[1024];
   int size = sprintf(line, "M-SEARCH * HTTP/1.1\r\nHOST: %s:%d\r\nMAN: \"ssdp:discover\"\r\nMX: 3\r\nST: %s\r\nUSER-AGENT: iOS UPnP/1.1 Tiaooo/1.0\r\n\r\n",
-    ssdpAddres, ssdpPort, "unpn::rootdevice");//getServiceTypeStr(USAVTransport));
+    ssdpAddres, ssdpPort, sType);
   sockaddr_u dst;
   sockaddr_set_ipport(&dst, ssdpAddres, ssdpPort);
   // printf("udp< %s", line);
@@ -661,18 +676,26 @@ void Upnp::loadDeviceWithLocation(std::string loc, std::string usn)
     auto root = doc.first_child();
     auto dev = root.child("device");
     if (dev) {
-      Device::Ptr device = std::make_shared<Device>();
-      device->location = loc;
+      std::string uuid;
       if (dev.child("UDN")) {
-        device->uuid = dev.child("UDN").child_value();
+        uuid = dev.child("UDN").child_value();
       }
       else {
         auto pos = usn.find("::");// "::urn:");
         if (-1 != pos && pos > 0)
-          device->uuid = usn.substr(0, pos);
+          uuid = usn.substr(0, pos);
         else
-          device->uuid = usn;
+          uuid = usn;
       }
+
+      Device::Ptr device = _devices[uuid];
+      if (!device) {
+        device = std::make_shared<Device>();
+        device->uuid = uuid;
+        _devices[uuid] = device;
+      }
+      device->tick = gettick_ms();
+      device->location = loc;
       device->friendlyName = dev.child("friendlyName").child_value();
       device->modelName = dev.child("modelName").child_value();
       if (auto url = root.child("URLBase")) {
@@ -689,22 +712,38 @@ void Upnp::loadDeviceWithLocation(std::string loc, std::string usn)
 <eventSubURL>/upnp/event/rendertransport1</eventSubURL>
 </service>
         */
-        auto sm = std::make_shared<ServiceModel>();
-        sm->serviceType = service.child("serviceType").child_value();
-        sm->serviceId = service.child("serviceId").child_value();
-        sm->controlURL = service.child("controlURL").child_value();
-        sm->eventSubURL = service.child("eventSubURL").child_value();
-        sm->scpdURL = service.child("SCPDURL").child_value();
-        UpnpServiceType type = getServiceId(sm->serviceId);
+        auto serviceType = service.child("serviceType").child_value();
+        auto serviceId = service.child("serviceId").child_value();
+        UpnpServiceType type = getServiceId(serviceId);
         if (type == USInvalid)
-          type = getServiceType(sm->serviceType);
-        if (type != USInvalid) {
+          type = getServiceType(serviceType);
+        if (type == USInvalid) {
+          hlogi("skip unkonwn type %s %s", serviceType, serviceId);
+          continue;
+        }
+
+        auto controlURL = service.child("controlURL").child_value();
+        auto eventSubURL = service.child("eventSubURL").child_value();
+        auto scpdURL = service.child("SCPDURL").child_value();
+        auto sm = device->getService(type);
+        if (!sm) {
+          sm = std::make_shared<ServiceModel>();
           device->services_[type] = sm;
-          // if (type == USAVTransport)
-          sm->parseScpd(device->URLHeader);
+        }
+        sm->serviceType = serviceType;
+        sm->serviceId = serviceId;
+        sm->controlURL = controlURL;
+        sm->eventSubURL = eventSubURL;
+        if (sm->scpdURL != scpdURL) {
+          std::string url = concatUrl(device->URLHeader, scpdURL);
+          if (sm->desc.parseScpd(url)) {
+            sm->scpdURL = scpdURL;
+          }
         }
       }
-      addDevice(device);
+      hlogi("gotDevice %s", device->description().c_str());
+      onChange();
+      //addDevice(device);
     }
   });
 }
