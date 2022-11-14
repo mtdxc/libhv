@@ -3,6 +3,7 @@
 #include <string.h>
 #include <iostream>
 #include "UpnpServer.h"
+#include "UpnpRender.h"
 #include <string>
 
 void PrintDevices(MapDevices devs)
@@ -30,7 +31,7 @@ int main(int argc, char* argv[]) {
   Upnp* upnp = Upnp::Instance();
   upnp->start();
   upnp->addListener(&listener);
-  upnp->search();
+  upnp->search(USAVTransport);
   std::string cur_dev;
   std::string line;
   while (getline(std::cin, line)) {
@@ -41,7 +42,13 @@ int main(int argc, char* argv[]) {
     if (cmd == "quit" || cmd == "q")
       break;
     else if (cmd == "search") {
-      upnp->search();
+      int type = USAVTransport;
+      bool cache = true;
+      if(cmds.size() > 1)
+        type = std::stoi(cmds[1]);
+      if(cmds.size() > 2)
+        type = std::stoi(cmds[2]);
+      upnp->search(type, cache);
     }
     else if (cmd == "list" || cmd == "l") {
       auto devs = upnp->getDevices();
