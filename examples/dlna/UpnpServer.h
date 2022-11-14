@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <map>
 #include <memory>
 #include <string>
@@ -23,9 +23,7 @@ const char* getServiceIdStr(UpnpServiceType t);
 UpnpServiceType getServiceType(const std::string& p);
 UpnpServiceType getServiceId(const std::string& p);
 float strToDuraton(std::string str);
-struct ServiceModel {
-  std::string serviceType, serviceId;
-  std::string controlURL, eventSubURL, scpdURL;
+struct ServiceDesc {
   bool parseScpd(const std::string& baseUrl);
   const char* findActionArg(const char* name, const char* arg) const;
   bool hasActionArg(const char* name, const char* arg) const {
@@ -46,15 +44,21 @@ struct ServiceModel {
   // name -> args
   std::map<std::string, Args> actions_;
   std::map<std::string, bool> stateVals_;
-  typedef std::shared_ptr<ServiceModel> Ptr;
 };
 
+struct ServiceModel {
+  std::string serviceType, serviceId;
+  std::string controlURL, eventSubURL, scpdURL;
+  ServiceDesc desc;
+  typedef std::shared_ptr<ServiceModel> Ptr;
+};
+#define DEVICE_TIMEOUT 300000
 struct Device {
   std::string uuid;
   std::string location, URLHeader;
   std::string friendlyName;
   std::string modelName;
-
+  unsigned int tick;
   std::map<UpnpServiceType, ServiceModel::Ptr> services_;
   void set_location(const std::string& loc);
   std::string description() const;
@@ -122,13 +126,14 @@ class Upnp
   std::map<std::string, std::string> file_maps_;
 
   Upnp() = default;
-  Device::Ptr getDevice(const char* usn);
-  std::shared_ptr<UpnpRender> getRender(const char* usn);
   void detectLocalIP();
   std::map<std::string, UpnpSidListener*> sid_maps_;
 public:
   void addSidListener(const std::string& sid, UpnpSidListener* l);
   void delSidListener(const std::string& sid);
+
+  Device::Ptr getDevice(const char* usn);
+  std::shared_ptr<UpnpRender> getRender(const char* usn);
 
   const char* getUrlPrefix();
   // return local_uri_ + "/" + loc
@@ -159,7 +164,7 @@ public:
   void stop();
 
   // 搜索设备
-  void search();
+  void search(int type, bool use_cache = true);
   int subscribe(const char* id, int type, int sec);
   int unsubscribe(const char* id, int type);
 
