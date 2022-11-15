@@ -21,6 +21,7 @@ public:
   ~UpnpRender();
 
   const char* devId() const;
+  const char* devName() const;
   float duration() const { return duration_; }
   float speed() const { return speed_; }
 
