@@ -84,7 +84,7 @@ int UPnPAction::invoke(Device::Ptr dev, RpcCB cb)
   std::string respTag = "u:" + action_ + "Response";
   auto cb1 = [id, dev](int code, std::map<std::string, std::string>& args) {
     if (code) {
-      hlogw("soap %d error %d %s %s", id, code, args["error"].c_str(), args["detail"].c_str());
+      hlogw("soap %d error %d,%s detail=%s", id, code, args["error"].c_str(), args["detail"].c_str());
       dev->tick -= DEVICE_TIMEOUT / 3;
     }
     else{
@@ -121,18 +121,15 @@ int UPnPAction::invoke(Device::Ptr dev, RpcCB cb)
     hlogd("soap %d< %d %s", id, resp->status_code, resp->body.c_str());
     if (resp->status_code != 200) {
       args["error"] = "response code error";
-      if (resp->body.length())
-        args["detail"] = resp->body;
-      cb(resp->status_code, args);
-      return;
+      args["detail"] = resp->body;
     }
 
     xml_document doc;
     auto ret = doc.load_string(resp->body.c_str());
     if (ret.status) {
-      args["error"] = "xml parse error";
-      args["detail"] = ret.description();
-      cb(-3, args);
+      args["error"] = std::string("xml parse error: ") + ret.description();
+      args["detail"] = resp->body;
+      cb(ret.status, args);
       return;
     }
     /*
@@ -144,13 +141,13 @@ int UPnPAction::invoke(Device::Ptr dev, RpcCB cb)
     if (!body) {
       hlogi("soapResp missing tag %s", respTag.c_str());
       args["error"] = "missing body tag";
+      args["detail"] = resp->body;
       cb(-2, args);
     }
     else {
-      auto resp = body.child(respTag.c_str());
-      if (resp) {
+      if (auto rnode = body.child(respTag.c_str())) {
         // xml to map
-        for (auto child : resp.children()) {
+        for (auto child : rnode.children()) {
           args[child.name()] = child.text().as_string("");
         }
         cb(0, args);
@@ -166,20 +163,30 @@ int UPnPAction::invoke(Device::Ptr dev, RpcCB cb)
 </UPnPError>
 </detail>
 </s:Fault></s:Body>*/
+        std::string code;
         auto fault = body.child("s:Fault");
         if (fault) {
-          args["error"] = fault.child("faultstring").text().as_string();
-          std::string code = fault.child("faultcode").text().as_string();
-          std::ostringstream stm;
-          fault.child("detail").first_child().print(stm, "");
-          args["detail"] = stm.str();
+          auto error = fault.child("faultstring").child_value();
+          if (strcasecmp(error, "UPnPError")) {
+            code = fault.child("faultcode").child_value();
+            std::ostringstream stm;
+            fault.child("detail").first_child().print(stm, "");
+            args["detail"] = stm.str();
+            args["error"] = error;
+          }
+          else {
+            auto node = fault.select_node("detail/UPnPError").node();
+            code = node.child("errorCode").child_value();
+            args["error"] = node.child("errorDescription").child_value();
+          }
         }
         else {
           args["error"] = "missing fault tag";
         }
-        cb(-4, args);
+        int ncode = atoi(code.c_str());
+        if (!ncode) ncode = resp->status_code;
+        cb(ncode, args);
       }
-
     }
   });
   return id;
@@ -203,9 +210,12 @@ UpnpRender::~UpnpRender()
 }
 
 const char* UpnpRender::devId() const {
-  return model_->friendlyName.c_str();
+  return model_->uuid.c_str();
 }
 
+const char* UpnpRender::devName() const {
+  return model_->friendlyName.c_str();
+}
 
 void UpnpRender::subscribe(int type, int sec)
 {
