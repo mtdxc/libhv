@@ -182,56 +182,58 @@ public:
     int broadcast(const std::string& str) {
         return broadcast(str.data(), str.size());
     }
-
-private:
-    static void newConnEvent(hio_t* connio) {
-        TcpServerEventLoopTmpl* server = (TcpServerEventLoopTmpl*)hevent_userdata(connio);
-        if (server->connectionNum() >= server->max_connections) {
+    
+    // 必须在EventLoop线程中运行
+    TSocketChannelPtr acceptConn(hio_t* connio){
+        if (connectionNum() >= max_connections) {
             hlogw("over max_connections");
             hio_close(connio);
-            return;
+            return nullptr;
         }
 
         // NOTE: attach to worker loop
         EventLoop* worker_loop = currentThreadEventLoop;
         assert(worker_loop != NULL);
         hio_attach(worker_loop->loop(), connio);
+        ++worker_loop->connectionNum;
 
-        const TSocketChannelPtr& channel = server->addChannel(connio);
+        const TSocketChannelPtr& channel = addChannel(connio);
         channel->status = SocketChannel::CONNECTED;
 
-        channel->onread = [server, &channel](Buffer* buf) {
-            if (server->onMessage) {
-                server->onMessage(channel, buf);
+        channel->onread = [this, &channel](Buffer* buf) {
+            if (onMessage) {
+                onMessage(channel, buf);
             }
         };
-        channel->onwrite = [server, &channel](Buffer* buf) {
-            if (server->onWriteComplete) {
-                server->onWriteComplete(channel, buf);
+        channel->onwrite = [this, &channel](Buffer* buf) {
+            if (onWriteComplete) {
+                onWriteComplete(channel, buf);
             }
         };
-        channel->onclose = [server, &channel]() {
+        channel->onclose = [this, &channel]() {
             EventLoop* worker_loop = currentThreadEventLoop;
             assert(worker_loop != NULL);
             --worker_loop->connectionNum;
 
             channel->status = SocketChannel::CLOSED;
-            if (server->onConnection) {
-                server->onConnection(channel);
+            if (onConnection) {
+                onConnection(channel);
             }
-            server->removeChannel(channel);
+            removeChannel(channel);
             // NOTE: After removeChannel, channel may be destroyed,
             // so in this lambda function, no code should be added below.
         };
 
-        if (server->unpack_setting.mode != UNPACK_MODE_NONE) {
-            channel->setUnpack(&server->unpack_setting);
+        if (unpack_setting.mode != UNPACK_MODE_NONE) {
+            channel->setUnpack(&unpack_setting);
         }
         channel->startRead();
-        if (server->onConnection) {
-            server->onConnection(channel);
+        if (onConnection) {
+            onConnection(channel);
         }
+        return channel;
     }
+private:
 
     static void onAccept(hio_t* connio) {
         TcpServerEventLoopTmpl* server = (TcpServerEventLoopTmpl*)hevent_userdata(connio);
@@ -241,8 +243,11 @@ private:
         if (worker_loop == NULL) {
             worker_loop = server->acceptor_loop;
         }
-        ++worker_loop->connectionNum;
-        worker_loop->runInLoop(std::bind(&TcpServerEventLoopTmpl::newConnEvent, connio));
+        worker_loop->runInLoop([connio](){
+            TcpServerEventLoopTmpl* server = (TcpServerEventLoopTmpl*)hevent_userdata(connio);
+            if (server)
+                server->acceptConn(connio);
+        });
     }
 
 public:
