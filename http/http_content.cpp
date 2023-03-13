@@ -1,7 +1,7 @@
 #include "http_content.h"
 
 #include "hurl.h"
-
+#include <list>
 #include <string.h>
 
 BEGIN_NAMESPACE_HV
@@ -67,41 +67,54 @@ int parse_query_params(const char* query_string, QueryParams& query_params) {
 #include "hfile.h"
 #include "httpdef.h" // for http_content_type_str_by_suffix
 
-std::string dump_multipart(MultiPart& mp, const char* boundary) {
+void dump_part(std::string& str, const char* name, const char* boundary, FormData& form) {
     char c_str[256] = {0};
-    std::string str;
-    if (mp.empty()) return str;
-    for (auto& pair : mp) {
-        str += "--";
-        str += boundary;
-        str += "\r\n";
-        str += "Content-Disposition: form-data";
-        snprintf(c_str, sizeof(c_str), "; name=\"%s\"", pair.first.c_str());
-        str += c_str;
-        auto& form = pair.second;
-        if (form.filename.size() != 0) {
-            if (form.content.size() == 0) {
-                HFile file;
-                if (file.open(form.filename.c_str(), "rb") == 0) {
-                    file.readall(form.content);
-                }
-            }
-            snprintf(c_str, sizeof(c_str), "; filename=\"%s\"", hv_basename(form.filename.c_str()));
-            str += c_str;
-            const char* suffix = strrchr(form.filename.c_str(), '.');
-            if (suffix) {
-                const char* stype = http_content_type_str_by_suffix(++suffix);
-                if (stype && stype[0]) {
-                    str += "\r\n";
-                    str += "Content-Type: ";
-                    str += stype;
-                }
+    str += "--";
+    str += boundary;
+    str += "\r\n";
+    str += "Content-Disposition: form-data";
+    snprintf(c_str, sizeof(c_str), "; name=\"%s\"", name);
+    str += c_str;
+    if (form.filename.size() != 0) {
+        if (form.content.size() == 0) {
+            HFile file;
+            if (file.open(form.filename.c_str(), "rb") == 0) {
+                file.readall(form.content);
             }
         }
-        str += "\r\n\r\n";
-        str += form.content;
-        str += "\r\n";
+        snprintf(c_str, sizeof(c_str), "; filename=\"%s\"", hv_basename(form.filename.c_str()));
+        str += c_str;
+        const char* suffix = strrchr(form.filename.c_str(), '.');
+        if (suffix) {
+            const char* stype = http_content_type_str_by_suffix(++suffix);
+            if (stype && stype[0]) {
+                str += "\r\n";
+                str += "Content-Type: ";
+                str += stype;
+            }
+        }
     }
+    str += "\r\n\r\n";
+    str += form.content;
+    str += "\r\n";
+}
+
+std::string dump_multipart(MultiPart& mp, const char* boundary) {
+    std::string str;
+    if (mp.empty()) return str;
+    std::list<MultiPart::iterator> files;
+    for (auto it = mp.begin(); it != mp.end(); it++) {
+        if (it->second.filename.length()) {
+            files.push_back(it);
+            continue;
+        }
+        dump_part(str, it->first.c_str(), boundary, it->second);
+    }
+    // in oss upload, file must be last part
+    for (auto it : files) {
+        dump_part(str, it->first.c_str(), boundary, it->second);
+    }
+
     str += "--";
     str += boundary;
     str += "--\r\n";
