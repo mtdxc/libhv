@@ -135,6 +135,10 @@ if(WITH_HTTP_CLIENT)
     add_executable(wget wget.cpp)
     target_link_libraries(wget ${HV_LIBRARIES})
 
+    # oss_upload
+    add_executable(oss_upload oss_upload.cpp)
+    target_link_libraries(oss_upload ${HV_LIBRARIES})
+    
     # dlna
     glob_headers_and_sources(DLNA_FILES dlna)
     add_executable(dlna ${DLNA_FILES})
