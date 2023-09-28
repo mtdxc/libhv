@@ -88,6 +88,9 @@ if(WITH_EVPP)
     add_executable(hmain_test hmain_test.cpp)
     target_link_libraries(hmain_test ${HV_LIBRARIES})
 
+    add_executable(TcpProxy_test TcpProxy_test.cpp)
+    target_link_libraries(TcpProxy_test ${HV_LIBRARIES})
+
     # nmap
     glob_headers_and_sources(NMAP_FILES nmap)
     add_executable(nmap ${NMAP_FILES})
