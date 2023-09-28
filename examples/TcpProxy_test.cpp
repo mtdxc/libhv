@@ -19,20 +19,27 @@ struct Session {
     std::string name;
 };
 
-std::string listServer(TcpServer& srv, int filter) {
+std::string listSession(TcpServer& srv, int server, int filter) {
     std::ostringstream stm;
-    srv.foreachChannel([&stm, filter](const SocketChannelPtr& ch) {
+    srv.foreachChannel([&stm, server, filter](const SocketChannelPtr& ch) {
         auto session = ch->getContextPtr<Session>();
-        if (session && session->serv) {
-            if (filter && session->pid)
-                return;
-            stm << ch->id() << "-" << session->pid
-                << " " << session->name 
-                << " " << (session->serv ? "server" : "client")
-                << "\n";
-        }
+        if (!session) return;
+        if (session->serv != server) return;
+        if (filter && session->pid) return;
+        stm << ch->id() << "-" << session->pid << " " << session->name << " " << (session->serv ? "server" : "client") << "\r\n";
     });
     return stm.str();
+}
+
+std::string listClient(TcpServer& srv, int filter) {
+    return listSession(srv, false, filter);
+}
+std::string listServer(TcpServer& srv, int filter) {
+    return listSession(srv, true, filter);
+}
+
+int writeChannel(const SocketChannelPtr& channel, const std::string& msg) {
+    return channel->write(msg.c_str(), msg.length() + 1);
 }
 
 int main(int argc, char* argv[]) {
@@ -74,7 +81,7 @@ int main(int argc, char* argv[]) {
         if (!session->pid) {
             printf("%s> %.*s\n", channel->peeraddr().c_str(), (int)buf->size(), (char*)buf->data());
             // 处理CMD请求
-            auto lst = hv::split((const char*)buf->data(), ' ');
+            auto lst = hv::split(hv::trim((const char*)buf->data()), ' ');
             if (lst.size() < 2) {
                 return;
             }
@@ -104,11 +111,12 @@ int main(int argc, char* argv[]) {
                 else {
                     std::string error = "error sever " + name + " not found";
                     hlogi("%s", error.c_str());
-                    channel->write(error);
+                    writeChannel(channel, error);
                 }
             }
             else if(cmd == "list") { // 列出代理状态
-                channel->write(listServer(srv, std::stoi(lst[1])));
+                std::string resp = listServer(srv, std::stoi(lst[1]));
+                writeChannel(channel, resp);
             }
         }
         else {
@@ -144,6 +152,9 @@ int main(int argc, char* argv[]) {
 
     std::string str;
     while (std::getline(std::cin, str)) {
+        auto lst = hv::split(hv::trim(str), ' ');
+        if (lst.size())
+            str = lst[0];
         if (str == "close") {
             srv.closesocket();
         } else if (str == "start") {
@@ -151,9 +162,23 @@ int main(int argc, char* argv[]) {
         } else if (str == "stop") {
             srv.stop();
             break;
-        } else if (str == "list") {
-            printf("%s\n", listServer(srv, 0).c_str());
-        } else {
+        } 
+        else if (str == "listS" || str == "ls") {
+            printf("%s\n", listSession(srv, true, 0).c_str());
+        } 
+        else if (str == "listC" || str == "lc") {
+            printf("%s\n", listSession(srv, false, 0).c_str());
+        }
+        else if (str == "kill") {   
+            for (size_t i = 1; i < lst.size(); i++)
+            {
+                auto channel = srv.getChannelById(std::stoi(lst[i]));
+                if (channel)
+                    channel->close();
+            }
+            
+        }
+        else {
             srv.broadcast(str.data(), str.size());
         }
     }
