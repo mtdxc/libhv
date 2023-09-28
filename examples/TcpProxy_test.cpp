@@ -14,7 +14,7 @@ using namespace hv;
 
 #define TEST_TLS        0
 struct Session {
-    uint32_t pid = 0;
+    SocketChannelPtr peer;
     bool serv = false;
     std::string name;
 };
@@ -25,8 +25,11 @@ std::string listSession(TcpServer& srv, int server, int filter) {
         auto session = ch->getContextPtr<Session>();
         if (!session) return;
         if (session->serv != server) return;
-        if (filter && session->pid) return;
-        stm << ch->id() << "-" << session->pid << " " << session->name << " " << (session->serv ? "server" : "client") << "\r\n";
+        if (filter && session->peer) return;
+        stm << (session->serv ? "server" : "client") << " " << ch->peeraddr() 
+            << " " << ch->id() << "-" << (session->peer ? session->peer->id() : 0) 
+            << " " << session->name 
+            << "\r\n";
     });
     return stm.str();
 }
@@ -57,7 +60,7 @@ int main(int argc, char* argv[]) {
         return -20;
     }
     printf("server listen on port %d, listenfd=%d ...\n", port, listenfd);
-    srv.onConnection = [&srv](const SocketChannelPtr& channel) {
+    srv.onConnection = [](const SocketChannelPtr& channel) {
         std::string peeraddr = channel->peeraddr();
         if (channel->isConnected()) {
             channel->newContextPtr<Session>();
@@ -65,70 +68,72 @@ int main(int argc, char* argv[]) {
         } else {
             hlogi("%s disconnected! connfd=%d id=%d", peeraddr.c_str(), channel->fd(), channel->id());
             auto session = channel->getContextPtr<Session>();
-            SocketChannelPtr peer = srv.getChannelById(session->pid);
+            SocketChannelPtr peer = session->peer;
             if (!peer) return;
             if (session->serv) {
+                hlogi("close client %d for server %s disconnect", peer->id(), session->name.c_str());
                 peer->close();
                 //srv.removeChannel(peer);
             }
             else {
-                peer->getContextPtr<Session>()->pid = 0;
+                auto server = peer->getContextPtr<Session>();
+                if (server->peer == channel) {
+                    hlogi("reset server %s peer due to client %d disconnet", server->name.c_str(), channel->id());
+                    server->peer = nullptr;
+                }
             }
         }
     };
     srv.onMessage = [&srv](const SocketChannelPtr& channel, Buffer* buf) {
         auto session = channel->getContextPtr<Session>();
-        if (!session->pid) {
-            printf("%s> %.*s\n", channel->peeraddr().c_str(), (int)buf->size(), (char*)buf->data());
-            // 处理CMD请求
-            auto lst = hv::split(hv::trim((const char*)buf->data()), ' ');
-            if (lst.size() < 2) {
-                return;
-            }
-            std::string cmd = lst[0];
-            if (cmd == "serv") { // 注册代理
-                session->serv = true;
-                session->name = lst[1];
-                hlogi("regist serv %s", lst[1].c_str());
+        if (session->peer) {
+            session->peer->write(buf);
+            return;
+        }
+
+        printf("%s> %.*s\n", channel->peeraddr().c_str(), (int)buf->size(), (char*)buf->data());
+        // 处理CMD请求
+        auto lst = hv::split(hv::trim((const char*)buf->data()), ' ');
+        if (lst.size() < 2) {
+            return;
+        }
+        std::string cmd = lst[0];
+        if (cmd == "serv") { // 注册代理
+            session->serv = true;
+            session->name = lst[1];
+            hlogi("regist serv %s", lst[1].c_str());
+            channel->setUnpack(nullptr);
+        }
+        else if(cmd == "conn") { // 连接代理
+            auto name = lst[1];
+            SocketChannelPtr server;
+            srv.foreachChannel([name, &server](const SocketChannelPtr& channel){
+                auto session = channel->getContextPtr<Session>();
+                if (session && session->serv && session->name == name) {
+                    server = channel;
+                }
+            });
+            if (server) {
+                hlogi("connect serv %s", lst[1].c_str());
+                auto peer = server->getContextPtr<Session>();
+                if (peer->peer) 
+                    peer->peer->close();
+                peer->peer = channel;
+                session->peer = server;
                 channel->setUnpack(nullptr);
             }
-            else if(cmd == "conn") { // 连接代理
-                auto name = lst[1];
-                SocketChannelPtr server;
-                srv.foreachChannel([name, &server](const SocketChannelPtr& channel){
-                    auto session = channel->getContextPtr<Session>();
-                    if (session && session->serv && session->name == name) {
-                        server = channel;
-                    }
-                });
-                if (server) {
-                    hlogi("connect serv %s", lst[1].c_str());
-                    auto peer = server->getContextPtr<Session>();
-                    peer->pid = channel->id();
-                    session->pid = server->id();
-                    channel->setUnpack(nullptr);
-                }
-                else {
-                    std::string error = "error sever " + name + " not found";
-                    hlogi("%s", error.c_str());
-                    writeChannel(channel, error);
-                }
-            }
-            else if(cmd == "list") { // 列出代理状态
-                std::string resp = listServer(srv, std::stoi(lst[1]));
-                writeChannel(channel, resp);
+            else {
+                std::string error = "error sever " + name + " not found";
+                hlogi("%s", error.c_str());
+                writeChannel(channel, error);
             }
         }
-        else {
-            SocketChannelPtr peer = srv.getChannelById(session->pid);
-            if (peer)
-                peer->write(buf);
-            else
-                hlogw("without peer %d ignore %d message", session->pid, (int)buf->size());
-        }
-        
+        else if(cmd == "list") { // 列出代理状态
+            std::string resp = listServer(srv, std::stoi(lst[1]));
+            writeChannel(channel, resp);
+        }        
     };
-    srv.setThreadNum(4);
+    //srv.setThreadNum(4);
     srv.setLoadBalance(LB_LeastConnections);
     
     // 每次接收一以0结尾的字符串
