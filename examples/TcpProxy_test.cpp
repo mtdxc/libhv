@@ -16,8 +16,10 @@ using namespace hv;
 struct Session {
     SocketChannelPtr peer;
     bool serv = false;
+    bool admin = false;
     std::string name;
 };
+std::string adminToken;
 
 std::string listSession(TcpServer& srv, int server, int filter) {
     std::ostringstream stm;
@@ -51,7 +53,8 @@ int main(int argc, char* argv[]) {
         return -10;
     }
     int port = atoi(argv[1]);
-
+    if (argc > 2) 
+        adminToken = argv[2];
     hlog_set_level(LOG_LEVEL_DEBUG);
 
     TcpServer srv;
@@ -90,11 +93,16 @@ int main(int argc, char* argv[]) {
             session->peer->write(buf);
             return;
         }
+        else if (session->serv) {
+            hlogi("%s without peer skip %d msg", session->name.c_str(), (int)buf->size());
+            return;
+        }
 
         printf("%s> %.*s\n", channel->peeraddr().c_str(), (int)buf->size(), (char*)buf->data());
         // 处理CMD请求
         auto lst = hv::split(hv::trim((const char*)buf->data()), ' ');
         if (lst.size() < 2) {
+            writeChannel(channel, "error missing args");
             return;
         }
         std::string cmd = lst[0];
@@ -129,9 +137,41 @@ int main(int argc, char* argv[]) {
             }
         }
         else if(cmd == "list") { // 列出代理状态
-            std::string resp = listServer(srv, std::stoi(lst[1]));
-            writeChannel(channel, resp);
-        }        
+            writeChannel(channel, listServer(srv, std::stoi(lst[1])));
+        }
+        else if (cmd == "auth") {
+            if (adminToken == lst[1]) {
+                session->admin = true;
+                writeChannel(channel, "auth ok");
+            }
+            else {
+                writeChannel(channel, "error token dismatch");
+            }
+        }
+        else if (cmd == "ls") {
+            if (!session->admin) {
+                writeChannel(channel, "auth first");
+                return;
+            }
+            writeChannel(channel, listSession(srv, true, std::stoi(lst[1])));
+        }
+        else if (cmd == "lc") {
+            if (!session->admin) {
+                writeChannel(channel, "auth first");
+                return;
+            }
+            writeChannel(channel, listSession(srv, false, std::stoi(lst[1])));
+        }
+        else if (cmd == "kill") {
+            if (!session->admin) {
+                writeChannel(channel, "auth first");
+                return;
+            }
+            for (size_t i = 1; i < lst.size(); i++) {
+                auto channel = srv.getChannelById(std::stoi(lst[i]));
+                if (channel) channel->close();
+            }
+        }
     };
     //srv.setThreadNum(4);
     srv.setLoadBalance(LB_LeastConnections);
