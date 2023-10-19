@@ -47,8 +47,13 @@ public:
     MqttMessageCallback onPublish;
     MqttMessageCallback onSubscribe;
     MqttMessageCallback onUnsubscribe;
+    std::function<mqtt_connack_e(const SocketChannelPtr&, mqtt_conn_t*)> onAuth;
 
     MqttServer(EventLoopPtr loop = NULL) : TcpServer(loop) {
+        // 总是接受连接请求
+        onAuth = [](const SocketChannelPtr&, mqtt_conn_t*){
+            return MQTT_CONNACK_ACCEPTED;
+        };
         static unpack_setting_t mqtt_unpack_setting;
         mqtt_unpack_setting.mode = UNPACK_BY_LENGTH_FIELD;
         mqtt_unpack_setting.package_max_length = DEFAULT_MQTT_PACKAGE_MAX_LENGTH;
@@ -57,7 +62,6 @@ public:
         mqtt_unpack_setting.length_field_bytes = 1;
         mqtt_unpack_setting.length_field_coding = ENCODE_BY_VARINT;
         setUnpack(&mqtt_unpack_setting);
-
         onMessage = [this](const TSocketChannelPtr& channel, Buffer* buf) {
             mqtt_head_t head;
             memset(&head, 0, sizeof(mqtt_head_t));
@@ -67,6 +71,7 @@ public:
             p += headlen;
             onMqttMessage(channel, &head, p);
         };
+        
     }
 
     void onMqttMessage(const TSocketChannelPtr& channel, mqtt_head_t* head, uint8_t* p) {
@@ -74,10 +79,35 @@ public:
         switch (head->type) {
         case MQTT_TYPE_CONNECT:
         {//MQTT_TYPE_CONNACK       = 2,
+            // 2 + protocol_name + 1 protocol_version + 1 conn_flags + 2 keepalive + 2 + [client_id] +
+            // [2 + will_topic + 2 + will_payload] + * [2 + username] + [2 + password]
+            uint8_t* end = p + head->length;
+            mqtt_conn_t conn;
+            memset(&conn, 0, sizeof conn);
+            POPSTR(p, conn.protocol);
+            POP8(p, conn.version);
+            POP8(p, conn.conn_flag);
+            POP16(p, conn.keepalive);
+            POPSTR(p, conn.client_id);
+            if (p > end) return;
+            if (conn.conn_flag & MQTT_CONN_HAS_WILL) {
+                POPSTR(p, conn.will_topic);
+                if (p > end) return;
+                POPSTR(p, conn.will_payload);
+                if (p > end) return;
+            }
+            if (conn.conn_flag & MQTT_CONN_HAS_USERNAME) {
+                POPSTR(p, conn.user_name);
+                if (p > end) return;
+            }
+            if (conn.conn_flag & MQTT_CONN_HAS_PASSWORD) {
+                POPSTR(p, conn.password);
+                if (p > end) return;
+            }
             send_head(channel, MQTT_TYPE_CONNACK, 2);
             unsigned char body[2];
             body[0] = 0; //conn_flag
-            body[1] = MQTT_CONNACK_ACCEPTED;
+            body[1] = onAuth(channel, &conn);
             channel->write(body, 2);
         } break;
         case MQTT_TYPE_PUBLISH:
@@ -196,6 +226,13 @@ int main(int argc, char* argv[]) {
         else {
             printf("%s disconnected! connfd=%d id=%d tid=%ld\n", peeraddr.c_str(), channel->fd(), channel->id(), currentThreadEventLoop->tid());
         }
+    };
+    srv.onAuth = [](const SocketChannelPtr&, mqtt_conn_t* msg) {
+        printf("onAuth %.*s %.*s %.*s\n", 
+            msg->client_id.len, msg->client_id.data,
+            msg->user_name.len, msg->user_name.data, 
+            msg->password.len, msg->password.data);
+        return MQTT_CONNACK_ACCEPTED;
     };
     srv.onPublish = [](const SocketChannelPtr&, mqtt_message_t* msg) {
         printf("topic %.*s> %.*s\n", msg->topic_len, msg->topic, msg->payload_len, msg->payload);
