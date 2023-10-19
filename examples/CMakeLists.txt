@@ -188,7 +188,10 @@ if(WITH_MQTT)
     add_executable(mqtt_client_test mqtt/mqtt_client_test.cpp)
     target_link_libraries(mqtt_client_test ${HV_LIBRARIES})
 
-    list(APPEND EXAMPLES mqtt_sub mqtt_pub mqtt_client_test)
+    add_executable(mqtt_server_test mqtt/mqtt_server_test.cpp)
+    target_link_libraries(mqtt_server_test ${HV_LIBRARIES})
+
+    list(APPEND EXAMPLES mqtt_sub mqtt_pub mqtt_client_test mqtt_server_test)
 endif()
 
 add_custom_target(examples DEPENDS ${EXAMPLES})
