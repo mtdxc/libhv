@@ -57,6 +57,25 @@ typedef struct mqtt_head_s {
     unsigned int  length;
 } mqtt_head_t;
 
+typedef struct mqtt_str_s {
+    unsigned short  len;
+    const char*     data;
+} mqtt_str_t;
+#define POPSTR(p, str) POP16(p, str.len); str.data = (const char*)p; p+=str.len
+#define PUSHSTR(p, str) PUSH16(p, str.len); PUSH_N(p, str.data, str.len)
+
+typedef struct mqtt_conn_s {
+    mqtt_str_t protocol;
+    unsigned char version;
+    unsigned char conn_flag;
+    unsigned short keepalive;
+    mqtt_str_t client_id;
+    mqtt_str_t will_topic;
+    mqtt_str_t will_payload;
+    mqtt_str_t user_name;
+    mqtt_str_t password;
+} mqtt_conn_t;
+
 typedef struct mqtt_message_s {
     unsigned int    topic_len;
     const char*     topic;
