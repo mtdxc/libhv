@@ -8,15 +8,64 @@
  */
 
 #include <iostream>
+#include <algorithm>
 #include "mqtt_protocol.h"
 #include "mqtt_client.h"
 #include "TcpServer.h"
 #include "hendian.h"
+#include <list>
+#include <set>
 using namespace hv;
 
 #define TEST_TLS        0
 
 class MqttServer : public TcpServer {
+    using SubSet = std::set<std::string>;
+    using Topic = std::list<SocketChannelPtr>;
+    using TopicPtr = std::shared_ptr<Topic>;
+    // 主题列表用subs进行管理
+    std::recursive_mutex topicLock;
+    std::map<std::string, TopicPtr> topicMap;
+    TopicPtr getTopic(const std::string& name, bool create) { 
+        TopicPtr ret;
+        auto it = topicMap.find(name);
+        if (it != topicMap.end()) 
+            ret =  it->second;
+        else if (create) {
+            ret = std::make_shared<Topic>();
+            topicMap[name] = ret;
+        }
+        return ret;
+    }
+    // 删除某个主题的订阅
+    void delSubscribe(const std::string& name, SocketChannelPtr chann) { 
+        std::unique_lock<std::recursive_mutex> l(topicLock);
+        auto topic = getTopic(name, false);
+        if (topic) {
+            auto it = std::find(topic->begin(), topic->end(), chann);
+            if (it != topic->end()) topic->erase(it);
+            if (topic->empty())
+                topicMap.erase(name);
+        }
+    }
+    void addSubscribe(const std::string& name, SocketChannelPtr chann) {
+        std::unique_lock<std::recursive_mutex> l(topicLock);
+        auto topic = getTopic(name, true);
+        auto it = std::find(topic->begin(), topic->end(), chann);
+        if (it == topic->end()) topic->push_back(chann);
+    }
+    void publishMessage(const std::string& name, uint8_t* buff, int size) {
+        TopicPtr t;
+        { 
+            std::unique_lock<std::recursive_mutex> l(topicLock);
+            t = getTopic(name, false);
+        }
+        if (t) {
+            for (auto it = t->begin(); it != t->end(); it++) {
+                (**it).write(buff, size);
+            }
+        }
+    }
     int send_head(const SocketChannelPtr& channel, int type, int length) {
         mqtt_head_t head;
         memset(&head, 0, sizeof(head));
@@ -68,13 +117,28 @@ public:
             unsigned char* p = (unsigned char*)buf->data();
             int headlen = mqtt_head_unpack(&head, p, buf->size());
             if (headlen <= 0) return;
-            p += headlen;
-            onMqttMessage(channel, &head, p);
+            onMqttMessage(channel, &head, p, p+headlen);
         };
-        
+        onConnection = [this](const SocketChannelPtr& channel) {
+            std::string peeraddr = channel->peeraddr();
+            if (channel->isConnected()) {
+                printf("%s connected! connfd=%d id=%d tid=%ld\n", peeraddr.c_str(), channel->fd(), channel->id(), currentThreadEventLoop->tid());
+                channel->newContext<SubSet>();
+            }
+            else {
+                printf("%s disconnected! connfd=%d id=%d tid=%ld\n", peeraddr.c_str(), channel->fd(), channel->id(), currentThreadEventLoop->tid());
+                SubSet* set = channel->getContext<SubSet>();
+                if (set) {
+                    for (auto it : *set) {
+                        delSubscribe(it, channel);
+                    }
+                    delete set;
+                }
+            }
+        };
     }
 
-    void onMqttMessage(const TSocketChannelPtr& channel, mqtt_head_t* head, uint8_t* p) {
+    void onMqttMessage(const TSocketChannelPtr& channel, mqtt_head_t* head, uint8_t* start, uint8_t* p) {
         int mid = 0;
         switch (head->type) {
         case MQTT_TYPE_CONNECT:
@@ -145,6 +209,9 @@ public:
             } else if (message.qos == 2) {
                 send_head_with_mid(channel, MQTT_TYPE_PUBREC, mid);
             }
+            std::string topic(message.topic, message.topic_len);
+            publishMessage(topic, start, end - start);
+
             if (onPublish)
                 onPublish(channel, &message);
         } break;
@@ -177,6 +244,10 @@ public:
                 message.topic = (char*)p;
                 p += message.topic_len;
                 POP8(p, message.qos);
+
+                std::string topic(message.topic, message.topic_len);
+                addSubscribe(topic, channel);
+                channel->getContext<SubSet>()->insert(topic);
                 if (onSubscribe) onSubscribe(channel, &message);
             }
             break;
@@ -191,6 +262,10 @@ public:
                 // NOTE: Not deep copy
                 message.topic = (char*)p;
                 p += message.topic_len;
+
+                std::string topic(message.topic, message.topic_len);
+                delSubscribe(topic, channel);
+                channel->getContext<SubSet>()->erase(topic);
                 if (onUnsubscribe) onUnsubscribe(channel, &message);
             }        
             break;
@@ -218,15 +293,6 @@ int main(int argc, char* argv[]) {
         return -20;
     }
     printf("server listen on port %d, listenfd=%d ...\n", port, listenfd);
-    srv.onConnection = [](const SocketChannelPtr& channel) {
-        std::string peeraddr = channel->peeraddr();
-        if (channel->isConnected()) {
-            printf("%s connected! connfd=%d id=%d tid=%ld\n", peeraddr.c_str(), channel->fd(), channel->id(), currentThreadEventLoop->tid());
-        }
-        else {
-            printf("%s disconnected! connfd=%d id=%d tid=%ld\n", peeraddr.c_str(), channel->fd(), channel->id(), currentThreadEventLoop->tid());
-        }
-    };
     srv.onAuth = [](const SocketChannelPtr&, mqtt_conn_t* msg) {
         printf("onAuth %.*s %.*s %.*s\n", 
             msg->client_id.len, msg->client_id.data,
