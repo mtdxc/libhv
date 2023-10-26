@@ -192,7 +192,7 @@ mqtt_pub: prepare
 	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS) mqtt" SRCS="examples/mqtt/mqtt_pub.c"
 
 mqtt_client_test: prepare
-	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS) mqtt" SRCS="examples/mqtt/mqtt_client_test.cpp"
+	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS) mqtt cpputil" SRCS="examples/mqtt/mqtt_client_test.cpp"
 
 kcptun: kcptun_client kcptun_server
 
