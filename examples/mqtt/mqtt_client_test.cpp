@@ -14,6 +14,7 @@
 #include <fstream>
 #include <thread>
 #include "hstring.h"
+#include "json.hpp"
 #include "mqtt_client.h"
 using namespace hv;
 
@@ -28,6 +29,7 @@ using namespace hv;
 #define TEST_AUTH       0
 #define TEST_RECONNECT  1
 #define TEST_QOS        0
+#define TEST_JSONDUMP   0
 
 uint8_t getCrc(const uint8_t* buff, int size) {
     uint8_t ret = 0;
@@ -86,6 +88,64 @@ public:
     bool setValue(uint32_t val);
     uint32_t getValue() const { return rawValue; }
 };
+
+//NLOHMANN_DEFINE_TYPE_INTRUSIVE(Flag, offset, size, name, rawValue, mod, unit, time, d0Type, enums, bits);
+void to_json(nlohmann::json& json, const Flag& f) {
+    json["offset"] = f.offset;
+    json["size"] = f.size;
+    json["name"] = f.name;
+    json["val"] = f.rawValue;
+    if (f.mod && f.mod != 1) json["mod"] = f.mod;
+    if (f.unit.length()) json["unit"] = f.unit;
+    if (f.time) json["time"] = f.time;
+    if (f.d0Type) json["d0Type"] = f.d0Type;
+    if (f.enums.size()) {
+        auto& map = json["enums"];
+        for (auto it : f.enums) {
+            map[std::to_string(it.first)] = it.second;
+        }
+    }
+    if (f.bits.size()) {
+        auto& map = json["bits"];
+        for (auto it : f.bits) {
+            map[std::to_string(it.first)] = it.second;
+        }
+    }
+}
+
+void from_json(const nlohmann::json& json, Flag& f) {
+    f.offset = json["offset"].get<int>();
+    f.size = json["size"].get<char>();
+    f.name = json["name"].get<std::string>();
+    f.rawValue = json["val"].get<uint32_t>();
+    auto it = json.find("mod");
+    if (json.end() != it)
+        f.mod = it->get<int>();
+
+    it = json.find("unit");
+    if (json.end() != it)
+        f.unit = it->get<std::string>();
+
+    it = json.find("d0Type");
+    if (json.end() != it)
+        f.d0Type = it->get<int>();
+
+    f.enums.clear();
+    it = json.find("enums");
+    if (json.end() != it) {
+        for (auto child : it->items()) {
+            f.enums[std::stoi(child.key())] = child.value().get<std::string>();
+        }
+    }
+
+    f.bits.clear();
+    it = json.find("bits");
+    if (json.end() != it) {
+        for (auto child : it->items()) {
+            f.bits[std::stoi(child.key())] = child.value().get<std::string>();
+        }
+    }
+}
 
 bool Flag::setValue(uint8_t* buff, int total)
 {
@@ -174,6 +234,7 @@ public:
     PduParser() {}
     PduParser(uint8_t c, const char* d) : cmd(c), desc(d) {}
     using Ptr = std::shared_ptr<PduParser>;
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(PduParser, cmd, desc, flags);
 
     void parse(uint8_t* buff, int size) {
         std::ostringstream stm;
@@ -247,6 +308,23 @@ public:
         printf("支持指令有:\n");
         for (auto it : parses) {
             printf("\t%X\t%s\n", it.first, it.second->desc.c_str());
+        }
+    }
+    void dumpCmds(const char* file) {
+        nlohmann::json root;
+        for (auto it : parses) {
+            root.push_back(*it.second);
+        }
+        std::ofstream stm(file);
+        stm << root.dump(2);
+    }
+    void loadCmds(const char* file) {
+        std::ifstream stm(file);
+        nlohmann::json root = nlohmann::json::parse(stm);
+        parses.clear();
+        for (auto it : root) {
+            auto parser = std::make_shared<PduParser>(it);
+            parses[parser->cmd] = parser;
         }
     }
 };
@@ -634,6 +712,11 @@ int main(int argc, char** argv) {
 #endif
     cli.connect(host, port, ssl);
     std::thread([] { cli.run(); }).detach();
+#if TEST_JSONDUMP
+    const char* dumpfile = "cmds.json";
+    cli.dumpCmds(dumpfile);
+    cli.loadCmds(dumpfile);
+#endif
     printHelp();
     std::string str;
     while (std::getline(std::cin, str)) {
