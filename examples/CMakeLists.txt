@@ -186,6 +186,8 @@ if(WITH_MQTT)
     target_link_libraries(mqtt_pub ${HV_LIBRARIES})
 
     add_executable(mqtt_client_test mqtt/mqtt_client_test.cpp)
+    # if(MSVC) target_compile_options(mqtt_client_test PRIVATE /utf-8) end()
+    target_compile_options(mqtt_client_test PRIVATE "$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
     target_link_libraries(mqtt_client_test ${HV_LIBRARIES})
 
     add_executable(mqtt_server_test mqtt/mqtt_server_test.cpp)

@@ -671,7 +671,14 @@ void printHelp() {
     cli.printCmds();
 }
 
+// 此时工程的c++编译选项还必须加上/utf-8
+#ifdef _WIN32
+#include <locale.h>
 int main(int argc, char** argv) {
+    setlocale(LC_ALL, "en_US.UTF-8");
+#else
+int main(int argc, char** argv) {
+#endif
     const char* host = "106.12.23.22"; 
     int port = 1883;
     const char* user = nullptr;
