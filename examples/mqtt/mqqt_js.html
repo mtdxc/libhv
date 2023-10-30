@@ -1,112 +1,15 @@
 <html>
 <script src="https://cdn.bootcdn.net/ajax/libs/mqtt/5.1.3/mqtt.min.js"></script>
+<script src="https://unpkg.com/vue@2/dist/vue.js"></script>
+<script src="https://unpkg.com/element-ui/lib/index.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/element-ui/lib/theme-chalk/index.css">
 <script>
-    // 连接地址，有很多连接失败都是因为地址没写对
-    const connectUrl = 'ws://106.12.23.22:8883/mqtt';
-    // 客户端ID（注意：客户端不能写死，如果多人用同一个客户端，那么就会出现MQTT一直是断开重连断开重连的问题）
-    const clientId = `mqtt_${Math.random().toString(16).slice(3)}`;
-    const devId = 0x01;
-    // 连接设置
-    let options = {
-        clean: true,	// 保留会话
-        connectTimeout: 4000,	// 超时时间
-        reconnectPeriod: 1000,	// 重连时间间隔
-        // 认证信息
-        clientId,
-        username: 'mppt',
-        password: 'mppt123',
-    }
-
-    // 创建客户端
-    var client = mqtt.connect(connectUrl, options);
-
-    // 成功连接后触发的回调
-    client.on('connect', () => {
-        console.log('已经连接成功');
-        // 需要订阅的主题
-        const resp_topic = 'mppt/resp';
-        // 订阅主题，这里可以订阅多个主题
-        client.subscribe(resp_topic, () => {
-            console.log(`订阅了主题 ${resp_topic}`)
-            sendCmd(0xb2);
-        });
-    });
-
-    // 当客户端收到一个发布过来的消息时触发回调
-    /** 
-     * topic：收到的报文的topic 
-     * message：收到的数据包的负载playload 
-     * packet：MQTT 报文信息，其中包含 QoS、retain 等信息
-     */
-    client.on('message', function (topic, message) {
-        // 这里有可能拿到的数据格式是Uint8Array格式，可以直接用toString转成字符串
-        // let data = JSON.parse(message.toString());
-        // console.log(topic, "：", message.toString())
-        if (message.length > 2) {
-            var parser = getParser(message[1]);
-            if (parser) {
-                parser.parse(message);
-            }
-        }
-    });
-
-    /* 当重新连接启动触发回调 
-    client.on('reconnect', () => {
-        console.log("正在重新连接")
-    });
-    
-    // 连接断开后触发的回调 
-    client.on("close",function () {
-        console.log("已断开连接")
-    });
-    
-    // 在收到 Broker（消息服务器） 发送过来的断开连接的报文时触发的回调，参数 packet 即为断开连接时接收到的报文。MQTT 5.0特性 
-    client.on("disconnect",function (packet) { 
-        console.log("从broker接收到断开连接的报文："+packet); 
-    });
-    
-    // 客户端脱机下线触发回调 
-    client.on("offline",function () {
-        console.log("您已断开连接，请检查网络")
-    });
-    
-    // 当客户端无法成功连接时或发生解析错误时触发的回调，参数 error 为错误信息
-    client.on("error",(error) =>{
-        console.log("客户端出现错误：", error);
-    });
-    */
-    //当客户端发送任何数据包时发出。这包括publish()以及MQTT用于管理订阅和连接的包 
-    client.on("packetsend", (packet) => {
-        console.log("send packet", packet);
-    });
-
-    //当客户端接收到任何报文时发出。这包括来自订阅主题的信息包以及MQTT用于管理订阅和连接的信息 
-    client.on("packetreceive", (packet) => {
-        // 会在 client.on('message', function (topic, message, packet) {}); 之前触发
-        console.log("recv packet", packet);
-    });
-
     function getCrc(buf, size = 7) {
         var sum = 0;
         for (var i = 0; i < 7; i++)
             sum += buf[i];
         return sum & 0xFF;
     }
-
-    function sendCmd(cmd, type = 1) {
-        // 发送信息给 topic（主题）
-        var buf = new Uint8Array(8);
-        buf[0] = devId;
-        buf[1] = cmd;
-        buf[2] = type;
-        buf[3] = 0x00;
-        buf[4] = 0x00;
-        buf[5] = 0x00;
-        buf[6] = 0x00;
-        buf[7] = getCrc(buf);
-        client.publish('mppt/req', buf);
-    }
-
 
     class Flag {
         constructor(o, s, n, u = '') {
@@ -188,7 +91,7 @@
         // 获取原始内存值
         setValue(buf) {
             if (!this.inRange(buf.length)) {
-                console.log(`skip ${name} out of range ${offset},${size} total ${total}`);
+                console.warn(`skip ${this.name} out of range ${this.offset},${this.size} total ${buf.length}`);
                 return false;
             }
             var ret = 0;
@@ -201,7 +104,7 @@
 
         setRawValue(val) {
             if (this.enums.size && !this.enums.has(val)) {
-                console.log(`warning ${name} val ${val} not exist in enums`);
+                console.warn(`${this.name} val ${val} not exist in enums`);
                 return false;
             }
             this.rawValue = val;
@@ -565,13 +468,276 @@
 
     registParser();
     console.log(parses);
-    // 关闭客户端（断开连接）
-    // client.end();
-
 
 </script>
 
 <body>
+    <div id="app">
+        <el-tabs type="border-card" v-model="select_tab" @tab-click="handleTabClick">
+            <el-tab-pane label="连接设置" name="setting">
+                <el-form ref="form" label-width="80px">
+                    <el-form-item label="地址">
+                        <el-input v-model="mqtt_addr"></el-input>
+                    </el-form-item>
+                    <el-form-item label="用户名">
+                        <el-input v-model="mqtt_user"></el-input>
+                    </el-form-item>
+                    <el-form-item label="密码">
+                        <el-input v-model="mqtt_pwd" show-password></el-input>
+                    </el-form-item>
+                    <el-form-item label="请求主题">
+                        <el-input v-model="mqtt_req_topic"></el-input>
+                    </el-form-item>
+                    <el-form-item label="响应主题">
+                        <el-input v-model="mqtt_resp_topic"></el-input>
+                    </el-form-item>
+                    <el-form-item label="设备ID">
+                        <el-input v-model="devId"></el-input>
+                    </el-form-item>
+                    <el-form-item label="刷新周期">
+                        <el-select v-model="refresh_interval" placeholder="请选择">
+                            <el-option v-for="item in refresh_options" :key="item.value" :label="item.label"
+                                :value="item.value">
+                            </el-option>
+                        </el-select>
+                        <!-- <el-input v-model="refresh_interval"></el-input> -->
+                    </el-form-item>
+                    <el-form-item>
+                        <el-button type="primary" @click="connectServr">连接</el-button>
+                        <el-button>取消</el-button>
+                    </el-form-item>
+                </el-form>
+            </el-tab-pane>
+
+            <el-tab-pane label="查询参数" name="all_args"> </el-tab-pane>
+            <el-tab-pane label="设置参数" name="edit_args"> </el-tab-pane>
+            <el-tab-pane label="运行参数" name="run_args"> </el-tab-pane>
+                <!-- <el-row>
+                    <el-button type="primary" @click="sendCmd(0xb1)">查询参数</el-button>
+                    <el-button type="success" @click="sendCmd(0xb2)">设置参数</el-button>
+                    <el-button type="info" @click="sendCmd(0xb3)">运行参数</el-button>
+                </el-row> -->
+            <el-table :data="parser" style="width: 100%" stripe v-if="select_tab!='setting'">
+                <el-table-column prop="name" label="名字" width="180">
+                </el-table-column>
+                <el-table-column prop="" label="值">
+                    <template slot-scope="scope">
+                        <span v-if="scope.row.d0Type == 0">{{scope.row.toString()}}</span>
+                        <el-row v-else>
+                            <el-select v-if="scope.row.enums.size > 0" v-model="enums" placeholder="请选择">
+                                <el-option v-for="item in scope.row.enums" :key="item[0]" :label="item[1]"
+                                    :value="item[0]">
+                                </el-option>
+                            </el-select>
+                            <el-checkbox-group v-else-if="scope.row.bits.size > 0" v-model="bits">
+                                <el-checkbox v-for="item in scope.row.bits" :key="item[0]"
+                                    :label="item[1]">{{item[1]}}
+                                </el-checkbox>
+                                <!-- <el-checkbox label="禁用" disabled></el-checkbox> -->
+                            </el-checkbox-group>
+                            <el-input v-else v-model="scope.row.rawValue" style="width: 150px;"></el-input>
+                            <el-button @click.prevent="editFlag(scope.row)">更新</el-button>
+                        </el-row>
+                    </template>
+                </el-table-column>
+            </el-table>
+
+    </div>
 </body>
+<script>
+    new Vue({
+        el: '#app',
+        mounted() {
+        },
+        unmounted() {
+            if (this.refreshTimer)
+                clearInterval(this.refreshTimer);
+            // 关闭客户端（断开连接）
+            this.client.end();
+        },
+        data: function () {
+            return {
+                select_tab: 'setting',
+                mqtt_addr: localStorage.getItem("mqtt_addr") || 'ws://106.12.23.22:8883/mqtt',
+                mqtt_user: localStorage.getItem("mqtt_user"),
+                mqtt_pwd: localStorage.getItem("mqtt_pwd"),
+                mqtt_req_topic: localStorage.getItem("mqtt_req_topic") || 'mppt/req',
+                mqtt_resp_topic: localStorage.getItem("mqtt_resp_topic") || 'mppt/resp',
+                refresh_interval: localStorage.getItem("refresh_interval") || 1000,
+                devId: localStorage.getItem("dev_id") || 0x01,
+                cmd: 0,
+                refresh_options: [{
+                    value: '0',
+                    label: '手工刷新'
+                }, {
+                    value: '500',
+                    label: '一秒两次'
+                }, {
+                    value: '1000',
+                    label: '一秒一次'
+                }
+                ],
+                refreshTimer: null,
+                enums: 0,
+                bits: [],
+                client: null,
+                parser: null,
+            }
+        },
+        methods: {
+            log(obj) {
+                console.log(obj);
+            },
+            saveConfig() {
+                localStorage.setItem("mqtt_addr", this.mqtt_addr);
+                localStorage.setItem("mqtt_user", this.mqtt_user);
+                localStorage.setItem("mqtt_pwd", this.mqtt_pwd);
+                localStorage.setItem("mqtt_req_topic", this.mqtt_req_topic);
+                localStorage.setItem("mqtt_resp_topic", this.mqtt_resp_topic);
+                localStorage.setItem('refresh_interval', this.refresh_interval);
+                localStorage.setItem('dev_id', this.devId);
+            },
+            connectServr() {
+                // 连接地址，有很多连接失败都是因为地址没写对
+                // 客户端ID（注意：客户端不能写死，如果多人用同一个客户端，那么就会出现MQTT一直是断开重连断开重连的问题）
+                // const clientId = `mqtt_${Math.random().toString(16).slice(3)}`;
+                // 连接设置
+                let options = {
+                    clean: true,	// 保留会话
+                    connectTimeout: 4000,	// 超时时间
+                    reconnectPeriod: 1000,	// 重连时间间隔
+                    // 认证信息
+                    // clientId,
+                    username: this.mqtt_user,
+                    password: this.mqtt_pwd,
+                }
+
+                this.saveConfig();
+                // 创建客户端
+                var client = mqtt.connect(this.mqtt_addr, options);
+                // 成功连接后触发的回调
+                client.on('connect', () => {
+                    console.log('已经连接成功');
+                    // 需要订阅的主题
+                    const resp_topic = this.mqtt_resp_topic;
+                    // 订阅主题，这里可以订阅多个主题
+                    client.subscribe(resp_topic, () => {
+                        console.log(`订阅了主题 ${resp_topic}`)
+                        this.select_tab = 'run_args';
+                        this.sendCmd(0xb3);
+                    });
+                });
+
+                // 当客户端收到一个发布过来的消息时触发回调
+                /** 
+                 * topic：收到的报文的topic 
+                 * message：收到的数据包的负载playload 
+                 * packet：MQTT 报文信息，其中包含 QoS、retain 等信息
+                 */
+                client.on('message', (topic, message) => {
+                    // 这里有可能拿到的数据格式是Uint8Array格式，可以直接用toString转成字符串
+                    // let data = JSON.parse(message.toString());
+                    // console.log(topic, "：", message.toString())
+                    if (message.length > 2) {
+                        var parser = getParser(message[1]);
+                        if (parser) {
+                            parser.parse(message);
+                            if (message[1] == this.cmd)
+                                this.parser = parser.flags.slice(3);
+                        }
+                    }
+                });
+                /* 当重新连接启动触发回调 
+                client.on('reconnect', () => {
+                    console.log("正在重新连接")
+                });
+                
+                // 连接断开后触发的回调 
+                client.on("close",function () {
+                    console.log("已断开连接")
+                });
+                
+                // 在收到 Broker（消息服务器） 发送过来的断开连接的报文时触发的回调，参数 packet 即为断开连接时接收到的报文。MQTT 5.0特性 
+                client.on("disconnect",function (packet) { 
+                    console.log("从broker接收到断开连接的报文："+packet); 
+                });
+                
+                // 客户端脱机下线触发回调 
+                client.on("offline",function () {
+                    console.log("您已断开连接，请检查网络")
+                });
+                
+                // 当客户端无法成功连接时或发生解析错误时触发的回调，参数 error 为错误信息
+                client.on("error",(error) =>{
+                    console.log("客户端出现错误：", error);
+                });
+                //当客户端发送任何数据包时发出。这包括publish()以及MQTT用于管理订阅和连接的包 
+                client.on("packetsend", (packet) => {
+                    console.log("send packet", packet);
+                });
+
+                //当客户端接收到任何报文时发出。这包括来自订阅主题的信息包以及MQTT用于管理订阅和连接的信息 
+                client.on("packetreceive", (packet) => {
+                    // 会在 client.on('message', function (topic, message, packet) {}); 之前触发
+                    console.log("recv packet", packet);
+                });
+                */
+                this.client = client;
+            },
+            sendCmd(cmd, type = 1) {
+                if (!this.client) {
+                    this.$message({
+                        message: '请先连接MQTT服务器',
+                        type: 'warning'
+                    });
+                    return;
+                }
+                if (this.refresh_interval > 0) {
+                    if (this.refreshTimer)
+                        clearInterval(this.refreshTimer);
+                    this.refreshTimer = setInterval(() => {
+                        this.publishCmd(cmd, type);
+                    }, this.refresh_interval);
+                }
+                this.cmd = cmd;
+                this.publishCmd(cmd, type);
+            },
+            publishCmd(cmd, type = 1) {
+                // 发送信息给 topic（主题）
+                var buf = new Uint8Array(8);
+                buf[0] = this.devId;
+                buf[1] = cmd;
+                buf[2] = type;
+                buf[3] = 0x00;
+                buf[4] = 0x00;
+                buf[5] = 0x00;
+                buf[6] = 0x00;
+                buf[7] = getCrc(buf);
+                this.client.publish(this.mqtt_req_topic, buf);
+            },
+            editFlag(flag) {
+                console.log(flag);
+            },
+            handleTabClick(tab, event) {
+                console.log(tab, event);
+                if (tab.name == 'setting') {
+                    // 触发‘配置管理’事件
+                    if (this.refreshTimer)
+                        clearInterval(this.refreshTimer);
+                } else if (tab.name == 'all_args'){
+                    this.sendCmd(0xb1);
+                } else if (tab.name == 'edit_args'){
+                    this.sendCmd(0xb2);
+                } else if (tab.name == 'run_args'){
+                    this.sendCmd(0xb3);
+                } else {
+
+                }
+            },
+        }
+    });
+</script>
+<style>
+</style>
 
 </html>
