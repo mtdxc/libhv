@@ -409,7 +409,7 @@ void JyMqttClient::registParser() {
         parser->addByteFlag("ReqType"); // 原控制码
         parser->addByteFlag("备用");
         parser->addByteFlag("备用");
-        parser->addByteFlag("校验码"); // 1-n-1字节的累加和，取低字节
+        parser->addByteFlag("RcCode"); // 1-n-1字节的累加和，取低字节
     }
 
     // 设置波特率，无返回值 cmd = 0xDE, 命令类型 0x42, Data1: 1=1200,2=2400,3=4800,4=9600bps
@@ -423,7 +423,7 @@ void JyMqttClient::registParser() {
         parser->addByteFlag("Day");
         parser->addByteFlag("Hour");
         parser->addByteFlag("Min");
-        parser->addByteFlag("校验码");
+        parser->addByteFlag("RcCode");
     }
     {
         auto parser = getParser(0xD0, "设置参数");
@@ -456,7 +456,7 @@ void JyMqttClient::registParser() {
         parser->addByteFlag("Data2");
         parser->addByteFlag("Data3");
         parser->addByteFlag("Data4");  // 低字节
-        parser->addByteFlag("校验码"); // 1-n-1字节的累加和，取低字节
+        parser->addByteFlag("RcCode"); // 1-n-1字节的累加和，取低字节
     }
     {
         auto parser = getParser(0xC0, "开关功能"); // parseC0 正常返回与setC0一样
@@ -473,7 +473,7 @@ void JyMqttClient::registParser() {
         parser->addByteFlag("Data2");
         parser->addByteFlag("Data3");
         parser->addByteFlag("Data4");
-        parser->addByteFlag("校验码"); // 1-n-1字节的累加和，取低字节
+        parser->addByteFlag("RcCode"); // 1-n-1字节的累加和，取低字节
     }
     {
         // 远程上位机仅查询设置参数命令
@@ -705,7 +705,6 @@ int main(int argc, char** argv) {
     const char* user = nullptr;
     const char* pwd = nullptr;
     const char* topic = "mppt";
-    // 92 校验码
     if (argc > 2) {
         user = argv[1];
         pwd = argv[2];
