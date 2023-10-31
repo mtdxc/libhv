@@ -19,6 +19,7 @@
             this.unit = u; ///< 单位
             this.mod = 1; ///< 除数
             this.time = false; ///< 四个字节，来表示时分的十位和个位
+            this.timeStr = '';
             this.enums = new Map();
             this.bits = new Map();
             this.d0Type = 0;
@@ -47,6 +48,8 @@
         setD0Type(v) { this.d0Type = v; return this; }
         makeD0(buff, devId = 1) {
             if (!this.d0Type) return false;
+            if (this.time && this.timeStr)
+                this.setTimeStr(this.timeStr);
             buff[0] = devId;
             buff[1] = 0xD0;
             buff[2] = this.d0Type;
@@ -59,6 +62,15 @@
             return true;
         }
         canEdit() { return this.d0Type != 0; }
+        updateTimeStr(){
+            if (this.time) {
+                var d0 = (this.rawValue >> 24) & 0xFF;
+                var d1 = (this.rawValue >> 16) & 0xFF;
+                var d2 = (this.rawValue >> 8) & 0xFF;
+                var d3 = this.rawValue & 0xFF;
+                this.timeStr = `${d0}${d1}:${d2}${d3}`;
+            }
+        }
         setTimeStr(str) {
             if (!this.time)
                 return false;
@@ -68,16 +80,13 @@
             var d1 = p > 0 ? parseInt(str[p-1]) << 16 : 0;
             var d2 = (str.length - p) > 0 ? parseInt(str[p+1]) << 8 : 0;
             var d3 = (str.length - p) > 1 ? parseInt(str[p+2]) : 0;
-            this.rawValue = d0 | d1 | d2 | d3;
+            this.setRawValue(d0 | d1 | d2 | d3);
         }
         // 返回Flag的字符串表现形式，不包含name
         toString() {
             if (this.time) {
-                var d0 = (this.rawValue >> 24) & 0xFF;
-                var d1 = (this.rawValue >> 16) & 0xFF;
-                var d2 = (this.rawValue >> 8) & 0xFF;
-                var d3 = this.rawValue & 0xFF;
-                return `${d0}${d1}:${d2}${d3}`;
+                //this.updateTimeStr();
+                return this.timeStr;
             }
 
             if (this.enums.size) {
@@ -129,6 +138,7 @@
                 return false;
             }
             this.rawValue = val;
+            this.updateTimeStr();
             return true;
         }
         getValue() { return this.rawValue; }
@@ -553,8 +563,7 @@
                                     @change="((val)=>{scope.row.setBit(item[0], val);})">{{item[1]}} </el-checkbox>
                                 <!-- <el-checkbox label="禁用" disabled></el-checkbox> -->
                             </div>
-                            <el-input v-else-if="scope.row.time" :value="scope.row.toString()" style="width: 150px;" 
-                                @input="((val)=>{scope.row.setTimeStr(val);})"></el-input>
+                            <el-input v-else-if="scope.row.time" v-model="scope.row.timeStr" style="width: 150px;"></el-input>
                             <el-input v-else v-model="scope.row.rawValue" style="width: 150px;"></el-input>
                             <el-button @click.prevent="editFlag(scope.row)">更新</el-button>
                         </el-row>
