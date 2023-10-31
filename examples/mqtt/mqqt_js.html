@@ -547,6 +547,7 @@
             <el-tab-pane label="运行参数" name="run_args">
                 <el-button type="primary" @click="publishCmd(0xC0, 0x05)">重置蜂鸣器报警</el-button>
                 <el-button type="primary" @click="publishCmd(0xC0, 0x06)">开启背光</el-button>
+                <el-button type="primary" @click="setCurTime">设置当前时间</el-button>
                 <el-checkbox v-model="charging" @change="setCharge">充电</el-checkbox>
                 <el-checkbox v-model="dcoutput" @change="setDcOutput">DC输出</el-checkbox>
             </el-tab-pane>
@@ -755,6 +756,19 @@
             setDcOutput(val) {
                 console.log(`setDcOutput ${val}`);
                 this.publishCmd(0xC0, val ? 3 : 4);
+            },
+            setCurTime() {
+                var now = new Date();
+                var buf = new Uint8Array(8);
+                buf[0] = this.devId;
+                buf[1] = 0xDF;
+                buf[2] = now.getYear() % 100;
+                buf[3] = now.getMonth() + 1;
+                buf[4] = now.getDate();
+                buf[5] = now.getHours();
+                buf[6] = now.getMinutes();
+                buf[7] = getCrc(buf);
+                this.client.publish(this.mqtt_req_topic, buf);
             },
             publishCmd(cmd, type = 1) {
                 // 发送信息给 topic（主题）
