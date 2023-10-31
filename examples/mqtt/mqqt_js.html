@@ -169,7 +169,7 @@
 
         // 重置解析器
         reset(next) {
-            flags.clear();
+            this.flags.clear();
             this._nexIndex = 0;
         }
         setNextIndex(next) {
@@ -177,10 +177,9 @@
         }
         // 根据名字查找Flag
         getFlag(name) {
-            var ret = null;
-            for (it in flags)
+            for (var it of this.flags)
                 if (it.name == name) return it;
-            return ret;
+            return null;
         }
         addFlag(size, name, unit = "") {
             var flag = new Flag(this._nexIndex, size, name, unit);
@@ -227,7 +226,7 @@
             parser.addByteFlag("ReqType"); // 原控制码
             parser.addByteFlag("备用");
             parser.addByteFlag("备用");
-            parser.addByteFlag("校验码"); // 1-n-1字节的累加和，取低字节
+            parser.addByteFlag("RcCode"); // 1-n-1字节的累加和，取低字节
         }
 
         // 设置波特率，无返回值 cmd = 0xDE, 命令类型 0x42, Data1: 1=1200,2=2400,3=4800,4=9600bps
@@ -241,7 +240,7 @@
             parser.addByteFlag("Day");
             parser.addByteFlag("Hour");
             parser.addByteFlag("Min");
-            parser.addByteFlag("校验码");
+            parser.addByteFlag("RcCode");
         }
         {
             var parser = getParser(0xD0, "设置参数");
@@ -274,7 +273,7 @@
             parser.addByteFlag("Data2");
             parser.addByteFlag("Data3");
             parser.addByteFlag("Data4");  // 低字节
-            parser.addByteFlag("校验码"); // 1-n-1字节的累加和，取低字节
+            parser.addByteFlag("RcCode"); // 1-n-1字节的累加和，取低字节
         }
         {
             var parser = getParser(0xC0, "开关功能"); // parseC0 正常返回与setC0一样
@@ -286,12 +285,12 @@
                 .addEnums(3, "远程开启DC输出")
                 .addEnums(4, "远程关闭DC输出")
                 .addEnums(5, "重置蜂鸣器报警") // 有新故障重新触发报警
-                .addEnums(6, "开启背光"); // 1分钟后关闭 
+                .addEnums(6, "开启背光"); // 1分钟后关闭
             parser.addByteFlag("Data1"); // 无意义
             parser.addByteFlag("Data2");
             parser.addByteFlag("Data3");
             parser.addByteFlag("Data4");
-            parser.addByteFlag("校验码"); // 1-n-1字节的累加和，取低字节
+            parser.addByteFlag("RcCode"); // 1-n-1字节的累加和，取低字节
         }
         {
             // 远程上位机仅查询设置参数命令
@@ -545,7 +544,12 @@
 
             <el-tab-pane label="查询参数" name="all_args"> </el-tab-pane>
             <el-tab-pane label="设置参数" name="edit_args"> </el-tab-pane>
-            <el-tab-pane label="运行参数" name="run_args"> </el-tab-pane>
+            <el-tab-pane label="运行参数" name="run_args">
+                <el-button type="primary" @click="publishCmd(0xC0, 0x05)">重置蜂鸣器报警</el-button>
+                <el-button type="primary" @click="publishCmd(0xC0, 0x06)">开启背光</el-button>
+                <el-checkbox v-model="charging" @change="setCharge">充电</el-checkbox>
+                <el-checkbox v-model="dcoutput" @change="setDcOutput">DC输出</el-checkbox>
+            </el-tab-pane>
                 <!-- <el-row>
                     <el-button type="primary" @click="sendCmd(0xb1)">查询参数</el-button>
                     <el-button type="success" @click="sendCmd(0xb2)">设置参数</el-button>
@@ -599,6 +603,8 @@
                 mqtt_resp_topic: localStorage.getItem("mqtt_resp_topic") || 'mppt/resp',
                 refresh_interval: localStorage.getItem("refresh_interval") || 1000,
                 devId: localStorage.getItem("dev_id") || 0x01,
+                charging: false,
+                dcoutput: false,
                 // 刷新
                 refresh_options: [{
                     value: '0',
@@ -678,6 +684,10 @@
                         var parser = getParser(message[1]);
                         if (parser) {
                             parser.parse(message);
+                            if (message[1] == 0xb1 || message[1] == 0xb3) {
+                                this.charging = parser.getFlag("充电状态").getBit(0);
+                                this.dcoutput = parser.getFlag("控制状态").getBit(1);
+                            }
                             if (message[1] == this.cmd)
                                 this.parser = parser.flags.slice(3);
                         }
@@ -737,6 +747,14 @@
                 }
                 this.cmd = cmd;
                 this.publishCmd(cmd, type);
+            },
+            setCharge(val) {
+                console.log(`setCharge ${val}`);
+                this.publishCmd(0xC0, val ? 1 : 2);
+            },
+            setDcOutput(val) {
+                console.log(`setDcOutput ${val}`);
+                this.publishCmd(0xC0, val ? 3 : 4);
             },
             publishCmd(cmd, type = 1) {
                 // 发送信息给 topic（主题）
