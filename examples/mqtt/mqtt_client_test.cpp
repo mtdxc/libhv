@@ -74,7 +74,7 @@ public:
     Flag& setUnit(const char* u) { unit = u; return *this; }
     Flag& setMod(int m) { mod = m; return *this; }
     Flag& setTime(bool v) { time = v; return *this; }
-
+    std::string getTimeStr() const;
     // 处理D0消息
     Flag& setD0Type(char v) { d0Type = v; return *this; }
     bool makeD0(uint8_t* buff, uint8_t devId = 1);
@@ -87,6 +87,15 @@ public:
     bool setValue(uint8_t* buff, int size);
     bool setValue(uint32_t val);
     uint32_t getValue() const { return rawValue; }
+    void setBit(char pos, bool val) {
+        if (val)
+            this->rawValue |= (1 << pos);
+        else
+            this->rawValue &= ~(1 << pos); 
+    }
+    bool getBit(char pos) const {
+        return this->rawValue & (1 << pos);
+    }
 };
 
 //NLOHMANN_DEFINE_TYPE_INTRUSIVE(Flag, offset, size, name, rawValue, mod, unit, time, d0Type, enums, bits);
@@ -171,26 +180,38 @@ bool Flag::setValue(uint32_t val) {
     return true;
 }
 
+std::string Flag::getTimeStr() const {
+    char buff[64] = {0};
+    if (time) {
+        uint8_t d0 = (rawValue >> 24) & 0xFF;
+        uint8_t d1 = (rawValue >> 16) & 0xFF;
+        uint8_t d2 = (rawValue >> 8) & 0xFF;
+        uint8_t d3 = rawValue & 0xFF;
+        sprintf(buff, "%d%d:%d%d", d0, d1, d2, d3);
+    }
+    return buff;
+}
+
 bool Flag::makeD0(uint8_t* buff, uint8_t devId) {
     if (!d0Type) return false;
     buff[0] = devId;
     buff[1] = 0xD0;
     buff[2] = d0Type;
     // set value
-    *((uint32_t*)(buff + 3)) = htonl(rawValue);
+    buff[3] = (rawValue >> 24) & 0xFF;
+    buff[4] = (rawValue >> 16) & 0xFF;
+    buff[5] = (rawValue >> 8) & 0xFF;
+    buff[6] = rawValue & 0xFF;
     buff[7] = getCrc(buff, 7);
     return true;
 }
 
 std::string Flag::toString() const {
-    char buff[64] = { 0 };
     if (time) {
-        uint32_t l = htonl(rawValue);
-        uint8_t* data = (uint8_t*)&l;
-        sprintf(buff, "%d%d:%d%d", data[0], data[1], data[2], data[3]);
-        return buff;
+        return getTimeStr();
     }
 
+    char buff[64] = {0};
     if (enums.size()) {
         auto it = enums.find(rawValue);
         if (it != enums.end()) {
