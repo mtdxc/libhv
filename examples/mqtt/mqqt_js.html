@@ -32,6 +32,17 @@
         setMod(m) { this.mod = m; return this; }
         setTime(v) { this.time = v; return this; }
 
+        setBit(pos, val) {
+            console.log(this.name, `setBit ${pos}=${val}`);
+            if (val)
+                this.rawValue |= (1 << pos);
+            else
+                this.rawValue &= ~(1 << pos); 
+        }
+        getBit(pos) {
+            return (this.rawValue & (1 << pos))!=0;
+        }
+
         // 处理D0消息
         setD0Type(v) { this.d0Type = v; return this; }
         makeD0(buff, devId = 1) {
@@ -48,7 +59,17 @@
             return true;
         }
         canEdit() { return this.d0Type != 0; }
-
+        setTimeStr(str) {
+            if (!this.time)
+                return false;
+            var p = str.indexOf(':');
+            console.log(this.name, str, p, str.length);
+            var d0 = p > 1 ? parseInt(str[p-2]) << 24 : 0;
+            var d1 = p > 0 ? parseInt(str[p-1]) << 16 : 0;
+            var d2 = (str.length - p) > 0 ? parseInt(str[p+1]) << 8 : 0;
+            var d3 = (str.length - p) > 1 ? parseInt(str[p+2]) : 0;
+            this.rawValue = d0 | d1 | d2 | d3;
+        }
         // 返回Flag的字符串表现形式，不包含name
         toString() {
             if (this.time) {
@@ -496,9 +517,7 @@
                     </el-form-item>
                     <el-form-item label="刷新周期">
                         <el-select v-model="refresh_interval" placeholder="请选择">
-                            <el-option v-for="item in refresh_options" :key="item.value" :label="item.label"
-                                :value="item.value">
-                            </el-option>
+                            <el-option v-for="item in refresh_options" :key="item.value" :label="item.label" :value="item.value" />
                         </el-select>
                         <!-- <el-input v-model="refresh_interval"></el-input> -->
                     </el-form-item>
@@ -524,17 +543,18 @@
                     <template slot-scope="scope">
                         <span v-if="scope.row.d0Type == 0">{{scope.row.toString()}}</span>
                         <el-row v-else>
-                            <el-select v-if="scope.row.enums.size > 0" v-model="enums" placeholder="请选择">
+                            <el-select v-if="scope.row.enums.size > 0" v-model="scope.row.rawValue" placeholder="请选择">
                                 <el-option v-for="item in scope.row.enums" :key="item[0]" :label="item[1]"
                                     :value="item[0]">
                                 </el-option>
                             </el-select>
-                            <el-checkbox-group v-else-if="scope.row.bits.size > 0" v-model="bits">
-                                <el-checkbox v-for="item in scope.row.bits" :key="item[0]"
-                                    :label="item[1]">{{item[1]}}
-                                </el-checkbox>
+                            <div v-else-if="scope.row.bits.size > 0">
+                                <el-checkbox v-for="item in scope.row.bits" :key="item[0]" :label="item[0]" :checked="scope.row.getBit(item[0])"
+                                    @change="((val)=>{scope.row.setBit(item[0], val);})">{{item[1]}} </el-checkbox>
                                 <!-- <el-checkbox label="禁用" disabled></el-checkbox> -->
-                            </el-checkbox-group>
+                            </div>
+                            <el-input v-else-if="scope.row.time" :value="scope.row.toString()" style="width: 150px;" 
+                                @input="((val)=>{scope.row.setTimeStr(val);})"></el-input>
                             <el-input v-else v-model="scope.row.rawValue" style="width: 150px;"></el-input>
                             <el-button @click.prevent="editFlag(scope.row)">更新</el-button>
                         </el-row>
@@ -578,7 +598,6 @@
                 }
                 ],
                 refreshTimer: null,
-                enums: 0,
                 bits: [],
                 client: null,
                 parser: null,
@@ -692,9 +711,9 @@
                     });
                     return;
                 }
-                if (this.refresh_interval > 0) {
-                    if (this.refreshTimer)
-                        clearInterval(this.refreshTimer);
+                if (this.refreshTimer)
+                    clearInterval(this.refreshTimer);
+                if (this.refresh_interval > 0 && cmd != 0xb2) {
                     this.refreshTimer = setInterval(() => {
                         this.publishCmd(cmd, type);
                     }, this.refresh_interval);
@@ -716,7 +735,14 @@
                 this.client.publish(this.mqtt_req_topic, buf);
             },
             editFlag(flag) {
-                console.log(flag);
+                console.log("editFlag", flag.name, flag.rawValue, flag);
+                var buf = new Uint8Array(8);
+                if (flag.makeD0(buf, this.devId)) {
+                    console.log("sendD0", buf);
+                    this.client.publish(this.mqtt_req_topic, buf);
+                    // 重新获取参数
+                    // this.publishCmd(0xd2);
+                }
             },
             handleTabClick(tab, event) {
                 console.log(tab, event);
