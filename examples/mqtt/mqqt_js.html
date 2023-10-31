@@ -99,13 +99,16 @@
             }
             else if (this.bits.size) {
                 var ret = '';
-                for (bit in this.bits) {
-                    if (rawValue & (1 << bit)) {
+                for (var bit of this.bits) {
+                    if (this.getBit(bit[0])) {
                         if (ret.length == 0)
-                            ret = this.bits.get(bit);
+                            ret = bit[1];
                         else
-                            ret = ret + "," + this.bits.get(bit);
+                            ret = ret + "," + bit[1];
                     }
+                }
+                if (ret.length == 0) {
+                    ret = `${this.rawValue}`;
                 }
                 return ret;
             }
@@ -153,13 +156,15 @@
             this._nexIndex = 0;
             this.flags = [];
         }
-        parse(buff) {
+        parse(buff, log = true) {
             var stm = '';
             for (var it of this.flags) {
-                if (it.setValue(buff)) // 根据buff设置值
+                var ret = it.setValue(buff);
+                if (ret && log) // 根据buff设置值
                     stm += it.name + ": " + it.toString() + "\n";
             }
-            console.log(stm);
+            if (log && stm.length)
+                console.log(stm);
         }
 
         // 重置解析器
@@ -197,14 +202,14 @@
         }
     }
 
-    parses = new Map();
+    parseMaps = new Map();
     function getParser(cmd, desc = null) {
         var ret = null;
-        if (parses.has(cmd))
-            return parses.get(cmd)
+        if (parseMaps.has(cmd))
+            return parseMaps.get(cmd)
         else if (desc) {
             ret = new PduParser(cmd, desc);
-            parses.set(cmd, ret);
+            parseMaps.set(cmd, ret);
         }
         return ret;
     }
@@ -498,7 +503,7 @@
     }
 
     registParser();
-    console.log(parses);
+    //console.log(parseMaps);
 
 </script>
 
@@ -546,19 +551,19 @@
                     <el-button type="success" @click="sendCmd(0xb2)">设置参数</el-button>
                     <el-button type="info" @click="sendCmd(0xb3)">运行参数</el-button>
                 </el-row> -->
-            <el-table :data="parser" style="width: 100%" stripe v-if="select_tab!='setting'">
+            <el-table :data="parser" style="width: 100%" stripe v-if="select_tab!='setting'" :show-header="false" >
                 <el-table-column prop="name" label="名字" width="180">
                 </el-table-column>
                 <el-table-column prop="" label="值">
                     <template slot-scope="scope">
                         <span v-if="scope.row.d0Type == 0">{{scope.row.toString()}}</span>
                         <el-row v-else>
-                            <el-select v-if="scope.row.enums.size > 0" v-model="scope.row.rawValue" placeholder="请选择">
+                            <el-select v-if="scope.row.enums.size > 0" v-model="scope.row.rawValue" style="width: 150px;" placeholder="请选择">
                                 <el-option v-for="item in scope.row.enums" :key="item[0]" :label="item[1]"
                                     :value="item[0]">
                                 </el-option>
                             </el-select>
-                            <div v-else-if="scope.row.bits.size > 0">
+                            <div v-else-if="scope.row.bits.size > 0" style="display: inline;">
                                 <el-checkbox v-for="item in scope.row.bits" :key="item[0]" :label="item[0]" :checked="scope.row.getBit(item[0])"
                                     @change="((val)=>{scope.row.setBit(item[0], val);})">{{item[1]}} </el-checkbox>
                                 <!-- <el-checkbox label="禁用" disabled></el-checkbox> -->
@@ -594,21 +599,24 @@
                 mqtt_resp_topic: localStorage.getItem("mqtt_resp_topic") || 'mppt/resp',
                 refresh_interval: localStorage.getItem("refresh_interval") || 1000,
                 devId: localStorage.getItem("dev_id") || 0x01,
-                cmd: 0,
+                // 刷新
                 refresh_options: [{
                     value: '0',
                     label: '手工刷新'
                 }, {
                     value: '500',
-                    label: '一秒两次'
+                    label: '500ms'
                 }, {
                     value: '1000',
-                    label: '一秒一次'
+                    label: '1000ms'
                 }
                 ],
                 refreshTimer: null,
-                bits: [],
+                // mqtt客户端
                 client: null,
+                // 当前查询的cmd类型
+                cmd: 0, 
+                // 查询返回的tags, 略过前三个
                 parser: null,
             }
         },
@@ -747,7 +755,7 @@
                 console.log("editFlag", flag.name, flag.rawValue, flag);
                 var buf = new Uint8Array(8);
                 if (flag.makeD0(buf, this.devId)) {
-                    console.log("sendD0", buf);
+                    // console.log("sendD0", buf);
                     this.client.publish(this.mqtt_req_topic, buf);
                     // 重新获取参数
                     // this.publishCmd(0xd2);
