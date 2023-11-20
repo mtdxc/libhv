@@ -13,44 +13,75 @@
 #include "mqtt_client.h"
 #include "TcpServer.h"
 #include "hendian.h"
+#include "hstring.h"
 #include <list>
 #include <set>
 using namespace hv;
 
 #define TEST_TLS        0
-class Topic {
-    std::set<SocketChannelPtr> subs;
-    hv::Buffer retain;
+
+class Subscribe {
+    hv::StringList _tokens; // 订阅路径
+    int _type;              // 0 完整匹配, 1 + 局部匹配, 2 # 尾部匹配
 public:
-    std::string name;
-    Topic(const std::string& n) : name(n) {}
-    int subsSize() const {return subs.size();}
-    bool addSubs(SocketChannelPtr channel) {
-        auto it = subs.find(channel);
-        if (it == subs.end()) {
-            subs.insert(channel);
-            if (retain.size())
-                channel->write(retain.data(), retain.size());
-            return true;
+    int type() const {return _type;}
+    std::set<SocketChannelPtr> socks;
+    std::string path;
+
+    using Ptr = std::shared_ptr<Subscribe>;
+    Subscribe(const std::string& n) : path(n) {
+        _type = 0;
+        _tokens = hv::split(n, '/');
+        for (int i = 0; i < _tokens.size(); i++) {
+            auto& t = _tokens[i];
+            if (t == "#" && i + 1 == _tokens.size()) { // #通配符只能出现在尾部
+                _type = 2;
+                //#可匹配0路径
+                _tokens.pop_back();
+                path.pop_back();
+                if (path.length() && path.back() == '/')
+                    path.pop_back();
+            }
+            else if (t == "+")
+                _type = 1;
+        }
+    }
+
+    bool match(const std::string& topic) {
+        if (_type == 0)
+            return path == topic;
+        else if (_type == 2) {
+            if (path.empty()) return true;
+            bool ret = hv::startswith(topic, path);
+            if (ret) {
+                ret = topic.length() == path.length() || topic[path.length()] == '/';
+            }
+            return ret;
+        }
+        hv::StringList sl = hv::split(topic, '/');
+        return match(sl);
+    }
+    bool match(const hv::StringList& lst) {
+        if (_type == 2) { //#匹配
+            if (lst.size() < _tokens.size()) return false;
+        }
+        else if (lst.size() != _tokens.size()) {
+            return false;
+        }
+
+        int total = min(_tokens.size(), lst.size());
+        for (int i = 0; i < total; i++) {
+            auto t = _tokens.at(i);
+            if (t == "+")
+                continue;
+            else if (t != lst.at(i))
+                return false;
         }
         return true;
     }
-    bool delSubs(SocketChannelPtr channel) {
-        return subs.erase(channel);
-    }
-    void publish(mqtt_message_t* msg, uint8_t* buff, int size) {
-        if (buff[0] & 0x01) {
-            // 保留retain消息
-            if (msg->payload_len > 0) {
-                retain.copy(buff, size);
-            } else {
-                retain.len = 0;
-                return ;
-            }
-            // 清除retain标记
-            buff[0] &= ~0x01;
-        }
-        for (auto it : subs) {
+    
+    void publish(uint8_t* buff, int size) {
+        for (auto it : socks) {
             it->write(buff, size);
         }
     }
@@ -58,35 +89,60 @@ public:
 
 class MqttServer : public TcpServer {
     using SubSet = std::set<std::string>;
-    using TopicPtr = std::shared_ptr<Topic>;
-    // 主题列表用subs进行管理
-    std::recursive_mutex topicLock;
-    std::map<std::string, TopicPtr> topicMap;
-    TopicPtr getTopic(const std::string& name, bool create) { 
-        TopicPtr ret;
-        auto it = topicMap.find(name);
-        if (it != topicMap.end()) 
-            ret =  it->second;
-        else if (create) {
-            ret = std::make_shared<Topic>(name);
-            topicMap[name] = ret;
-        }
-        return ret;
-    }
-    // 删除某个主题的订阅
+    std::recursive_mutex lock;
+    // 所有订阅，包含所有type的
+    std::map<std::string, Subscribe::Ptr> subsMap;
+    // type > 0 的订阅Map，需要模糊匹配
+    std::map<std::string, Subscribe::Ptr> typeSubs;
+    // 保留retain消息
+    std::map<std::string, hv::Buffer> retainMap;
+
+    // 删除订阅
     bool delSubscribe(const std::string& name, SocketChannelPtr chann) { 
-        std::unique_lock<std::recursive_mutex> l(topicLock);
-        auto topic = getTopic(name, false);
-        if (topic) {
-            return topic->delSubs(chann);
+        std::unique_lock<std::recursive_mutex> l(lock);
+        auto it = subsMap.find(name);
+        if (it != subsMap.end()) {
+            auto subs = it->second;
+            subs->socks.erase(chann);
+            if (subs->socks.empty()) {
+                subsMap.erase(it);
+                if (subs->type())
+                    typeSubs.erase(subs->path);
+            }
+            return true;
         }
         return false;
     }
     bool addSubscribe(const std::string& name, SocketChannelPtr chann) {
-        std::unique_lock<std::recursive_mutex> l(topicLock);
-        auto topic = getTopic(name, true);
-        return topic->addSubs(chann);
+        std::unique_lock<std::recursive_mutex> l(lock);
+        Subscribe::Ptr subs;
+        auto it = subsMap.find(name);
+        if (it != subsMap.end()) {
+            subs = it->second;
+        }
+        else {
+            subs = std::make_shared<Subscribe>(name);
+            subsMap[name] = subs;
+            if (subs->type())
+                typeSubs[name] = subs;
+        }
+        subs->socks.insert(chann);
+        // 处理retain消息的订阅
+        if (subs->type()) {
+            for (auto rit : retainMap) {
+                if (subs->match(rit.first)) {
+                    chann->write(rit.second.data(), rit.second.size());
+                }
+            }
+        }
+        else {
+            auto rit = retainMap.find(name);
+            if (rit!=retainMap.end())
+                chann->write(rit->second.data(), rit->second.size());
+        }
+        return true;
     }
+
     int send_head(const SocketChannelPtr& channel, int type, int length) {
         mqtt_head_t head;
         memset(&head, 0, sizeof(head));
@@ -231,14 +287,41 @@ public:
             } else if (message.qos == 2) {
                 send_head_with_mid(channel, MQTT_TYPE_PUBREC, mid);
             }
-            TopicPtr t;
+            std::set<SocketChannelPtr> clients;
             {
                 std::string topic(message.topic, message.topic_len);
-                std::unique_lock<std::recursive_mutex> l(topicLock);
-                t = getTopic(topic, false);
+                std::unique_lock<std::recursive_mutex> l(lock);
+                // 保留retain消息
+                if (start[0] & 0x01) {
+                    if (message.payload_len > 0) {
+                        retainMap[topic].copy(start, end - start);
+                    } else {
+                        retainMap.erase(topic);
+                        return ;
+                    }
+                    // 清除retain标记
+                    start[0] &= ~0x01;
+                }
+
+                // publish type == 0
+                auto it = subsMap.find(topic);
+                if (it != subsMap.end()) {
+                    clients = it->second->socks;
+                    //it->second->publish(start, end - start);
+                }
+                else { // 通配符查找
+                    for (auto it : typeSubs) {
+                        auto subs = it.second;
+                        if (subs->match(topic)) {
+                            clients.insert(subs->socks.begin(), subs->socks.end());
+                            //subs->publish(start, end - start);
+                        }
+                    }
+                }
             }
-            if (t) {
-                t->publish(&message, start, end - start);
+            // 转发消息
+            for (auto chann : clients) {
+                chann->write(start, end - start);
             }
 
             if (onPublish)
