@@ -18,10 +18,46 @@
 using namespace hv;
 
 #define TEST_TLS        0
+class Topic {
+    std::set<SocketChannelPtr> subs;
+    hv::Buffer retain;
+public:
+    std::string name;
+    Topic(const std::string& n) : name(n) {}
+    int subsSize() const {return subs.size();}
+    bool addSubs(SocketChannelPtr channel) {
+        auto it = subs.find(channel);
+        if (it == subs.end()) {
+            subs.insert(channel);
+            if (retain.size())
+                channel->write(retain.data(), retain.size());
+            return true;
+        }
+        return true;
+    }
+    bool delSubs(SocketChannelPtr channel) {
+        return subs.erase(channel);
+    }
+    void publish(mqtt_message_t* msg, uint8_t* buff, int size) {
+        if (buff[0] & 0x01) {
+            // 保留retain消息
+            if (msg->payload_len > 0) {
+                retain.copy(buff, size);
+            } else {
+                retain.len = 0;
+                return ;
+            }
+            // 清除retain标记
+            buff[0] &= ~0x01;
+        }
+        for (auto it : subs) {
+            it->write(buff, size);
+        }
+    }
+};
 
 class MqttServer : public TcpServer {
     using SubSet = std::set<std::string>;
-    using Topic = std::list<SocketChannelPtr>;
     using TopicPtr = std::shared_ptr<Topic>;
     // 主题列表用subs进行管理
     std::recursive_mutex topicLock;
@@ -32,39 +68,24 @@ class MqttServer : public TcpServer {
         if (it != topicMap.end()) 
             ret =  it->second;
         else if (create) {
-            ret = std::make_shared<Topic>();
+            ret = std::make_shared<Topic>(name);
             topicMap[name] = ret;
         }
         return ret;
     }
     // 删除某个主题的订阅
-    void delSubscribe(const std::string& name, SocketChannelPtr chann) { 
+    bool delSubscribe(const std::string& name, SocketChannelPtr chann) { 
         std::unique_lock<std::recursive_mutex> l(topicLock);
         auto topic = getTopic(name, false);
         if (topic) {
-            auto it = std::find(topic->begin(), topic->end(), chann);
-            if (it != topic->end()) topic->erase(it);
-            if (topic->empty())
-                topicMap.erase(name);
+            return topic->delSubs(chann);
         }
+        return false;
     }
-    void addSubscribe(const std::string& name, SocketChannelPtr chann) {
+    bool addSubscribe(const std::string& name, SocketChannelPtr chann) {
         std::unique_lock<std::recursive_mutex> l(topicLock);
         auto topic = getTopic(name, true);
-        auto it = std::find(topic->begin(), topic->end(), chann);
-        if (it == topic->end()) topic->push_back(chann);
-    }
-    void publishMessage(const std::string& name, uint8_t* buff, int size) {
-        TopicPtr t;
-        { 
-            std::unique_lock<std::recursive_mutex> l(topicLock);
-            t = getTopic(name, false);
-        }
-        if (t) {
-            for (auto it = t->begin(); it != t->end(); it++) {
-                (**it).write(buff, size);
-            }
-        }
+        return topic->addSubs(chann);
     }
     int send_head(const SocketChannelPtr& channel, int type, int length) {
         mqtt_head_t head;
@@ -184,6 +205,7 @@ public:
             uint8_t* end = p + head->length;
             mqtt_message_t message;
             memset(&message, 0, sizeof(mqtt_message_t));
+            message.retain = head->retain;
             POP16(p, message.topic_len);
             // NOTE: Not deep copy
             message.topic = (char*)p;
@@ -209,8 +231,15 @@ public:
             } else if (message.qos == 2) {
                 send_head_with_mid(channel, MQTT_TYPE_PUBREC, mid);
             }
-            std::string topic(message.topic, message.topic_len);
-            publishMessage(topic, start, end - start);
+            TopicPtr t;
+            {
+                std::string topic(message.topic, message.topic_len);
+                std::unique_lock<std::recursive_mutex> l(topicLock);
+                t = getTopic(topic, false);
+            }
+            if (t) {
+                t->publish(&message, start, end - start);
+            }
 
             if (onPublish)
                 onPublish(channel, &message);
