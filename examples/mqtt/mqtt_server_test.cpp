@@ -12,6 +12,7 @@
 #include "mqtt_protocol.h"
 #include "mqtt_client.h"
 #include "TcpServer.h"
+#include "http/server/WebSocketServer.h"
 #include "hendian.h"
 #include "hstring.h"
 #include <list>
@@ -19,13 +20,43 @@
 using namespace hv;
 
 #define TEST_TLS        0
+struct MqttSession {
+    using Ptr = MqttSession*;
+    std::set<std::string> subs;
+    SocketChannelPtr tcp;
+    WebSocketChannelPtr ws;
+    HVLBuf recv; // 用于ws的接收分包
+
+    int write(const void* buff, int size) {
+        int ret = 0;
+        if (tcp)
+            ret = tcp->write(buff, size);
+        else if (ws)
+            ret = ws->send((const char*)buff, size);
+        return ret;
+    }
+
+    bool close() {
+        int ret = -1;
+        if (tcp) {
+            ret = tcp->close(true);
+            tcp = nullptr;
+        } 
+        if (ws) {
+            ret = ws->close();
+            ws = nullptr;
+        }
+        recv.clear();
+        return ret;
+    }
+};
 
 class Subscribe {
     hv::StringList _tokens; // 订阅路径
     int _type;              // 0 完整匹配, 1 + 局部匹配, 2 # 尾部匹配
 public:
     int type() const {return _type;}
-    std::set<SocketChannelPtr> socks;
+    std::set<MqttSession::Ptr> socks;
     std::string path;
 
     using Ptr = std::shared_ptr<Subscribe>;
@@ -96,9 +127,9 @@ class MqttServer : public TcpServer {
     std::map<std::string, Subscribe::Ptr> typeSubs;
     // 保留retain消息
     std::map<std::string, hv::Buffer> retainMap;
-
+    std::shared_ptr<WebSocketServer> wsServer;
     // 删除订阅
-    bool delSubscribe(const std::string& name, SocketChannelPtr chann) { 
+    bool delSubscribe(const std::string& name, MqttSession::Ptr chann) { 
         std::unique_lock<std::recursive_mutex> l(lock);
         auto it = subsMap.find(name);
         if (it != subsMap.end()) {
@@ -113,7 +144,7 @@ class MqttServer : public TcpServer {
         }
         return false;
     }
-    bool addSubscribe(const std::string& name, SocketChannelPtr chann) {
+    bool addSubscribe(const std::string& name, MqttSession::Ptr chann) {
         std::unique_lock<std::recursive_mutex> l(lock);
         Subscribe::Ptr subs;
         auto it = subsMap.find(name);
@@ -143,7 +174,7 @@ class MqttServer : public TcpServer {
         return true;
     }
 
-    int send_head(const SocketChannelPtr& channel, int type, int length) {
+    int send_head(MqttSession::Ptr channel, int type, int length) {
         mqtt_head_t head;
         memset(&head, 0, sizeof(head));
         head.type = type;
@@ -153,7 +184,7 @@ class MqttServer : public TcpServer {
         return channel->write(headbuf, headlen);
     }
 
-    int send_head_with_mid(const SocketChannelPtr& channel, int type, unsigned short mid) {
+    int send_head_with_mid(MqttSession::Ptr channel, int type, unsigned short mid) {
         mqtt_head_t head;
         memset(&head, 0, sizeof(head));
         head.type = type;
@@ -169,15 +200,15 @@ class MqttServer : public TcpServer {
         return channel->write(headbuf, headlen + 2);
     }
 public:
-    typedef std::function<void(const SocketChannelPtr&, mqtt_message_t*)> MqttMessageCallback;
+    typedef std::function<void(MqttSession::Ptr, mqtt_message_t*)> MqttMessageCallback;
     MqttMessageCallback onPublish;
     MqttMessageCallback onSubscribe;
     MqttMessageCallback onUnsubscribe;
-    std::function<mqtt_connack_e(const SocketChannelPtr&, mqtt_conn_t*)> onAuth;
+    std::function<mqtt_connack_e(MqttSession::Ptr, mqtt_conn_t*)> onAuth;
 
     MqttServer(EventLoopPtr loop = NULL) : TcpServer(loop) {
         // 总是接受连接请求
-        onAuth = [](const SocketChannelPtr&, mqtt_conn_t*){
+        onAuth = [](MqttSession::Ptr, mqtt_conn_t*){
             return MQTT_CONNACK_ACCEPTED;
         };
         static unpack_setting_t mqtt_unpack_setting;
@@ -188,34 +219,87 @@ public:
         mqtt_unpack_setting.length_field_bytes = 1;
         mqtt_unpack_setting.length_field_coding = ENCODE_BY_VARINT;
         setUnpack(&mqtt_unpack_setting);
-        onMessage = [this](const TSocketChannelPtr& channel, Buffer* buf) {
+        onMessage = [this](const SocketChannelPtr& channel, Buffer* buf) {
             mqtt_head_t head;
             memset(&head, 0, sizeof(mqtt_head_t));
             unsigned char* p = (unsigned char*)buf->data();
             int headlen = mqtt_head_unpack(&head, p, buf->size());
-            if (headlen <= 0) return;
-            onMqttMessage(channel, &head, p, p+headlen);
+            if (headlen <= 0 || buf->size() < headlen + head.length)
+                return;
+            MqttSession* set = channel->getContext<MqttSession>();
+            onMqttMessage(set, &head, p, p+headlen);
         };
         onConnection = [this](const SocketChannelPtr& channel) {
             std::string peeraddr = channel->peeraddr();
             if (channel->isConnected()) {
                 printf("%s connected! connfd=%d id=%d tid=%ld\n", peeraddr.c_str(), channel->fd(), channel->id(), currentThreadEventLoop->tid());
-                channel->newContext<SubSet>();
+                channel->newContext<MqttSession>()->tcp = channel;
             }
             else {
                 printf("%s disconnected! connfd=%d id=%d tid=%ld\n", peeraddr.c_str(), channel->fd(), channel->id(), currentThreadEventLoop->tid());
-                SubSet* set = channel->getContext<SubSet>();
-                if (set) {
-                    for (auto it : *set) {
-                        delSubscribe(it, channel);
-                    }
-                    delete set;
-                }
+                MqttSession* set = channel->getContext<MqttSession>();
+                closeSession(set);
             }
         };
     }
+    void closeSession(MqttSession::Ptr set) {
+        if (set) {
+            for (auto it : set->subs) {
+                delSubscribe(it, set);
+            }
+            delete set;
+        }
+    }
 
-    void onMqttMessage(const TSocketChannelPtr& channel, mqtt_head_t* head, uint8_t* start, uint8_t* p) {
+    int wsListen(int port, int ssl_port) {
+        static WebSocketService ws;
+        ws.onopen = [](const WebSocketChannelPtr& channel, const HttpRequestPtr& req) {
+            printf("onopen: GET %s\n", req->url.c_str());
+            channel->newContext<MqttSession>()->ws = channel;
+        };
+        ws.onmessage = [this](const WebSocketChannelPtr& channel, const std::string& msg) {
+            MqttSession* set = channel->getContext<MqttSession>();
+            set->recv.append((void*)msg.c_str(), msg.size());
+            int size = set->recv.size();
+            unsigned char* p = (unsigned char*)set->recv.data();
+            while (size > 1) {
+                mqtt_head_t head;
+                memset(&head, 0, sizeof(mqtt_head_t));
+                int headlen = mqtt_head_unpack(&head, p, size);
+                if (headlen <= 0 || size < headlen + head.length) 
+                    break;
+                onMqttMessage(set, &head, p, p + headlen);
+                p += head.length + headlen;
+                size -= head.length + headlen;
+            }
+            set->recv.remove(p - (unsigned char*)set->recv.data());
+        };
+        ws.onclose = [this](const WebSocketChannelPtr& channel) {
+            printf("onclose\n");
+            MqttSession* ctx = channel->getContext<MqttSession>();
+            closeSession(ctx);
+        };
+        wsServer = std::make_shared<WebSocketServer>();
+        wsServer->worker_processes = 0;
+        wsServer->worker_threads = 1;
+        if (ssl_port) {
+            wsServer->https_port = ssl_port;
+            hssl_ctx_opt_t param;
+            memset(&param, 0, sizeof(param));
+            param.crt_file = "cert/server.crt";
+            param.key_file = "cert/server.key";
+            param.endpoint = HSSL_SERVER;
+            if (wsServer->newSslCtx(&param) != 0) {
+                fprintf(stderr, "new SSL_CTX failed!\n");
+                return -20;
+            }
+        }
+        wsServer->port = port;
+        wsServer->registerWebSocketService(&ws);
+        return wsServer->start();
+    }
+
+    void onMqttMessage(MqttSession::Ptr channel, mqtt_head_t* head, uint8_t* start, uint8_t* p) {
         int mid = 0;
         switch (head->type) {
         case MQTT_TYPE_CONNECT:
@@ -287,7 +371,7 @@ public:
             } else if (message.qos == 2) {
                 send_head_with_mid(channel, MQTT_TYPE_PUBREC, mid);
             }
-            std::set<SocketChannelPtr> clients;
+            std::set<MqttSession::Ptr> clients;
             {
                 std::string topic(message.topic, message.topic_len);
                 std::unique_lock<std::recursive_mutex> l(lock);
@@ -359,7 +443,7 @@ public:
 
                 std::string topic(message.topic, message.topic_len);
                 addSubscribe(topic, channel);
-                channel->getContext<SubSet>()->insert(topic);
+				channel->subs.insert(topic);
                 if (onSubscribe) onSubscribe(channel, &message);
             }
             break;
@@ -377,7 +461,7 @@ public:
 
                 std::string topic(message.topic, message.topic_len);
                 delSubscribe(topic, channel);
-                channel->getContext<SubSet>()->erase(topic);
+				channel->subs.erase(topic);
                 if (onUnsubscribe) onUnsubscribe(channel, &message);
             }        
             break;
@@ -404,21 +488,22 @@ int main(int argc, char* argv[]) {
     if (listenfd < 0) {
         return -20;
     }
+    srv.wsListen(8883, 0);
     printf("server listen on port %d, listenfd=%d ...\n", port, listenfd);
-    srv.onAuth = [](const SocketChannelPtr&, mqtt_conn_t* msg) {
+    srv.onAuth = [](MqttSession::Ptr, mqtt_conn_t* msg) {
         printf("onAuth %.*s %.*s %.*s\n", 
             msg->client_id.len, msg->client_id.data,
             msg->user_name.len, msg->user_name.data, 
             msg->password.len, msg->password.data);
         return MQTT_CONNACK_ACCEPTED;
     };
-    srv.onPublish = [](const SocketChannelPtr&, mqtt_message_t* msg) {
-        printf("topic %.*s> %.*s\n", msg->topic_len, msg->topic, msg->payload_len, msg->payload);
+    srv.onPublish = [](MqttSession::Ptr, mqtt_message_t* msg) {
+        printf("topic %.*s %d> %.*s\n", msg->topic_len, msg->topic, msg->qos, msg->payload_len, msg->payload);
     };
-    srv.onSubscribe = [](const SocketChannelPtr&, mqtt_message_t* msg) {
+    srv.onSubscribe = [](MqttSession::Ptr, mqtt_message_t* msg) {
         printf("onSubscribe %.*s qos %d\n", msg->topic_len, msg->topic, msg->qos);
     };
-    srv.onUnsubscribe = [](const SocketChannelPtr&, mqtt_message_t* msg) {
+    srv.onUnsubscribe = [](MqttSession::Ptr, mqtt_message_t* msg) {
         printf("onUnsubscribe %.*s\n", msg->topic_len, msg->topic);
     };
     srv.setThreadNum(4);
