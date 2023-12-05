@@ -3,6 +3,7 @@
 <script src="https://unpkg.com/vue@2/dist/vue.js"></script>
 <script src="https://unpkg.com/element-ui/lib/index.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/element-ui/lib/theme-chalk/index.css">
+<script src="https://cdn.staticfile.org/echarts/4.3.0/echarts.min.js"></script>
 <script>
     function getCrc(buf, size = 7) {
         var sum = 0;
@@ -144,7 +145,12 @@
             this.updateTimeStr();
             return true;
         }
-        getValue() { return this.rawValue; }
+        getRawValue() { return this.rawValue; }
+        getValue() {
+            if (this.mod && this.mod!=1) 
+                return this.rawValue / this.mod;
+            return this.rawValue;
+        }
     }
 
 
@@ -536,7 +542,7 @@
                         <!-- <el-input v-model="refresh_interval"></el-input> -->
                     </el-form-item>
                     <el-form-item>
-                        <el-button type="primary" @click="connectServr">连接</el-button>
+                        <el-button type="primary" @click="connectServer">连接</el-button>
                         <el-button>取消</el-button>
                     </el-form-item>
                 </el-form>
@@ -545,6 +551,7 @@
             <el-tab-pane label="查询参数" name="all_args"> </el-tab-pane>
             <el-tab-pane label="设置参数" name="edit_args"> </el-tab-pane>
             <el-tab-pane label="运行参数" name="run_args">
+                <div ref="chats" style="width: 600px; height:350px;"></div>
                 <el-button type="primary" @click="publishCmd(0xC0, 0x05)">重置蜂鸣器报警</el-button>
                 <el-button type="primary" @click="publishCmd(0xC0, 0x06)">开启背光</el-button>
                 <el-button type="primary" @click="setCurTime">设置当前时间</el-button>
@@ -604,6 +611,10 @@
                 mqtt_resp_topic: localStorage.getItem("mqtt_resp_topic") || 'mppt/resp',
                 refresh_interval: localStorage.getItem("refresh_interval") || 1000,
                 devId: localStorage.getItem("dev_id") || 0x01,
+                chats: null,
+                date: [],
+                dataA: [],
+                dataW: [],
                 charging: false,
                 dcoutput: false,
                 // 刷新
@@ -640,7 +651,83 @@
                 localStorage.setItem('refresh_interval', this.refresh_interval);
                 localStorage.setItem('dev_id', this.devId);
             },
-            connectServr() {
+            addData(v, a) {
+                if (!this.chats) {
+                    return ;
+                }
+                this.dataA.push(a);
+                this.dataW.push(v*a);
+                var now = new Date();
+                this.date.push([now.getHours(), now.getMinutes(), now.getSeconds()].join(':'));
+                var shift = this.date.size > 50;
+                if (shift) {
+                    this.date.shift();
+                    this.dataA.shift();
+                    this.dataW.shift();
+                }
+                this.chats.setOption({
+                    xAxis: {
+                        data: this.date
+                    },
+                    series: [{
+                        name:'电流',
+                        data: this.dataA
+                    },
+                    {
+                        name:'功率',
+                        data: this.dataW
+                    }]
+                });
+            },
+            initChats() {
+                this.date = [];
+                this.dataA = [];
+                this.dataW = [];
+                this.chats = echarts.init(this.$refs.chats);
+                option = {
+                    title: {
+                        text: '实时发电图'
+                    },
+                    legend: {
+                        data:['电流', '功率']
+                    },
+                    xAxis: {
+                        type: 'category',
+                        boundaryGap: false,
+                        data: this.date
+                    },
+                    yAxis: {
+                        boundaryGap: [0, '50%'],
+                        type: 'value'
+                    },
+                    series: [
+                        {
+                            name:'电流',
+                            type:'line',
+                            smooth:true,
+                            symbol: 'none',
+                            stack: 'a',
+                            areaStyle: {
+                                normal: {}
+                            },
+                            data: this.dataA
+                        },
+                        {
+                            name:'功率',
+                            type:'line',
+                            smooth:true,
+                            symbol: 'none',
+                            stack: 'a',
+                            areaStyle: {
+                                normal: {}
+                            },
+                            data: this.dataW
+                        }
+                    ]
+                };
+                this.chats.setOption(option);
+            },
+            connectServer() {
                 // 连接地址，有很多连接失败都是因为地址没写对
                 // 客户端ID（注意：客户端不能写死，如果多人用同一个客户端，那么就会出现MQTT一直是断开重连断开重连的问题）
                 // const clientId = `mqtt_${Math.random().toString(16).slice(3)}`;
@@ -656,6 +743,8 @@
                 }
 
                 this.saveConfig();
+                // 初始化eschats
+                this.initChats();
                 // 创建客户端
                 var client = mqtt.connect(this.mqtt_addr, options);
                 // 成功连接后触发的回调
@@ -688,6 +777,7 @@
                             if (message[1] == 0xb1 || message[1] == 0xb3) {
                                 this.charging = parser.getFlag("充电状态").getBit(0);
                                 this.dcoutput = parser.getFlag("控制状态").getBit(1);
+                                this.addData(parser.getFlag("电池电压").getValue(), parser.getFlag("充电电流").getValue());
                             }
                             if (message[1] == this.cmd)
                                 this.parser = parser.flags.slice(3);
