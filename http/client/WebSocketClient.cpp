@@ -122,7 +122,11 @@ int WebSocketClient::open(const char* _url, const http_headers& headers) {
                             }
                             // NOTE: not triggle onclose when redirecting.
                             channel->onclose = NULL;
+                            // save reconnet_setting and redo
+                            auto rs = reconn_setting;
+                            reconn_setting = nullptr;
                             open(ws_url.c_str());
+                            if (rs) reconn_setting = rs;
                             return;
                         }
                     }
