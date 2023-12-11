@@ -551,12 +551,17 @@
             <el-tab-pane label="查询参数" name="all_args"> </el-tab-pane>
             <el-tab-pane label="设置参数" name="edit_args"> </el-tab-pane>
             <el-tab-pane label="运行参数" name="run_args">
-                <div ref="chats" style="width: 600px; height:350px;"></div>
-                <el-button type="primary" @click="publishCmd(0xC0, 0x05)">重置蜂鸣器报警</el-button>
-                <el-button type="primary" @click="publishCmd(0xC0, 0x06)">开启背光</el-button>
-                <el-button type="primary" @click="setCurTime">设置当前时间</el-button>
-                <el-checkbox v-model="charging" @change="setCharge">充电</el-checkbox>
-                <el-checkbox v-model="dcoutput" @change="setDcOutput">DC输出</el-checkbox>
+                <div style="display: flex; width: 100%; height: 400px;">
+                    <div style="height: 400px; width: 500px;" ref="chats"></div>
+                    <div style="height: 400px; width: 500px;" ref="chatV"></div>
+                </div>
+                <div>
+                    <el-button type="primary" @click="publishCmd(0xC0, 0x05)">重置蜂鸣器报警</el-button>
+                    <el-button type="primary" @click="publishCmd(0xC0, 0x06)">开启背光</el-button>
+                    <el-button type="primary" @click="setCurTime">设置当前时间</el-button>
+                    <el-checkbox v-model="charging" @change="setCharge">充电</el-checkbox>
+                    <el-checkbox v-model="dcoutput" @change="setDcOutput">DC输出</el-checkbox>
+                </div>
             </el-tab-pane>
                 <!-- <el-row>
                     <el-button type="primary" @click="sendCmd(0xb1)">查询参数</el-button>
@@ -612,6 +617,9 @@
                 refresh_interval: localStorage.getItem("refresh_interval") || 1000,
                 devId: localStorage.getItem("dev_id") || 0x01,
                 chats: null,
+                chatV: null,
+                dataV: [],
+                dataPV: [],
                 date: [],
                 dataA: [],
                 dataW: [],
@@ -651,11 +659,13 @@
                 localStorage.setItem('refresh_interval', this.refresh_interval);
                 localStorage.setItem('dev_id', this.devId);
             },
-            addData(v, a) {
+            addData(v, a, pv) {
                 if (!this.chats) {
                     return ;
                 }
                 this.dataA.push(a);
+                this.dataV.push(v);
+                this.dataPV.push(pv);
                 this.dataW.push(v*a);
                 var now = new Date();
                 this.date.push([now.getHours(), now.getMinutes(), now.getSeconds()].join(':'));
@@ -663,6 +673,8 @@
                 if (shift) {
                     this.date.shift();
                     this.dataA.shift();
+                    this.dataV.shift();
+                    this.dataPV.shift();
                     this.dataW.shift();
                 }
                 this.chats.setOption({
@@ -678,13 +690,29 @@
                         data: this.dataW
                     }]
                 });
+                this.chatV.setOption({
+                    xAxis: {
+                        data: this.date
+                    },
+                    series: [
+                    {
+                        name:'电池电压',
+                        data: this.dataV
+                    },
+                    {
+                        name:'PV电压',
+                        data: this.dataPV
+                    }]
+                });
             },
             initChats() {
                 this.date = [];
                 this.dataA = [];
                 this.dataW = [];
+                this.dataV = [];
+                this.dataPV = [];
                 this.chats = echarts.init(this.$refs.chats);
-                option = {
+                var option = {
                     title: {
                         text: '实时发电图'
                     },
@@ -726,6 +754,49 @@
                     ]
                 };
                 this.chats.setOption(option);
+
+                this.chatV = echarts.init(this.$refs.chatV);
+                option = {
+                    title: {
+                        text: '实时电压'
+                    },
+                    legend: {
+                        data:['电池电压', 'PV电压']
+                    },
+                    xAxis: {
+                        type: 'category',
+                        boundaryGap: false,
+                        data: this.date
+                    },
+                    yAxis: {
+                        type: 'value'
+                    },
+                    series: [
+                        {
+                            name:'电池电压',
+                            type:'line',
+                            smooth:true,
+                            symbol: 'none',
+                            stack: 'a',
+                            areaStyle: {
+                                normal: {}
+                            },
+                            data: this.dataV
+                        },
+                        {
+                            name:'PV电压',
+                            type:'line',
+                            smooth:true,
+                            symbol: 'none',
+                            stack: 'a',
+                            areaStyle: {
+                                normal: {}
+                            },
+                            data: this.dataPV
+                        }
+                    ]
+                };
+                this.chatV.setOption(option);
             },
             connectServer() {
                 // 连接地址，有很多连接失败都是因为地址没写对
@@ -777,7 +848,7 @@
                             if (message[1] == 0xb1 || message[1] == 0xb3) {
                                 this.charging = parser.getFlag("充电状态").getBit(0);
                                 this.dcoutput = parser.getFlag("控制状态").getBit(1);
-                                this.addData(parser.getFlag("电池电压").getValue(), parser.getFlag("充电电流").getValue());
+                                this.addData(parser.getFlag("电池电压").getValue(), parser.getFlag("充电电流").getValue(), parser.getFlag("PV电压").getValue());
                             }
                             if (message[1] == this.cmd)
                                 this.parser = parser.flags.slice(3);
