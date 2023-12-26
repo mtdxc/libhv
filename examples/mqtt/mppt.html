@@ -668,8 +668,8 @@
                 this.dataPV.push(pv);
                 this.dataW.push(v*a);
                 var now = new Date();
-                this.date.push([now.getHours(), now.getMinutes(), now.getSeconds()].join(':'));
-                var shift = this.date.size > 50;
+                this.date.push(now.toLocaleTimeString());
+                var shift = this.date.size > 60;
                 if (shift) {
                     this.date.shift();
                     this.dataA.shift();
@@ -725,7 +725,7 @@
                         data: this.date
                     },
                     yAxis: {
-                        boundaryGap: [0, '50%'],
+                        //boundaryGap: [0, '50%'],
                         type: 'value'
                     },
                     series: [
@@ -734,7 +734,7 @@
                             type:'line',
                             smooth:true,
                             symbol: 'none',
-                            stack: 'a',
+                            //stack: 'a',
                             areaStyle: {
                                 normal: {}
                             },
@@ -745,7 +745,6 @@
                             type:'line',
                             smooth:true,
                             symbol: 'none',
-                            stack: 'a',
                             areaStyle: {
                                 normal: {}
                             },
@@ -777,7 +776,6 @@
                             type:'line',
                             smooth:true,
                             symbol: 'none',
-                            stack: 'a',
                             areaStyle: {
                                 normal: {}
                             },
@@ -788,7 +786,6 @@
                             type:'line',
                             smooth:true,
                             symbol: 'none',
-                            stack: 'a',
                             areaStyle: {
                                 normal: {}
                             },
