@@ -30,6 +30,15 @@ void RedisClient::connectCallback(const redisAsyncContext *c, int status) {
     }
 }
 
+void RedisClient::authCallback(redisAsyncContext *ac, void *r, void *privdata) {
+    redisReply *reply = (redisReply *)r;
+    RedisClient *self = (RedisClient *)ac->data;
+    if (reply->type == REDIS_REPLY_ERROR) {
+        hlogi("%p auth error %s", self, reply->str);
+        self->onDisconnect(0);
+    }
+}
+
 void RedisClient::disconnectCallback(const redisAsyncContext *c, int status) {
     RedisClient *self = (RedisClient *)c->data;
     if (self) self->onDisconnect(status);
@@ -72,6 +81,9 @@ void RedisClient::onConnect() {
     if (reconn_setting) {
         reconn_setting_reset(reconn_setting);
     }
+    if (auth_.length()) {
+        redisAsyncCommand(ctx_, &authCallback, this, "auth %s", auth_.c_str());
+    }
     if (subsMap.size()) {
         for (auto it : subsMap) {
             redisAsyncCommand(ctx_, &subsCallback, nullptr, "subscribe %s", it.first.c_str());
@@ -92,10 +104,12 @@ void RedisClient::setReconnect(reconn_setting_t *setting) {
     *reconn_setting = *setting;
 }
 
-bool RedisClient::open(const char *host, int port) {
+bool RedisClient::open(const char *host, int port, const char* auth) {
     if (port <= 0) port = 6379;
     host_ = host;
     port_ = port;
+    if (auth) 
+        auth_ = auth;
     return startConnect();
 }
 
@@ -131,11 +145,6 @@ bool RedisClient::close() {
         return true;
     }
     return false;
-}
-
-void RedisClient::auth(const char *key, const char *value, reply_cb_t cb) {
-    if (!ctx_) return;
-    redisAsyncCommand(ctx_, &reply::ReplyCB, reply::CbData(cb), "auth %s %s", key, value);
 }
 
 void RedisClient::get(const char *key, reply_cb_t cb) {

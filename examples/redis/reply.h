@@ -68,7 +68,7 @@ public:
 
     bool operator==(const std::string& rvalue) const
     {
-		if (_type == type_t::STRING || _type == type_t::ERROR || _type == type_t::STATUS)
+        if (_type == type_t::STRING || _type == type_t::ERROR || _type == type_t::STATUS)
         {
             return _str == rvalue;
         }
@@ -80,7 +80,7 @@ public:
 
     bool operator==(const long long rvalue) const
     {
-		if (_type == type_t::INTEGER)
+	    if (_type == type_t::INTEGER)
         {
             return _integer == rvalue;
         }
