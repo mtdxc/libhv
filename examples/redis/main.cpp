@@ -28,9 +28,12 @@ int main(int argc, char** argv) {
     while (1) {
         std::string s;
         getline(std::cin, s);
-        if (s == "q" || s == "quit") 
+        if (s == "q" || s == "quit") {
             break;
+        }
         conn.publish(topic, s);
     }
+    conn.close();
+    subs.close();
     loop.stop();
 }
