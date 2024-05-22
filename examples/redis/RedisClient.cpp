@@ -2,7 +2,13 @@
 #include <async.h>
 #include <hiredis.h>
 #include "hlog.h"
+#include "hbase.h"
 #include <adapters/libhv.h>
+
+RedisClient::~RedisClient() {
+    close();
+    HV_FREE(reconn_setting);
+}
 
 void debugCallback(redisAsyncContext *c, void *r, void *privdata) {
     redisReply *rp = (redisReply*)r;
@@ -15,11 +21,11 @@ void debugCallback(redisAsyncContext *c, void *r, void *privdata) {
 void RedisClient::connectCallback(const redisAsyncContext *c, int status) {
     RedisClient *self = (RedisClient*)c->data;
     if (status != REDIS_OK) {
-        hlogi("%p connect error: %s\n", c->data, c->errstr);
+        hlogi("%p connect error: %s", c->data, c->errstr);
         if (self) self->onDisconnect(status);
     }
     else {
-        hlogi("%p Connected...\n", c->data);
+        hlogi("%p Connected...", c->data);
         if (self) self->onConnect();
     }
 }
@@ -28,30 +34,73 @@ void RedisClient::disconnectCallback(const redisAsyncContext *c, int status) {
     RedisClient *self = (RedisClient *)c->data;
     if (self) self->onDisconnect(status);
     if (status != REDIS_OK) {
-        hlogi("%p Error: %s\n", c->data, c->errstr);
+        hlogi("%p Error: %s", c->data, c->errstr);
     }
     else {
-        hlogi("%p Disconnected...\n", c->data);
+        hlogi("%p Disconnected...", c->data);
     }
 }
 
 void RedisClient::onDisconnect(int code) {
+    redisAsyncFree(ctx_);
+    ctx_ = nullptr;
     if (event_) event_->onDisconnect(code);
     // reconnect
-    if (code) {
+    if (code && reconn_setting) {
+        startReconnect();
     }
 }
 
+int RedisClient::startReconnect() {
+    if (!reconn_setting) return -1;
+    if (!reconn_setting_can_retry(reconn_setting)) return -2;
+    uint32_t delay = reconn_setting_calc_delay(reconn_setting);
+    hlogi("%p reconnect... cnt=%d, delay=%d", this, reconn_setting->cur_retry_cnt, reconn_setting->cur_delay);
+    
+    htimer_t* timer = htimer_add(
+        loop_,
+        [](htimer_t *timer) {
+            auto cli = (RedisClient *)hevent_userdata(timer);
+            cli->startConnect();
+        },
+        delay, 1);
+    hevent_set_userdata(timer, this);
+    return 0;
+}
+
 void RedisClient::onConnect() {
-    for (auto it : subsMap) {
-        redisAsyncCommand(ctx_, &subsCallback, nullptr, "subscribe %s", it.first.c_str());
+    if (reconn_setting) {
+        reconn_setting_reset(reconn_setting);
+    }
+    if (subsMap.size()) {
+        for (auto it : subsMap) {
+            redisAsyncCommand(ctx_, &subsCallback, nullptr, "subscribe %s", it.first.c_str());
+        }
+        checkSubsTimer();
     }
     if (event_) event_->onConnect();
 }
 
+void RedisClient::setReconnect(reconn_setting_t *setting) {
+    if (setting == NULL) {
+        HV_FREE(reconn_setting);
+        return;
+    }
+    if (reconn_setting == NULL) {
+        HV_ALLOC_SIZEOF(reconn_setting);
+    }
+    *reconn_setting = *setting;
+}
+
 bool RedisClient::open(const char *host, int port) {
     if (port <= 0) port = 6379;
-    ctx_ = redisAsyncConnect(host, port);
+    host_ = host;
+    port_ = port;
+    return startConnect();
+}
+
+int RedisClient::startConnect() {
+    ctx_ = redisAsyncConnect(host_.c_str(), port_);
     if (ctx_->err) {
         /* Let *c leak for now... */
         printf("Error: %s\n", ctx_->errstr);
@@ -60,7 +109,9 @@ bool RedisClient::open(const char *host, int port) {
 
     redisLibhvAttach(ctx_, loop_);
     ctx_->data = this;
-    timeval tv = {0, 500000};
+    timeval tv;
+    tv.tv_sec = connect_timeout / 1000;
+    tv.tv_usec = (connect_timeout % 1000) * 1000;
     redisAsyncSetTimeout(ctx_, tv);
     redisAsyncSetConnectCallback(ctx_, connectCallback);
     redisAsyncSetDisconnectCallback(ctx_, disconnectCallback);
@@ -144,28 +195,40 @@ void RedisClient::subsCallback(redisAsyncContext *ac, void *r, void *privdata) {
     }
 }
 
+void RedisClient::checkSubsTimer() {
+    if (subsMap.size()) {
+        if (!subs_timer_) {
+            float timeout = 60;
+            subs_timer_ = htimer_add(
+                loop_,
+                [](htimer_t *timer) {
+                    auto client = (RedisClient *)hevent_userdata(timer);
+                    if (client && client->ctx_) redisAsyncCommand(client->ctx_, nullptr, nullptr, "ping");
+                },
+                timeout * 1000);
+            hevent_set_userdata(subs_timer_, this);
+            hlogi("start subsChecker with interval %fs", timeout);
+        }
+    }
+    else if(subs_timer_) {
+        htimer_del(subs_timer_);
+        subs_timer_ = nullptr;
+    }
+}
+
 void RedisClient::subscribe(const std::string &channel, MsgFunc func) {
     hlogi("subscribe %s", channel.c_str());
     subsMap[channel] = func;
     if (ctx_) {
         redisAsyncCommand(ctx_, &subsCallback, nullptr, "subscribe %s", channel.c_str());
     }    
-    if (!subs_timer_) {
-        float timeout = 60;
-        subs_timer_ = htimer_add(
-            loop_, [](htimer_t *timer) { 
-                auto client = (RedisClient*)hevent_userdata(timer);
-                if (client && client->ctx_) redisAsyncCommand(client->ctx_, nullptr, nullptr, "ping");
-            }, 
-            timeout * 1000);
-        hevent_set_userdata(subs_timer_, this);
-        hlogi("start subsChecker with interval %fs", timeout);
-    }
+    checkSubsTimer();
 }
 
 void RedisClient::unsubscribe(const std::string &channel) {
     hlogi("unsubscribe %s", channel.c_str());
     subsMap.erase(channel);
+    checkSubsTimer();
     if (ctx_) {
         redisAsyncCommand(ctx_, nullptr, nullptr, "unsubscribe %s", channel.c_str());
     }
