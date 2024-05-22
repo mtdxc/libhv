@@ -1,4 +1,6 @@
-#pragma once
+#ifndef HV_REDIS_CLIENT_H_
+#define HV_REDIS_CLIENT_H_
+
 #include <map>
 #include <string>
 #include "reply.h"
@@ -62,3 +64,5 @@ public:
     void subscribe(const std::string& channel, MsgFunc cb);
     void unsubscribe(const std::string& channel);
 };
+
+#endif // HV_REDIS_CLIENT_H_

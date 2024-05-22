@@ -1,3 +1,6 @@
+#ifndef HV_REDIS_REPLY_H_
+#define HV_REDIS_REPLY_H_
+
 #include <vector>
 #include <string>
 #include <functional>
@@ -105,3 +108,28 @@ private:
     std::map<std::string, reply> _maps;
 };
 
+class reply2 {
+    redisReply* reply_ = nullptr;
+    bool owner_ = false;
+    void free();
+    void assign(redisReply* r, bool o);
+public:
+    reply2(const reply2& r) : reply_(r.reply_), owner_(false) {}
+    reply2(redisReply* r = nullptr, bool o = false) : reply_(r), owner_(o) {
+    }
+    ~reply2();
+
+    int type() const;
+    bool ok() const;
+    bool isEmpty() const { return reply_ == nullptr; }
+    bool nil() const;
+    long long intVal() const;
+    double doubleVal() const;
+    std::string str() const;
+    int size() const;
+    reply2 get(int idx) const;
+    reply2 get(const char* name) const;
+    bool has(const char* name, int len = 0) const;
+};
+
+#endif // HV_REDIS_REPLY_H_
