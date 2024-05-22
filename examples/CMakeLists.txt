@@ -18,6 +18,12 @@ list(APPEND EXAMPLES
 
 include_directories(.. ../base ../ssl ../event ../util)
 
+include_directories(redis/hiredis)
+add_subdirectory(redis/hiredis)
+FILE(GLOB REDIS_FILES "redis/*.cpp" "redis/*.h")
+add_executable(redis_test ${REDIS_FILES})
+target_link_libraries(redis_test ${HV_LIBRARIES} hiredis)
+
 add_executable(hloop_test hloop_test.c)
 target_link_libraries(hloop_test ${HV_LIBRARIES})
 
@@ -195,5 +201,6 @@ if(WITH_MQTT)
 
     list(APPEND EXAMPLES mqtt_sub mqtt_pub mqtt_client_test mqtt_server_test)
 endif()
+
 
 add_custom_target(examples DEPENDS ${EXAMPLES})
