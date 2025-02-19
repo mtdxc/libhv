@@ -62,11 +62,16 @@ public:
     }
 
     int handleMessage(const std::string& msg, enum ws_opcode opcode) {
-        printf("onmessage(type=%s len=%d): %.*s\n", opcode == WS_OPCODE_TEXT ? "text" : "binary",
-            (int)msg.size(), (int)msg.size(), msg.data());
+        if (opcode == WS_OPCODE_TEXT) {
+            printf("onText: %.*s\n", (int)msg.size(), msg.data());
+        }
+        else{
+            printf("onBin: %d\n", (int)msg.size());
+            binCount++;
+        }
         return msg.size();
     }
-
+    int binCount = 0;
     TimerID timerID;
 };
 
@@ -93,7 +98,7 @@ int main(int argc, char** argv) {
     ws.onopen = [](const WebSocketChannelPtr& channel, const HttpRequestPtr& req) {
         printf("onopen: GET %s\n", req->Path().c_str());
         auto ctx = channel->newContextPtr<MyContext>();
-        // send(time) every 1s
+        /* send(time) every 1s
         ctx->timerID = setInterval(1000, [channel](TimerID id) {
             if (channel->isConnected() && channel->isWriteComplete()) {
                 char str[DATETIME_FMT_BUFLEN] = {0};
@@ -102,10 +107,21 @@ int main(int argc, char** argv) {
                 channel->send(str);
             }
         });
+        */
     };
     ws.onmessage = [](const WebSocketChannelPtr& channel, const std::string& msg) {
         auto ctx = channel->getContextPtr<MyContext>();
         ctx->handleMessage(msg, channel->opcode);
+        if (channel->opcode == WS_OPCODE_BINARY) {
+            channel->send(msg, channel->opcode);
+            if (!msg.size()) {
+                char buff[128];
+                int n = snprintf(buff, sizeof(buff), "recv %d samples\n", ctx->binCount);
+                channel->send(buff, n, WS_OPCODE_TEXT);
+                printf("%s", buff);
+                ctx->binCount = 0;
+            }
+        }
     };
     ws.onclose = [](const WebSocketChannelPtr& channel) {
         printf("onclose\n");
