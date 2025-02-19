@@ -123,6 +123,9 @@ if(WITH_HTTP_SERVER)
     add_executable(websocket_server_test websocket_server_test.cpp protoo.cpp)
     target_link_libraries(websocket_server_test ${HV_LIBRARIES})
 
+    add_executable(websocket_server_demo websocket_server_demo.cpp)
+    target_link_libraries(websocket_server_demo ${HV_LIBRARIES})
+
     list(APPEND EXAMPLES http_server_test websocket_server_test)
 endif()
 
