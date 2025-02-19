@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>WebSocket Audio Streaming</title>
+</head>
+<body>
+  <audio id="audio" controls autoplay></audio>
+  <br/>
+  <button id="start">start</button>
+  <button id="stop">stop</button>
+  <script>
+    const audioElement = document.getElementById('audio');
+    function blobToArrayBuffer(blob, callback) {
+      let reader = new FileReader();
+      reader.onload = function() {
+        return callback(this.result);
+      }
+      reader.readAsArrayBuffer(blob);
+    }
+    let audioBuffer = null;
+    startPlay = ()=> {
+      // 将 MediaSource 绑定到 audio 标签
+      const mediaSource = new MediaSource();
+      audioElement.src = URL.createObjectURL(mediaSource);
+      mediaSource.addEventListener('sourceopen', () => {
+        audioBuffer = mediaSource.addSourceBuffer('audio/mpeg');
+      });
+    }
+    
+    function stopPlay() {
+      audioElement.src = "";
+      audioBuffer = null;
+      /* 这会有个停止延迟，采用后者可立马停止
+      mediaSource.delSourceBuffer(audioBuffer);
+      audioBuffer = mediaSource.addSourceBuffer('audio/mpeg');
+      */
+    }
+
+    const ws = new WebSocket('ws://127.0.0.1:8000');
+    ws.binaryType = "arraybuffer";
+    ws.onmessage = (event) => {
+      if (!audioBuffer) return ;
+      if (event.data instanceof ArrayBuffer) {
+        // 将接收到的二进制数据追加到 audioBuffer
+        audioBuffer.appendBuffer(new Uint8Array(event.data));
+      }
+      if (event.data instanceof Blob){
+        blobToArrayBuffer(event.data, (buff)=>{
+          audioBuffer.appendBuffer(buff);
+        });
+      }
+    };
+
+    ws.onopen = () => {
+      console.log('WebSocket connection established');
+    };
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+    };
+
+    ws.onclose = () => {
+      console.log('WebSocket connection closed');
+    };
+    document.getElementById('start').addEventListener('click', function() {
+      ws.send('start');
+      startPlay();
+    });
+    document.getElementById('stop').addEventListener('click', function() {
+      ws.send('stop');
+      stopPlay();
+    });
+  </script>
+</body>
+</html>
