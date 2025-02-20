@@ -138,7 +138,9 @@
 
     async function main() {
       const myvad = await vad.MicVAD.new({
-        // model: "v5",
+        model: "v5",
+        frameSamples: 512,
+        negativeSpeechThreshold: 0.005,
         onSpeechStart: () => {
           setStatus("listen...");
           console.log("Speech start detected")
