@@ -6,10 +6,10 @@
 </head>
 <body>
   <audio id="audio" controls autoplay></audio>
-  <div id="audios"/>
-  <br/>
-  <button id="start">start</button>
-  <button id="stop">stop</button>
+  <div id="audios"> </div>
+  <div id="status"> </div>
+  <textarea rows="20" cols="80" id="textOut">
+  </textarea>
   <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/ort.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.22/dist/bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/lamejs@1.2.0/lame.min.js"></script>
@@ -31,7 +31,12 @@
       audios.appendChild(audio);
       audio.src = url;
     }
-
+    function addOutput(text) {
+      document.getElementById("textOut").value += text;
+    }
+    function setStatus(text) {
+      document.getElementById("status").innerText = text;
+    }
     function encodeMp3Buff(buffer, sampleRate) {
       const mp3Encoder = new lamejs.Mp3Encoder(1, sampleRate, 64);
       const sampleBlockSize = 1152;
@@ -82,16 +87,24 @@
       stopPlay();
       startPlay();
     }
-    const ws = new WebSocket('ws://127.0.0.1:8000');
+    const ws = new WebSocket('ws://192.168.24.10:8000/ws/file_asr_llm_tts');
     ws.binaryType = "arraybuffer";
     ws.onmessage = (event) => {
       if (!audioBuffer) return ;
-      if (event.data.length <1) return;
+      if (typeof event.data === "string") {
+        console.log(event.data);
+        addOutput(event.data);
+      }
+      if (event.data.byteLength <1) return;
       if (event.data instanceof ArrayBuffer) {
         const dataView = new DataView(event.data);
         let respId = dataView.getUint8(0);
-        console.log(respId, reqId);
-        if (reqId != respId) return ;
+        //console.log(respId, reqId, event.data);
+        if (reqId != respId) {
+          console.log("skip %d data for resp dismatch %d!=%d", event.data.byteLength, reqId, respId);
+          return ;
+        }
+        setStatus("speak...");
         // 将接收到的二进制数据追加到 audioBuffer
         audioBuffer.appendBuffer(new Uint8Array(event.data.slice(1)));
       }
@@ -99,8 +112,12 @@
         blobToArrayBuffer(event.data, (buff)=>{
           const dataView = new DataView(event.data);
           let respId = dataView.getUint8(0);
-          console.log(respId, reqId);
-          if (reqId != respId) return ;
+          //console.log(respId, reqId, event.data);
+          if (reqId != respId) {
+            console.log("skip %d data for resp dismatch %d!=%d", event.data.byteLength, reqId, respId);
+            return ;
+          }
+          setStatus("speak...");
           audioBuffer.appendBuffer(buff.slice(1));
         });
       }
@@ -118,18 +135,12 @@
     ws.onclose = () => {
       console.log('WebSocket connection closed');
     };
-    document.getElementById('start').addEventListener('click', function() {
-      ws.send('start');
-      startPlay();
-    });
-    document.getElementById('stop').addEventListener('click', function() {
-      ws.send('stop');
-      stopPlay();
-    });
 
     async function main() {
       const myvad = await vad.MicVAD.new({
+        // model: "v5",
         onSpeechStart: () => {
+          setStatus("listen...");
           console.log("Speech start detected")
           restartPlay();
           reqId++;
@@ -137,15 +148,20 @@
             reqId = 1;
         },
         onSpeechEnd: (audio) => {
+          setStatus("req llm...");
           // do something with `audio` (Float32Array of audio samples at sample rate 16000)...
-          console.log("onSpeechEnd");
           let buff = encodeMp3Buff(audio, 16000);
+          console.log("onSpeechEnd", buff);
           let id = new Uint8Array(1);
           id[0] = reqId;
           buff.unshift(id);
           ws.send(new Blob(buff));
           ws.send(new Blob(buff.slice(0, 1)));
           //displayAudio(buff);
+        },
+        onFrameProcessed: (prob, frame) => {
+          // 帧级回调
+          // console.log(prob, frame);
         }
       });
       myvad.start()

@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>获取麦克风PCM声音</title>
+</head>
+<body>
+    <script>
+        navigator.mediaDevices.getUserMedia({ audio: true })
+            .then(handleSuccess)
+            .catch(handleError);
+
+        function handleSuccess(stream) {
+            const audioContext = new AudioContext();
+            const source = audioContext.createMediaStreamSource(stream);
+            const processor = audioContext.createScriptProcessor(1024, 1, 1);
+
+            source.connect(processor);
+            processor.connect(audioContext.destination);
+
+            processor.onaudioprocess = function(event) {
+                const inputBuffer = event.inputBuffer;
+                const inputData = inputBuffer.getChannelData(0); // 获取PCM数据
+                console.log(inputData); // 输出PCM数据
+            };
+        }
+
+        function handleError(error) {
+            console.error('获取麦克风失败:', error);
+        }
+    </script>
+</body>
+</html>
