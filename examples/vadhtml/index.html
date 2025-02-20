@@ -33,7 +33,7 @@
     }
 
     function encodeMp3Buff(buffer, sampleRate) {
-      const mp3Encoder = new lamejs.Mp3Encoder(1, sampleRate, 128);
+      const mp3Encoder = new lamejs.Mp3Encoder(1, sampleRate, 64);
       const sampleBlockSize = 1152;
       const mp3Data = [];
       let pcm = new Int16Array(sampleBlockSize)
@@ -59,8 +59,9 @@
       return mp3Data;
     }
 
+    let reqId = 0;
     let audioBuffer = null;
-    startPlay = ()=> {
+    function startPlay() {
       // 将 MediaSource 绑定到 audio 标签
       const mediaSource = new MediaSource();
       audioElement.src = URL.createObjectURL(mediaSource);
@@ -77,18 +78,29 @@
       audioBuffer = mediaSource.addSourceBuffer('audio/mpeg');
       */
     }
-
+    function restartPlay() {
+      stopPlay();
+      startPlay();
+    }
     const ws = new WebSocket('ws://127.0.0.1:8000');
     ws.binaryType = "arraybuffer";
     ws.onmessage = (event) => {
       if (!audioBuffer) return ;
       if (event.data.length <1) return;
       if (event.data instanceof ArrayBuffer) {
+        const dataView = new DataView(event.data);
+        let respId = dataView.getUint8(0);
+        console.log(respId, reqId);
+        if (reqId != respId) return ;
         // 将接收到的二进制数据追加到 audioBuffer
         audioBuffer.appendBuffer(new Uint8Array(event.data.slice(1)));
       }
-      if (event.data instanceof Blob){
+      if (event.data instanceof Blob) {
         blobToArrayBuffer(event.data, (buff)=>{
+          const dataView = new DataView(event.data);
+          let respId = dataView.getUint8(0);
+          console.log(respId, reqId);
+          if (reqId != respId) return ;
           audioBuffer.appendBuffer(buff.slice(1));
         });
       }
@@ -114,20 +126,23 @@
       ws.send('stop');
       stopPlay();
     });
-    let reqId = 0;
+
     async function main() {
       const myvad = await vad.MicVAD.new({
         onSpeechStart: () => {
           console.log("Speech start detected")
+          restartPlay();
+          reqId++;
+          if(reqId > 256)
+            reqId = 1;
         },
         onSpeechEnd: (audio) => {
           // do something with `audio` (Float32Array of audio samples at sample rate 16000)...
           console.log("onSpeechEnd");
           let buff = encodeMp3Buff(audio, 16000);
-          reqId++;
-          if(reqId > 256)
-            reqId = 1;
-          buff.unshift(reqId);
+          let id = new Uint8Array(1);
+          id[0] = reqId;
+          buff.unshift(id);
           ws.send(new Blob(buff));
           ws.send(new Blob(buff.slice(0, 1)));
           //displayAudio(buff);
