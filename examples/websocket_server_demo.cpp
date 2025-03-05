@@ -76,15 +76,19 @@ public:
                 });
             }
             // Í£Ö¹½ÓÊÕmp3
-            if (msg == "stop") {
+            else if (msg == "stop") {
                 killTimer();
+            }
+            else if(-1!=msg.find("hello")) {
+                sock_->send(msg, opcode);
             }
         }
         else{
             printf("onBin: %d\n", (int)msg.size());
             // »ØÏÔmp3
             sock_->send(msg, opcode);
-            if (msg.size() < 2) {
+            return ;
+            if (msg.size() < 1) {
                 closeFile();
                 char buff[128];
                 int n = snprintf(buff, sizeof(buff), "recv %d samples\n", binCount);
@@ -99,7 +103,7 @@ public:
                 sprintf(buff, "%d.mp3", count++);
                 fp_ = fopen(buff, "wb");
             }
-            fwrite(msg.data() + 1, msg.size() -1, 1, fp_);
+            fwrite(msg.data(), msg.size(), 1, fp_);
             binCount++;
         }
     }
