@@ -67,9 +67,9 @@ static int calculate_mp3_frame_size(const uint8_t* header, int& sampling_rate) {
     return ((144 * bitrate) / sampling_rate) + padding;
 }
 
-bool read_mp3_frame(FILE* mp3File, std::string& mp3_data, int& samplerate) {
+bool read_mp3_frame(FILE* fp, std::string& frame, int& samplerate) {
     unsigned char header[4];
-    while (fread(header, 1, 4, mp3File) == 4) {
+    while (fread(header, 1, 4, fp) == 4) {
         if (header[0] == 0xFF && (header[1] & 0xE0) == 0xE0) {
             // 找到MP3帧头
             // 这里可以解析帧头信息或处理帧数据
@@ -77,19 +77,43 @@ bool read_mp3_frame(FILE* mp3File, std::string& mp3_data, int& samplerate) {
             // 计算帧大小（简化版）
             int frame_size = calculate_mp3_frame_size(header, samplerate);
             if (frame_size > 0) {
-                mp3_data.resize(frame_size);
-                memcpy(&mp3_data[0], header, 4);
-                fread(&mp3_data[4], 1, frame_size - 4, mp3File);
+                frame.resize(frame_size);
+                memcpy(&frame[0], header, 4);
+                fread(&frame[4], 1, frame_size - 4, fp);
                 return true;
             }
         }
+        else if(header[0] == 'I' && header[1] == 'D' && header[2] == '3') {
+            // ID3v2 标签，跳过
+            char tag_header[6];
+            fread(tag_header, 1, 6, fp);
+            int tag_size = ((tag_header[2] & 0x7F) << 21) | ((tag_header[3] & 0x7F) << 14) |
+                           ((tag_header[4] & 0x7F) << 7) | (tag_header[5] & 0x7F);
+            printf("read ID3v2 tag size: %d\n", tag_size);
+            frame.resize(tag_size + 10);
+            memcpy(&frame[0], header, 4);
+            memcpy(&frame[4], tag_header, 6);
+            fread(&frame[10], tag_size, 1, fp);
+            continue;
+        }
         // 不是帧头，回退3字节继续查找
-        fseek(mp3File, -3, SEEK_CUR);
+        fseek(fp, -3, SEEK_CUR);
     }
     return false;
 }
+struct tagheader {
+  char ID[3];          // The first 4 bytes should be ID3
+  char version[2];     // $03 00
+  char flags;          // $abc00000 : a:unsynchronisation if set; b:extended header exist if set; c:experimental indicator if set
+  char size[4];        // (total tag size - 10) excluding the tagheader;
+};
 
-//@see https://blog.csdn.net/shulianghan/article/details/144794794
+struct frameheader {
+  char frameid[4];    // TIT2 MCDI TRCK ...
+  char size[4];
+  char flags[2];      // %abc00000  %ijk00000 | a 0:frame should be preserved 1:frame should be discard
+};
+
 #define ADTS_HEADER_SIZE 7
 bool read_aac_frame(FILE* fp, std::string& frame, int& sample_rate) {
     static const int gAacSampleMap[] = {96000, 88200, 64000, 48000, 44100, 32000,
@@ -120,7 +144,7 @@ class MyContext {
     hv::WebSocketChannel* sock_ = nullptr;
     // MP3帧头通常是4字节，以0xFF开头
     FILE* mp3File = nullptr;
-    
+    int frame_count = 2;
 public:
     MyContext(hv::WebSocketChannel* s) : sock_(s) {
         timerID = INVALID_TIMER_ID;
@@ -158,7 +182,10 @@ public:
                 }
                 const char* path = "resp.mp3";
                 if (args.size() > 1) {
-                    path = args[1].c_str();
+                    frame_count = atoi(args[1].c_str());
+                }
+                if (args.size() > 2) {
+                    path = args[2].c_str();
                 }
 
                 char buff[256];
@@ -178,21 +205,25 @@ public:
                     return;
                 }
 
-                sprintf(buff, "start %s %d", path, samplerate);
+                sprintf(buff, "start %s %d %d", path, samplerate, frame_count);
                 printf("%s\n", buff);
                 sock_->send(buff);
 
                 // 开始发送mp3
-                timerID = setInterval(26, [this](TimerID id) {
+                timerID = setInterval(26 * frame_count, [this](TimerID id) {
                     if (sock_->isConnected() && sock_->isWriteComplete() && mp3File) {
-                        std::string mp3_data;
+                        std::string resp;
                         int samplerate = 0;
-                        if (!read_mp3_frame(mp3File, mp3_data, samplerate)) {
-                            printf("read mp3 eof rewind\n");
-                            fseek(mp3File, 0, SEEK_SET);
-                            return;
+                        for (int i=0;i<frame_count;i++) {
+                            std::string frame;
+                            if (!read_mp3_frame(mp3File, frame, samplerate)) {
+                                printf("read mp3 eof rewind\n");
+                                fseek(mp3File, 0, SEEK_SET);
+                                break;
+                            }
+                            resp.append(frame);
                         }
-                        sock_->send(mp3_data, WS_OPCODE_BINARY, true);
+                        sock_->send(resp, WS_OPCODE_BINARY, true);
                     }
                 });
             }
