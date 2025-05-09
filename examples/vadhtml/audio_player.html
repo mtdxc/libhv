@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket实时音频播放器</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            //max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+        
+        .player-container {
+            background-color: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+        
+        h1 {
+            text-align: center;
+            color: #2c3e50;
+        }
+        
+        .controls {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 20px 0;
+        }
+        
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            padding: 10px 20px;
+            font-size: 16px;
+            margin: 0 10px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        
+        button:hover {
+            background-color: #2980b9;
+        }
+        
+        button:disabled {
+            background-color: #95a5a6;
+            cursor: not-allowed;
+        }
+        
+        .status {
+            text-align: center;
+            margin: 15px 0;
+            font-weight: bold;
+            color: #2c3e50;
+            height: 20px;
+        }
+        
+        .volume-control {
+            display: flex;
+            align-items: center;
+            margin-top: 15px;
+            justify-content: center;
+        }
+        
+        .volume-control label {
+            margin-right: 10px;
+            font-size: 14px;
+        }
+        
+        .visualizer {
+            width: 100%;
+            height: 100px;
+            margin: 20px 0;
+            background-color: #ecf0f1;
+        }
+    </style>
+</head>
+<body>
+    <div class="player-container">
+        <h1>WebSocket实时音频播放器</h1>
+        
+        <div class="status" id="status">
+            未连接
+        </div>
+        
+        <div class="controls">
+            <input type="text" id="server-url" placeholder="WebSocket服务器地址" value="ws://localhost:8000/audio-stream">
+            <button id="connect-btn">连接</button>
+            <button id="disconnect-btn" disabled>断开</button>
+            <button onclick="testLoad()">测试</button>
+        </div>
+        
+        <div class="volume-control">
+            <label for="volume">音量:</label>
+            <input type="range" id="volume" min="0" max="1" step="0.01" value="0.7">
+        </div>
+        
+        <canvas id="visualizer" class="visualizer"></canvas>
+    </div>
+
+    <script>
+        // 获取DOM元素
+        const connectBtn = document.getElementById('connect-btn');
+        const disconnectBtn = document.getElementById('disconnect-btn');
+        const volumeSlider = document.getElementById('volume');
+        const statusDisplay = document.getElementById('status');
+        const visualizerCanvas = document.getElementById('visualizer');
+        const visualizerCtx = visualizerCanvas.getContext('2d');
+
+        // 设置可视化画布大小
+        visualizerCanvas.width = visualizerCanvas.offsetWidth;
+        visualizerCanvas.height = visualizerCanvas.offsetHeight;
+
+        // WebSocket和音频相关变量
+        let socket = null;
+        let audioContext = null;
+        let gainNode = null;
+        let scriptProcessor = null;
+        let analyser = null;
+        let audioBuffer = null;
+        let isPlaying = false;
+        let audioQueue = [];
+        // 更小的 bufferSize 可降低延迟，但可能引发音频卡顿
+        let bufferSize = 1024; // 默认 4096（约93ms），改为1024约23ms（44.1kHz采样率）
+
+        // 连接按钮事件
+        connectBtn.addEventListener('click', function() {
+            connectWebSocket();
+        });
+
+        // 断开按钮事件
+        disconnectBtn.addEventListener('click', function() {
+            disconnectWebSocket();
+        });
+
+        // 音量控制事件
+        volumeSlider.addEventListener('input', function() {
+            if (gainNode) {
+                gainNode.gain.value = this.value;
+            }
+        });
+
+        // 连接WebSocket
+        function connectWebSocket() {
+            // 如果已经连接，则先断开
+            if (socket) {
+                disconnectWebSocket();
+            }
+
+            // 创建WebSocket连接
+            // 注意：这里需要替换为你的WebSocket服务器地址
+            const serverUrl = document.getElementById('server-url').value;
+            if (!serverUrl) {
+                alert("请输入WebSocket服务器地址");
+                return;
+            }
+            socket = new WebSocket(serverUrl);
+
+            // WebSocket事件处理
+            socket.binaryType = 'arraybuffer'; // 接收二进制数据
+
+            socket.onopen = function() {
+                statusDisplay.textContent = "已连接";
+                connectBtn.disabled = true;
+                disconnectBtn.disabled = false;
+                socket.send("start 3");
+                // 初始化音频上下文
+                initAudioContext();
+            };
+
+            function isValidMP3(data) {
+                // 检查是否有有效的 MP3 同步头
+                const view = new DataView(data);
+                return view.getUint16(0) >>> 4 === 0xFFF;
+            }
+
+            socket.onmessage = function(event) {
+                if (event.data instanceof ArrayBuffer) {
+                    // 空的id3v2头部
+                    // new Uint8Array([0x49, 0x44, 0x33, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+
+                    // 将接收到的音频数据加入队列
+                    audioQueue.push(event.data);
+                    // 如果没有在播放，则开始播放
+                    if (!isPlaying && audioContext) {
+                        processAudioQueue();
+                    }
+                }
+            };
+
+            socket.onclose = function() {
+                statusDisplay.textContent = "已断开";
+                connectBtn.disabled = false;
+                disconnectBtn.disabled = true;
+                cleanupAudio();
+            };
+
+            socket.onerror = function(error) {
+                statusDisplay.textContent = "连接错误: " + error.message;
+                connectBtn.disabled = false;
+                disconnectBtn.disabled = true;
+                cleanupAudio();
+            };
+        }
+
+        // 断开WebSocket
+        function disconnectWebSocket() {
+            if (socket) {
+                socket.close();
+                socket = null;
+            }
+            statusDisplay.textContent = "未连接";
+            connectBtn.disabled = false;
+            disconnectBtn.disabled = true;
+            cleanupAudio();
+        }
+
+        function testLoad() {
+           fetch('output.mp3')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('网络错误');
+                    }
+                    return response.arrayBuffer();
+                })
+                .then(data => {
+                    // 处理接收到的数据
+                    audioQueue.push(data);
+                    initAudioContext();
+                    processAudioQueue();
+                })
+                .catch(error => {
+                    console.error('数据加载失败:', error);
+                });
+        }
+        // 初始化音频上下文
+        function initAudioContext() {
+            // 如果已经存在，先清理
+            if (audioContext) {
+                cleanupAudio();
+            }
+
+            // 创建时指定低延迟模式（需浏览器支持）
+            let opt = {
+                latencyHint: 'interactive', // 可选值：'balanced'（默认）、'interactive'（最低延迟）、'playback'（高稳定性）
+                sampleRate: 44100 // 设置采样率
+            };
+            // 创建音频上下文
+            audioContext = new (window.AudioContext || window.webkitAudioContext)(opt);
+            
+            // 创建增益节点控制音量
+            gainNode = audioContext.createGain();
+            gainNode.gain.value = volumeSlider.value;
+            gainNode.connect(audioContext.destination);
+            
+            // 创建分析器用于可视化
+            analyser = audioContext.createAnalyser();
+            analyser.fftSize = 256;
+            analyser.connect(gainNode);
+            
+            // 创建脚本处理器处理音频数据
+            scriptProcessor = audioContext.createScriptProcessor(bufferSize, 1, 1);
+            scriptProcessor.connect(analyser);
+            
+            // 设置处理函数
+            scriptProcessor.onaudioprocess = function(e) {
+                if (audioBuffer && audioBuffer.position < audioBuffer.length) {
+                    // 将音频数据写入输出缓冲区
+                    const outputBuffer = e.outputBuffer;
+                    const outputData = outputBuffer.getChannelData(0);
+                    
+                    // 从当前音频缓冲区复制数据
+                    const remaining = audioBuffer.length - audioBuffer.position;
+                    if (remaining <= outputData.length) {
+                        processAudioQueue();
+                    }
+
+                    const samplesToCopy = Math.min(remaining, outputData.length);
+                    for (let i = 0; i < samplesToCopy; i++) {
+                        outputData[i] = audioBuffer.data[audioBuffer.position++];
+                    }
+                    
+                    // 可视化
+                    visualize();
+                }
+            };
+        }
+
+        // 处理音频队列
+        function processAudioQueue() {
+            if (audioQueue.length > 0) {
+                // 从队列中取出第一个音频数据
+                const audioData = audioQueue.shift();
+                // 解码音频数据
+                audioContext.decodeAudioData(audioData)
+                    .then(function(buffer) {
+                        // 创建音频缓冲区对象
+                        if (!audioBuffer) {
+                            audioBuffer = {
+                                data: new Array(buffer.length),
+                                position: 0,
+                                length: 0
+                            };
+                        }
+                        else{
+                            audioBuffer.length -= audioBuffer.position;
+                            for (let i = 0; i < audioBuffer.length; i++) {
+                                audioBuffer.data[i] = audioBuffer.data[audioBuffer.position + i];
+                            }
+                            audioBuffer.position = audioBuffer.length;
+                        }
+                        const data = buffer.getChannelData(0);
+                        for (let i = 0; i < buffer.length; i++) {
+                            audioBuffer.data[audioBuffer.length++] = data[i];
+                        }
+                        console.log(`音频缓冲区: ${audioBuffer.position}/${audioBuffer.length}`);
+                        isPlaying = true;
+                    })
+                    .catch(function(error) {
+                        console.error("音频解码错误:", error);
+                        // 继续处理队列中的下一个
+                        processAudioQueue();
+                    });
+            } else {
+                // 队列为空，停止播放
+                isPlaying = false;
+                //audioBuffer = null;
+            }
+        }
+
+        // 清理音频资源
+        function cleanupAudio() {
+            if (scriptProcessor) {
+                scriptProcessor.disconnect();
+                scriptProcessor = null;
+            }
+            
+            if (analyser) {
+                analyser.disconnect();
+                analyser = null;
+            }
+            
+            if (gainNode) {
+                gainNode.disconnect();
+                gainNode = null;
+            }
+            
+            if (audioContext) {
+                // 注意：在某些浏览器中不能同步关闭
+                audioContext.close().then(function() {
+                    audioContext = null;
+                });
+            }
+            
+            isPlaying = false;
+            audioBuffer = null;
+            audioQueue = [];
+        }
+
+        // 音频可视化
+        function visualize() {
+            if (!analyser) return;
+            
+            const width = visualizerCanvas.width;
+            const height = visualizerCanvas.height;
+            
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+            analyser.getByteFrequencyData(dataArray);
+            
+            visualizerCtx.clearRect(0, 0, width, height);
+            
+            const barWidth = (width / bufferLength) * 2.5;
+            let barHeight;
+            let x = 0;
+            
+            for (let i = 0; i < bufferLength; i++) {
+                barHeight = dataArray[i] / 2;
+                
+                visualizerCtx.fillStyle = 'rgb(' + (barHeight + 100) + ',50,50)';
+                visualizerCtx.fillRect(x, height - barHeight, barWidth, barHeight);
+                
+                x += barWidth + 1;
+            }
+        }
+
+        // 窗口大小改变时调整可视化画布
+        window.addEventListener('resize', function() {
+            visualizerCanvas.width = visualizerCanvas.offsetWidth;
+            visualizerCanvas.height = visualizerCanvas.offsetHeight;
+        });
+    </script>
+</body>
+</html>
