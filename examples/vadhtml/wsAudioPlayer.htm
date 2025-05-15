@@ -9,6 +9,7 @@
   <br/>
   <button id="start">start</button>
   <button id="stop">stop</button>
+  <button id="break">break</button>
   <script>
     const audioElement = document.getElementById('audio');
     function blobToArrayBuffer(blob, callback) {
@@ -32,9 +33,15 @@
       audioElement.src = "";
       audioBuffer = null;
       /* 这会有个停止延迟，采用后者可立马停止
-      mediaSource.delSourceBuffer(audioBuffer);
+      mediaSource.removeSourceBuffer(audioBuffer);
       audioBuffer = mediaSource.addSourceBuffer('audio/mpeg');
       */
+    }
+    function breakPlayout() {
+      if (audioBuffer) {
+        stopPlay();
+        startPlay();
+      }
     }
 
     const ws = new WebSocket('ws://127.0.0.1:8000');
@@ -70,6 +77,9 @@
     document.getElementById('stop').addEventListener('click', function() {
       ws.send('stop');
       stopPlay();
+    });
+    document.getElementById('break').addEventListener('click', function() {
+      breakPlayout();
     });
   </script>
 </body>
