@@ -10,7 +10,10 @@
             .catch(handleError);
 
         function handleSuccess(stream) {
-            const audioContext = new AudioContext();
+            const audioContext = new AudioContext({
+                sampleRate: 16000,
+                //latencyHint: 'interactive'
+            });
             const source = audioContext.createMediaStreamSource(stream);
             const processor = audioContext.createScriptProcessor(1024, 1, 1);
 
