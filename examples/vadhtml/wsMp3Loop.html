@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>KywTest</title>
+</head>
+<body>
+  <audio id="audio" controls autoplay></audio>
+  <br/>
+  <input type="text" id="wsUrl" value='ws://127.0.0.1:8000' />
+  <button onclick="start()">start</button>
+  <button onclick="stop()">stop</button>
+  <button onclick="breakPlayout()">break</button>
+  <script src="lame.all.js"></script>
+  <script>
+    const audioElement = document.getElementById('audio');
+    
+    let playBuffer = null;
+    function startPlay() {
+      // 将 MediaSource 绑定到 audio 标签
+      const mediaSource = new MediaSource();
+      audioElement.src = URL.createObjectURL(mediaSource);
+      mediaSource.addEventListener('sourceopen', () => {
+        playBuffer = mediaSource.addSourceBuffer('audio/mpeg');
+      });
+    }
+    
+    function stopPlay() {
+      audioElement.src = "";
+      playBuffer = null;
+      /* 这会有个停止延迟，采用后者可立马停止
+      mediaSource.removeSourceBuffer(playBuffer);
+      playBuffer = mediaSource.addSourceBuffer('audio/mpeg');
+      */
+    }
+    function breakPlayout() {
+      if (playBuffer) {
+        stopPlay();
+        startPlay();
+      }
+    }
+
+    class Mp3Encode {
+      constructor(sampleRate = 44100, bitRate = 128) {
+        this.encoder = new lamejs.Mp3Encoder(1, sampleRate, bitRate);
+        this.sampleBlockSize = 1152;
+        this.pos = 0;
+        this.pcm = new Int16Array(this.sampleBlockSize);
+        this.mp3Data = [];
+      }
+
+      encode(buffer) {
+        let mp3Data = [];
+        for (let i = 0; i < buffer.length; i++) {
+          this.pcm[this.pos++] = buffer[i] * 32768;
+          if (this.pos == this.sampleBlockSize) {
+            const mp3buf = this.encoder.encodeBuffer(this.pcm);
+            if (mp3buf.length > 0) {
+              mp3Data.push(mp3buf);
+            }
+            this.pos = 0;
+          }
+        }
+        return mp3Data;
+      }
+
+      flush() {
+        const mp3buf = this.encoder.flush();
+        if (mp3buf.length > 0) {
+          return mp3buf;
+        }
+        return null;
+      }
+    }
+
+    let recStream = null;
+    async function initRecord() {
+      let sampleRate = 16000;
+      recStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const audioContext = new AudioContext({
+          sampleRate,
+          //latencyHint: 'interactive'
+      });
+      const source = audioContext.createMediaStreamSource(recStream);
+      const processor = audioContext.createScriptProcessor(1024, 1, 1);
+      source.connect(processor);
+      processor.connect(audioContext.destination);
+      let encoder = new Mp3Encode(sampleRate, 32);
+      processor.onaudioprocess = function(event) {
+          const inputBuffer = event.inputBuffer;
+          const inputData = inputBuffer.getChannelData(0); // 获取PCM数据
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            let buff = encoder.encode(inputData);
+            if (buff.length > 0) {
+              // 将编码后的数据发送到服务器
+              ws.send(new Blob(buff, { type: 'audio/mpeg' }));
+              console.log('send mp3 data ' + buff.length);
+            }
+          }
+      };
+    }
+    function stopRecord() {
+      if (recStream) {
+        recStream.getTracks().forEach(track => track.stop());
+        recStream = null;
+      }
+    }
+
+    let ws = null;
+    function connectWs(url) {
+      if (ws) {
+        ws.close();
+      }
+      ws = new WebSocket(url);
+      ws.binaryType = "arraybuffer";
+      ws.onmessage = (event) => {
+        if (!playBuffer) return ;
+        if (event.data instanceof ArrayBuffer) {
+          // 将接收到的二进制数据追加到 playBuffer
+          playBuffer.appendBuffer(new Uint8Array(event.data));
+        }
+      };
+
+      ws.onopen = () => {
+        console.log('WebSocket connection established');
+        //ws.send('start');
+        startPlay();
+      };
+
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+      };
+
+      ws.onclose = () => {
+        console.log('WebSocket connection closed');
+      };
+    }
+
+    function stop() {
+      stopRecord();
+      stopPlay();
+      if (ws) {
+        ws.close();
+        ws = null;
+      }
+    }
+
+    function start() {
+      const url = document.getElementById('wsUrl').value;
+      connectWs(url);
+      initRecord();
+    }
+  </script>
+</body>
+</html>
