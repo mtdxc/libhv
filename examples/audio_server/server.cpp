@@ -27,8 +27,28 @@ using namespace hv;
  *
  */
 #define TEST_WSS 0
-
 using namespace hv;
+extern "C" {
+#include "shine_mp3.h"
+}
+shine_t mp3EncodeOpen(int samplerate, int channel, int bitrate) {
+    shine_config_t config;
+    shine_set_config_mpeg_defaults(&config.mpeg);
+    config.wave.samplerate = samplerate;
+    if (channel > 1) {
+      config.mpeg.mode = STEREO;
+      config.wave.channels = PCM_STEREO;
+    } else {
+      config.mpeg.mode = MONO;
+      config.wave.channels = PCM_MONO;
+    }
+    config.mpeg.bitr = bitrate / 1000;
+    if (shine_check_config(config.wave.samplerate, config.mpeg.bitr) < 0) {
+      std::cerr << "Unsupported samplerate/bitrate configuration.";
+      return 0;
+    }
+    return shine_initialise(&config);
+}
 
 // 计算 MP3 帧大小
 static int calculate_mp3_frame_size(const uint8_t* header, int& sampling_rate) {
@@ -144,6 +164,10 @@ class MyContext {
     hv::WebSocketChannel* sock_ = nullptr;
     // MP3帧头通常是4字节，以0xFF开头
     FILE* mp3File = nullptr;
+    shine_t shine_ = nullptr;
+    int frame_samples_ = 0;
+    // 应该每 frame_samples_ / samplerate 秒发送一帧
+    std::vector<std::string> frames_;
     int frame_count = 2;
 public:
     MyContext(hv::WebSocketChannel* s) : sock_(s) {
@@ -152,6 +176,10 @@ public:
     ~MyContext() {
         closeFile();
         killTimer();
+        if (shine_) {
+            shine_close(shine_);
+            shine_ = nullptr;
+        }
     }
     void killTimer() {
         if (timerID != INVALID_TIMER_ID) {
@@ -159,6 +187,35 @@ public:
             timerID = INVALID_TIMER_ID;
         }
     }
+    void openEncoder(int samplerate, int channel, int bitrate) {
+        if (shine_) {
+            shine_close(shine_);
+            shine_ = nullptr;
+        }
+        shine_ = mp3EncodeOpen(samplerate, channel, bitrate);
+        if (!shine_) {
+            printf("shine_encode_open failed\n");
+        }
+        frame_samples_ = shine_samples_per_pass(shine_); // 每帧1152采样点
+    }
+
+    void encodeBuffer(short* pcm, int len) {
+        if (!shine_) {
+            printf("shine encoder not opened\n");
+            return;
+        }
+        int outlen = 0;
+        for(int i = 0; i < len; i += frame_samples_) {
+            if (i + frame_samples_ > len) {
+                break; // 不足一帧
+            }
+            auto ret = shine_encode_buffer_interleaved(shine_, pcm + i, &outlen);
+            if (ret && outlen) {
+                frames_.emplace_back((const char*)pcm + i, outlen);
+            }
+        }
+    }
+
     void closeFile() {
         if (fp_) {
             fclose(fp_);
