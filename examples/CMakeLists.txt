@@ -119,6 +119,9 @@ if(WITH_HTTP_SERVER)
     add_executable(http_server_test http_server_test.cpp)
     target_link_libraries(http_server_test ${HV_LIBRARIES})
 
+    add_executable(sse_server_test sse/server.cpp sse/SSEMgr.cpp)
+    target_link_libraries(sse_server_test ${HV_LIBRARIES})
+
     # websocket_server_test
     add_executable(websocket_server_test websocket_server_test.cpp protoo.cpp)
     target_link_libraries(websocket_server_test ${HV_LIBRARIES})
@@ -131,6 +134,9 @@ endif()
 
 if(WITH_HTTP_CLIENT)
     include_directories(../http/client)
+
+    add_executable(sse_client_test sse/client.cpp)
+    target_link_libraries(sse_client_test ${HV_LIBRARIES})
 
     # curl
     set(CURL_TARGET_NAME curl)
