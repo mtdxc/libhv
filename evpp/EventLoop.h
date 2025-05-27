@@ -97,7 +97,8 @@ public:
         }
         hevent_set_id(htimer, timerID);
         hevent_set_userdata(htimer, this);
-
+        // 在设置timerId之前，删除当前定时器(即便不存在也没关系)
+        killTimer(timerID);
         timers[timerID] = std::make_shared<Timer>(htimer, cb, repeat);
         return timerID;
     }
