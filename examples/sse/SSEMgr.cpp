@@ -13,7 +13,7 @@ SSEMgr::SSEMgr()
 
 }
 
-void SSEMgr::add(LONGLONG id, HttpContextPtr ctx)
+void SSEMgr::add(int64_t id, HttpContextPtr ctx)
 {
 	hlogi("SSEMgr add:%I64d", id);
 	ctx->userdata = (void*)id;
@@ -30,7 +30,7 @@ void SSEMgr::add(LONGLONG id, HttpContextPtr ctx)
 
 void SSEMgr::broadcast(const std::string& data)
 {
-	std::unordered_map<LONGLONG, HttpContextPtr> id_ctxs;
+	std::unordered_map<int64_t, HttpContextPtr> id_ctxs;
 	{
 		std::lock_guard<std::mutex> lk(m_mtx);
 		id_ctxs = m_id_ctxs;
@@ -41,7 +41,7 @@ void SSEMgr::broadcast(const std::string& data)
 		if (it.second && it.second->writer->isConnected())
 			it.second->writer->SSEvent(data);
 		else if (it.second) //on_ctx_close 可能触发多次，但是不影响
-			on_ctx_close((LONGLONG)it.second->userdata);
+			on_ctx_close((int64_t)it.second->userdata);
 	}
 }
 
@@ -51,7 +51,7 @@ bool SSEMgr::empty()
 	return m_id_ctxs.empty();
 }
 
-void SSEMgr::on_ctx_close(LONGLONG id)
+void SSEMgr::on_ctx_close(int64_t id)
 {
 	hlogi("SSEMgr erase:%I64d", id);
 	std::lock_guard<std::mutex> lk(m_mtx);
