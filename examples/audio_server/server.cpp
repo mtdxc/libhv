@@ -165,9 +165,21 @@ class MyContext {
     // MP3帧头通常是4字节，以0xFF开头
     FILE* mp3File = nullptr;
     shine_t shine_ = nullptr;
+    // 收到的pcmbuffer
+    std::vector<uint8_t> recv_buff_;
+    // vad断句模块
+    void* vad_ = nullptr;
+    // http请求handle，同时只有一个请求
+    void* llm_ = nullptr;
+    void doBreak() {
+        tts_text_.clear();
+        send_frames_.clear();
+    }
     int frame_samples_ = 0;
+    int send_samplerate_ = 16000;
+    std::list<std::string> tts_text_;
     // 应该每 frame_samples_ / samplerate 秒发送一帧
-    std::vector<std::string> frames_;
+    std::vector<std::string> send_frames_;
     int frame_count = 2;
 public:
     MyContext(hv::WebSocketChannel* s) : sock_(s) {
@@ -186,6 +198,39 @@ public:
             ::killTimer(timerID);
             timerID = INVALID_TIMER_ID;
         }
+    }
+    void addTts(std::string text) {
+        tts_text_.push_back(text);
+        checkTts();
+    }
+    bool inTts = false;
+    void startTTs(std::string text) {
+        inTts = true;
+        // 在其他线程中启动，并将结果追加增加到send_frames_中
+        inTts = false; // @todo 启动tts过程
+    }
+    void checkTts() {
+        // 500ms
+        if (!inTts && tts_text_.size() && send_frames_.size() * frame_samples_ < send_samplerate_ /2){
+            // @todo 启动tts过程
+            std::string text = tts_text_.front();
+            tts_text_.pop_front();
+            startTTs(text);
+        }
+    }
+    void startSend(int samplerate, float rate) {
+        send_samplerate_ = samplerate;
+        openEncoder(samplerate, 1, 128000); // 默认单声道，128kbps
+        timerID = setInterval(frame_samples_ * 1000 / samplerate, [this, samplerate](TimerID id) {
+            if (sock_->isConnected() && sock_->isWriteComplete()) {
+                if (!send_frames_.empty()) {
+                    std::string frame = send_frames_.front();
+                    send_frames_.erase(send_frames_.begin());
+                    sock_->send(frame, WS_OPCODE_BINARY, true);
+                    checkTts();
+                }
+            }
+        });
     }
     void openEncoder(int samplerate, int channel, int bitrate) {
         if (shine_) {
@@ -211,7 +256,7 @@ public:
             }
             auto ret = shine_encode_buffer_interleaved(shine_, pcm + i, &outlen);
             if (ret && outlen) {
-                frames_.emplace_back((const char*)pcm + i, outlen);
+                send_frames_.emplace_back((const char*)ret, outlen);
             }
         }
     }
