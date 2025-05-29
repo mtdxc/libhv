@@ -1,4 +1,4 @@
-/*
+ï»¿/*
  * websocket server
  *
  * @build   make examples
@@ -50,9 +50,9 @@ shine_t mp3EncodeOpen(int samplerate, int channel, int bitrate) {
     return shine_initialise(&config);
 }
 
-// ¼ÆËã MP3 Ö¡´óĞ¡
+// è®¡ç®— MP3 å¸§å¤§å°
 static int calculate_mp3_frame_size(const uint8_t* header, int& sampling_rate) {
-    // ²Î¿¼MPEGÒôÆµÖ¡Í·¸ñÊ½
+    // å‚è€ƒMPEGéŸ³é¢‘å¸§å¤´æ ¼å¼
     int version = (header[1] >> 3) & 0x03;
     int layer = (header[1] >> 1) & 0x03;
     int bitrate_index = (header[2] >> 4) & 0x0F;
@@ -61,10 +61,10 @@ static int calculate_mp3_frame_size(const uint8_t* header, int& sampling_rate) {
     
     if (version == 0 || layer == 0 || bitrate_index == 0 || bitrate_index == 15 ||
         sampling_rate_index == 3) {
-        return -1; // ÎŞĞ§Ö¡Í·
+        return -1; // æ— æ•ˆå¸§å¤´
     }
     
-    // ¼ò»¯µÄÖ¡´óĞ¡¼ÆËã£¨ÊÊÓÃÓÚLayer III£©
+    // ç®€åŒ–çš„å¸§å¤§å°è®¡ç®—ï¼ˆé€‚ç”¨äºLayer IIIï¼‰
     static const int bitrates[][16] = {
         // MPEG Version 1
         {0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0},
@@ -83,7 +83,7 @@ static int calculate_mp3_frame_size(const uint8_t* header, int& sampling_rate) {
     
     if (bitrate == 0 || sampling_rate == 0) return -1;
     
-    // Ö¡´óĞ¡¹«Ê½: ((144 * bitrate) / sampling_rate) + padding
+    // å¸§å¤§å°å…¬å¼: ((144 * bitrate) / sampling_rate) + padding
     return ((144 * bitrate) / sampling_rate) + padding;
 }
 
@@ -91,10 +91,10 @@ bool read_mp3_frame(FILE* fp, std::string& frame, int& samplerate) {
     unsigned char header[4];
     while (fread(header, 1, 4, fp) == 4) {
         if (header[0] == 0xFF && (header[1] & 0xE0) == 0xE0) {
-            // ÕÒµ½MP3Ö¡Í·
-            // ÕâÀï¿ÉÒÔ½âÎöÖ¡Í·ĞÅÏ¢»ò´¦ÀíÖ¡Êı¾İ
+            // æ‰¾åˆ°MP3å¸§å¤´
+            // è¿™é‡Œå¯ä»¥è§£æå¸§å¤´ä¿¡æ¯æˆ–å¤„ç†å¸§æ•°æ®
             
-            // ¼ÆËãÖ¡´óĞ¡£¨¼ò»¯°æ£©
+            // è®¡ç®—å¸§å¤§å°ï¼ˆç®€åŒ–ç‰ˆï¼‰
             int frame_size = calculate_mp3_frame_size(header, samplerate);
             if (frame_size > 0) {
                 frame.resize(frame_size);
@@ -104,7 +104,7 @@ bool read_mp3_frame(FILE* fp, std::string& frame, int& samplerate) {
             }
         }
         else if(header[0] == 'I' && header[1] == 'D' && header[2] == '3') {
-            // ID3v2 ±êÇ©£¬Ìø¹ı
+            // ID3v2 æ ‡ç­¾ï¼Œè·³è¿‡
             char tag_header[6];
             fread(tag_header, 1, 6, fp);
             int tag_size = ((tag_header[2] & 0x7F) << 21) | ((tag_header[3] & 0x7F) << 14) |
@@ -116,7 +116,7 @@ bool read_mp3_frame(FILE* fp, std::string& frame, int& samplerate) {
             fread(&frame[10], tag_size, 1, fp);
             continue;
         }
-        // ²»ÊÇÖ¡Í·£¬»ØÍË3×Ö½Ú¼ÌĞø²éÕÒ
+        // ä¸æ˜¯å¸§å¤´ï¼Œå›é€€3å­—èŠ‚ç»§ç»­æŸ¥æ‰¾
         fseek(fp, -3, SEEK_CUR);
     }
     return false;
@@ -142,19 +142,19 @@ bool read_aac_frame(FILE* fp, std::string& frame, int& sample_rate) {
     uint8_t header[ADTS_HEADER_SIZE];
     while (fread(header, 1, ADTS_HEADER_SIZE, fp) == ADTS_HEADER_SIZE) {
         if (header[0] == 0xFF && (header[1] & 0xF0) == 0xF0) {
-            // ÕÒµ½ADTSÖ¡Í·
+            // æ‰¾åˆ°ADTSå¸§å¤´
             int frame_size = (header[3] & 0x01) << 11 | header[4] << 3 | header[5] >> 5;
             frame.resize(frame_size);
             memcpy(&frame[0], header, ADTS_HEADER_SIZE);
             sample_rate = gAacSampleMap[header[2] >> 2 & 0x0F];
             int channels = (header[2] & 0x01) << 2 | header[3] >> 6;
-            int block_count = (header[6] & 0x03) + 1; // Ã¿Ö¡°üº¬µÄ AAC Êı¾İ¿éÊıÄ¿£¬Í¨³£Îª 0£¨±íÊ¾Ö»ÓĞ 1 ¸öÊı¾İ¿é£©¡£
+            int block_count = (header[6] & 0x03) + 1; // æ¯å¸§åŒ…å«çš„ AAC æ•°æ®å—æ•°ç›®ï¼Œé€šå¸¸ä¸º 0ï¼ˆè¡¨ç¤ºåªæœ‰ 1 ä¸ªæ•°æ®å—ï¼‰ã€‚
             // cur_ += 1024.0 * block_count / sample_rate; 
             if (fread(&frame[ADTS_HEADER_SIZE], frame_size - ADTS_HEADER_SIZE, 1, fp)) {
                 return true;
             }
         }
-        // ²»ÊÇADTSÖ¡Í·£¬»ØÍË3×Ö½Ú¼ÌĞø²éÕÒ
+        // ä¸æ˜¯ADTSå¸§å¤´ï¼Œå›é€€3å­—èŠ‚ç»§ç»­æŸ¥æ‰¾
         fseek(fp, 1-ADTS_HEADER_SIZE, SEEK_CUR);
     }
     return false;
@@ -162,12 +162,24 @@ bool read_aac_frame(FILE* fp, std::string& frame, int& sample_rate) {
 
 class MyContext {
     hv::WebSocketChannel* sock_ = nullptr;
-    // MP3Ö¡Í·Í¨³£ÊÇ4×Ö½Ú£¬ÒÔ0xFF¿ªÍ·
+    // MP3å¸§å¤´é€šå¸¸æ˜¯4å­—èŠ‚ï¼Œä»¥0xFFå¼€å¤´
     FILE* mp3File = nullptr;
     shine_t shine_ = nullptr;
+    // æ”¶åˆ°çš„pcmbuffer
+    std::vector<uint8_t> recv_buff_;
+    // vadæ–­å¥æ¨¡å—
+    void* vad_ = nullptr;
+    // httpè¯·æ±‚handleï¼ŒåŒæ—¶åªæœ‰ä¸€ä¸ªè¯·æ±‚
+    void* llm_ = nullptr;
+    void doBreak() {
+        tts_text_.clear();
+        send_frames_.clear();
+    }
     int frame_samples_ = 0;
-    // Ó¦¸ÃÃ¿ frame_samples_ / samplerate Ãë·¢ËÍÒ»Ö¡
-    std::vector<std::string> frames_;
+    int send_samplerate_ = 16000;
+    std::list<std::string> tts_text_;
+    // åº”è¯¥æ¯ frame_samples_ / samplerate ç§’å‘é€ä¸€å¸§
+    std::vector<std::string> send_frames_;
     int frame_count = 2;
 public:
     MyContext(hv::WebSocketChannel* s) : sock_(s) {
@@ -187,6 +199,39 @@ public:
             timerID = INVALID_TIMER_ID;
         }
     }
+    void addTts(std::string text) {
+        tts_text_.push_back(text);
+        checkTts();
+    }
+    bool inTts = false;
+    void startTTs(std::string text) {
+        inTts = true;
+        // åœ¨å…¶ä»–çº¿ç¨‹ä¸­å¯åŠ¨ï¼Œå¹¶å°†ç»“æœè¿½åŠ å¢åŠ åˆ°send_frames_ä¸­
+        inTts = false; // @todo å¯åŠ¨ttsè¿‡ç¨‹
+    }
+    void checkTts() {
+        // 500ms
+        if (!inTts && tts_text_.size() && send_frames_.size() * frame_samples_ < send_samplerate_ /2){
+            // @todo å¯åŠ¨ttsè¿‡ç¨‹
+            std::string text = tts_text_.front();
+            tts_text_.pop_front();
+            startTTs(text);
+        }
+    }
+    void startSend(int samplerate, float rate) {
+        send_samplerate_ = samplerate;
+        openEncoder(samplerate, 1, 128000); // é»˜è®¤å•å£°é“ï¼Œ128kbps
+        timerID = setInterval(frame_samples_ * 1000 / samplerate, [this, samplerate](TimerID id) {
+            if (sock_->isConnected() && sock_->isWriteComplete()) {
+                if (!send_frames_.empty()) {
+                    std::string frame = send_frames_.front();
+                    send_frames_.erase(send_frames_.begin());
+                    sock_->send(frame, WS_OPCODE_BINARY, true);
+                    checkTts();
+                }
+            }
+        });
+    }
     void openEncoder(int samplerate, int channel, int bitrate) {
         if (shine_) {
             shine_close(shine_);
@@ -196,7 +241,7 @@ public:
         if (!shine_) {
             printf("shine_encode_open failed\n");
         }
-        frame_samples_ = shine_samples_per_pass(shine_); // Ã¿Ö¡1152²ÉÑùµã
+        frame_samples_ = shine_samples_per_pass(shine_); // æ¯å¸§1152é‡‡æ ·ç‚¹
     }
 
     void encodeBuffer(short* pcm, int len) {
@@ -207,11 +252,11 @@ public:
         int outlen = 0;
         for(int i = 0; i < len; i += frame_samples_) {
             if (i + frame_samples_ > len) {
-                break; // ²»×ãÒ»Ö¡
+                break; // ä¸è¶³ä¸€å¸§
             }
             auto ret = shine_encode_buffer_interleaved(shine_, pcm + i, &outlen);
             if (ret && outlen) {
-                frames_.emplace_back((const char*)pcm + i, outlen);
+                send_frames_.emplace_back((const char*)ret, outlen);
             }
         }
     }
@@ -266,7 +311,7 @@ public:
                 printf("%s\n", buff);
                 sock_->send(buff);
 
-                // ¿ªÊ¼·¢ËÍmp3
+                // å¼€å§‹å‘é€mp3
                 timerID = setInterval(26 * frame_count, [this](TimerID id) {
                     if (sock_->isConnected() && sock_->isWriteComplete() && mp3File) {
                         std::string resp;
@@ -284,7 +329,7 @@ public:
                     }
                 });
             }
-            // Í£Ö¹½ÓÊÕmp3
+            // åœæ­¢æ¥æ”¶mp3
             else if (msg == "stop") {
                 killTimer();
             }
@@ -294,7 +339,7 @@ public:
         }
         else{
             printf("onBin: %d\n", (int)msg.size());
-            // »ØÏÔmp3
+            // å›æ˜¾mp3
             sock_->send(msg, opcode);
             return ;
             if (msg.size() < 1) {
@@ -306,7 +351,7 @@ public:
                 binCount = 0;
                 return;
             }
-            // ×·¼ÓÎÄ¼ş
+            // è¿½åŠ æ–‡ä»¶
             if (!fp_) {
                 char buff[256];
                 sprintf(buff, "%d.mp3", count++);

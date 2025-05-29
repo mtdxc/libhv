@@ -31,8 +31,10 @@ int main(int argc, char** argv) {
                 datetime_fmt(&now, szTime);
                 ctx->writer->SSEvent(szTime);
                 //增加SSE链接管理，支持数据订阅推送
+#ifdef _WIN32               
                 static LONGLONG ids = 0;
                 SSEMgr::instance().add(::InterlockedIncrement64(&ids), ctx);
+#endif
                 if (++ncount >= 10) {
                     //hv::killTimer(timerID);
                     ctx->writer->close();
