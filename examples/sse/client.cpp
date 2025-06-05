@@ -58,84 +58,81 @@ HV_INLINE int sse(http_method method, const char* url, const sse_msg_cb& msg_cb,
     return cli.send(&req, &resp);
 }
 
-using ollma_cb = std::function<void(const hv::Json& j)>;
-int ollama(const char* url, const ollma_cb& msg_cb, const http_headers& headers = DefaultHeaders, const unsigned int timeout_s = -1) {
-    hv::HttpClient cli;
-    HttpRequest req;
-    HttpResponse resp;
-
-    req.url = url; //
-    req.method = HTTP_POST;
-    req.timeout = timeout_s; // 不超时
+using ollma_cb = std::function<bool(const hv::Json& j)>;
+int ollama(const char* url, const char* prompt, const ollma_cb& msg_cb, const http_headers& headers = DefaultHeaders, const unsigned int timeout_s = -1) {
+    HttpRequestPtr req = std::make_shared<HttpRequest>();
+    req->url = url; //
+    req->method = HTTP_POST;
+    req->timeout = timeout_s; // 不超时
     if (&headers != &DefaultHeaders) {
-        req.headers = headers;
+        req->headers = headers;
     }
-    req.SetHeader("Content-Type", "application/json");
-    hv::Json val;
-    val["stream"] = true;
-    val["model"] = "qwen3";
-    val["prompt"] = "hello";
-    req.body = val.dump();
-    /*
-    req.Set("stream", true);
-    req.Set("model", "qwen3");
-    req.Set("prompt", "hello");
-    //req.Set("context")
-    */
+    req->SetHeader("Content-Type", "application/json");
+    req->Set("stream", true);
+    req->Set("model", "llama3:8b");
+    req->Set("prompt", prompt);
     bool bstream = false;
-    req.http_cb = [msg_cb, &bstream](HttpMessage* resp, http_parser_state state, const char* data, size_t size) {
+    req->http_cb = [msg_cb, req, &bstream](HttpMessage* resp, http_parser_state state, const char* data, size_t size) {
         if (state == HP_HEADERS_COMPLETE) {
             if (resp->headers["Content-Type"] == "text/event-stream") {
                 bstream = true;
-                return 0;
             }
         }
         else if (state == HP_BODY) {
             /*binary body should check data*/
             // printf("%s", std::string(data, size).c_str());
             resp->body.append(data, size);
-            if (!bstream){
+            if (!bstream) {
                 size_t ifind = std::string::npos;
                 while ((ifind = resp->body.find("\n")) != std::string::npos) {
                     std::string msg = resp->body.substr(0, ifind + 1);
                     hv::Json j;
                     try {
                         j = hv::Json::parse(msg);
-                        msg_cb(j);
+                        if (!msg_cb(j)) {
+                            req->Cancel();
+                        }
+                        if (j["context"]) {
+                            req->Set("context", j["context"]);
+                        }
                     } catch (const std::exception& e) {
                         //fprintf(stderr, "JSON parse error: %s\n", e.what());
                     }
                     resp->body.erase(0, ifind + 1);
                 }
-                return 0;
             }
-            /*/n/n获取message*/
-            size_t ifind = std::string::npos;
-            while ((ifind = resp->body.find("\n\n")) != std::string::npos) {
-                std::string msg = resp->body.substr(0, ifind + 2);
-                resp->body.erase(0, ifind + 2);
+            else {
+                /*/n/n获取message*/
+                size_t ifind = std::string::npos;
+                while ((ifind = resp->body.find("\n\n")) != std::string::npos) {
+                    std::string msg = resp->body.substr(0, ifind + 2);
+                    resp->body.erase(0, ifind + 2);
 
-                /*解析body,暂时不考虑多data
-                id:xxx\n
-                event:xxx\n
-                data:xxx\n
-                data:xxx\n
-                data:xxx\n
-                retry:10000\n
-                */
-                auto kvs = hv::splitKV(msg, '\n', ':');
-                if (msg_cb)
-                    msg_cb(hv::Json(kvs));
+                    /*解析body,暂时不考虑多data
+                    id:xxx\n
+                    event:xxx\n
+                    data:xxx\n
+                    data:xxx\n
+                    data:xxx\n
+                    retry:10000\n
+                    */
+                    auto kvs = hv::splitKV(msg, '\n', ':');
+                    if (!msg_cb(hv::Json(kvs))) {
+                        req->Cancel();
+                    }
+                }
             }
         }
-        return 0;
     };
-    return cli.send(&req, &resp);
+    hv::HttpClient cli;
+    HttpResponsePtr resp = std::make_shared<HttpResponse>();
+    return cli.send(req.get(), resp.get());
 }
 
 int main(int argc, char** argv) {
-    ollama("http://localhost:11434/api/generate", [](hv::Json val){
+    ollama("http://localhost:11434/api/generate", "hello world", [](hv::Json val) {
         printf("ollama: %s\n", val.dump().c_str());
+        return true;
     });
     return 0;
 
@@ -147,6 +144,7 @@ int main(int argc, char** argv) {
     const char* url = argv[1];
     sse_msg_cb msg_cb = [](const std::string& sid, const std::string& sevent, const std::string& sdata, const unsigned int retry_ms) {
         printf("sid: %s, event: %s, data: %s, retry: %u\n", sid.c_str(), sevent.c_str(), sdata.c_str(), retry_ms);
+        return true;
     };
 
     int ret = sse(HTTP_GET, url, msg_cb);
