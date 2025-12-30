@@ -13,6 +13,7 @@
 #include "mqtt_client.h"
 #include "TcpServer.h"
 #include "http/server/WebSocketServer.h"
+#include "topic_tree.h"
 #include "hendian.h"
 #include "hstring.h"
 #include <list>
@@ -21,11 +22,10 @@ using namespace hv;
 
 #define TEST_TLS        0
 struct MqttSession {
-    using Ptr = MqttSession*;
-    std::set<std::string> subs;
+    using Ptr = std::shared_ptr<MqttSession>;
     SocketChannelPtr tcp;
     WebSocketChannelPtr ws;
-    HVLBuf recv; // 用于ws的接收分包
+    HVLBuf recv_buf; // 用于ws的接收分包
 
     int write(const void* buff, int size) {
         int ret = 0;
@@ -46,134 +46,14 @@ struct MqttSession {
             ret = ws->close();
             ws = nullptr;
         }
-        recv.clear();
+        recv_buf.clear();
         return ret;
     }
 };
 
-class Subscribe {
-    hv::StringList _tokens; // 订阅路径
-    int _type;              // 0 完整匹配, 1 + 局部匹配, 2 # 尾部匹配
-public:
-    int type() const {return _type;}
-    std::set<MqttSession::Ptr> socks;
-    std::string path;
-
-    using Ptr = std::shared_ptr<Subscribe>;
-    Subscribe(const std::string& n) : path(n) {
-        _type = 0;
-        _tokens = hv::split(n, '/');
-        for (int i = 0; i < _tokens.size(); i++) {
-            auto& t = _tokens[i];
-            if (t == "#" && i + 1 == _tokens.size()) { // #通配符只能出现在尾部
-                _type = 2;
-                //#可匹配0路径
-                _tokens.pop_back();
-                path.pop_back();
-                if (path.length() && path.back() == '/')
-                    path.pop_back();
-            }
-            else if (t == "+")
-                _type = 1;
-        }
-    }
-
-    bool match(const std::string& topic) {
-        if (_type == 0)
-            return path == topic;
-        else if (_type == 2) {
-            if (path.empty()) return true;
-            bool ret = hv::startswith(topic, path);
-            if (ret) {
-                ret = topic.length() == path.length() || topic[path.length()] == '/';
-            }
-            return ret;
-        }
-        hv::StringList sl = hv::split(topic, '/');
-        return match(sl);
-    }
-    bool match(const hv::StringList& lst) {
-        if (_type == 2) { //#匹配
-            if (lst.size() < _tokens.size()) return false;
-        }
-        else if (lst.size() != _tokens.size()) {
-            return false;
-        }
-
-        int total = min(_tokens.size(), lst.size());
-        for (int i = 0; i < total; i++) {
-            auto t = _tokens.at(i);
-            if (t == "+")
-                continue;
-            else if (t != lst.at(i))
-                return false;
-        }
-        return true;
-    }
-    
-    void publish(uint8_t* buff, int size) {
-        for (auto it : socks) {
-            it->write(buff, size);
-        }
-    }
-};
-
 class MqttServer : public TcpServer {
-    using SubSet = std::set<std::string>;
-    std::recursive_mutex lock;
-    // 所有订阅，包含所有type的
-    std::map<std::string, Subscribe::Ptr> subsMap;
-    // type > 0 的订阅Map，需要模糊匹配
-    std::map<std::string, Subscribe::Ptr> typeSubs;
-    // 保留retain消息
-    std::map<std::string, hv::Buffer> retainMap;
+    TopicTree topic_tree_;
     std::shared_ptr<WebSocketServer> wsServer;
-    // 删除订阅
-    bool delSubscribe(const std::string& name, MqttSession::Ptr chann) { 
-        std::unique_lock<std::recursive_mutex> l(lock);
-        auto it = subsMap.find(name);
-        if (it != subsMap.end()) {
-            auto subs = it->second;
-            subs->socks.erase(chann);
-            if (subs->socks.empty()) {
-                subsMap.erase(it);
-                if (subs->type())
-                    typeSubs.erase(subs->path);
-            }
-            return true;
-        }
-        return false;
-    }
-    bool addSubscribe(const std::string& name, MqttSession::Ptr chann) {
-        std::unique_lock<std::recursive_mutex> l(lock);
-        Subscribe::Ptr subs;
-        auto it = subsMap.find(name);
-        if (it != subsMap.end()) {
-            subs = it->second;
-        }
-        else {
-            subs = std::make_shared<Subscribe>(name);
-            subsMap[name] = subs;
-            if (subs->type())
-                typeSubs[name] = subs;
-        }
-        subs->socks.insert(chann);
-        // 处理retain消息的订阅
-        if (subs->type()) {
-            for (auto rit : retainMap) {
-                if (subs->match(rit.first)) {
-                    chann->write(rit.second.data(), rit.second.size());
-                }
-            }
-        }
-        else {
-            auto rit = retainMap.find(name);
-            if (rit!=retainMap.end())
-                chann->write(rit->second.data(), rit->second.size());
-        }
-        return true;
-    }
-
     int send_head(MqttSession::Ptr channel, int type, int length) {
         mqtt_head_t head;
         memset(&head, 0, sizeof(head));
@@ -200,6 +80,9 @@ class MqttServer : public TcpServer {
         return channel->write(headbuf, headlen + 2);
     }
 public:
+    const TopicTree& topic_tree() const {
+        return topic_tree_;
+    }
     typedef std::function<void(MqttSession::Ptr, mqtt_message_t*)> MqttMessageCallback;
     MqttMessageCallback onPublish;
     MqttMessageCallback onSubscribe;
@@ -211,6 +94,7 @@ public:
         onAuth = [](MqttSession::Ptr, mqtt_conn_t*){
             return MQTT_CONNACK_ACCEPTED;
         };
+    
         static unpack_setting_t mqtt_unpack_setting;
         mqtt_unpack_setting.mode = UNPACK_BY_LENGTH_FIELD;
         mqtt_unpack_setting.package_max_length = DEFAULT_MQTT_PACKAGE_MAX_LENGTH;
@@ -219,6 +103,7 @@ public:
         mqtt_unpack_setting.length_field_bytes = 1;
         mqtt_unpack_setting.length_field_coding = ENCODE_BY_VARINT;
         setUnpack(&mqtt_unpack_setting);
+
         onMessage = [this](const SocketChannelPtr& channel, Buffer* buf) {
             mqtt_head_t head;
             memset(&head, 0, sizeof(mqtt_head_t));
@@ -226,28 +111,27 @@ public:
             int headlen = mqtt_head_unpack(&head, p, buf->size());
             if (headlen <= 0 || buf->size() < headlen + head.length)
                 return;
-            MqttSession* set = channel->getContext<MqttSession>();
+            auto set = channel->getContextPtr<MqttSession>();
             onMqttMessage(set, &head, p, p+headlen);
         };
+
         onConnection = [this](const SocketChannelPtr& channel) {
             std::string peeraddr = channel->peeraddr();
             if (channel->isConnected()) {
-                printf("%s connected! connfd=%d id=%d tid=%ld\n", peeraddr.c_str(), channel->fd(), channel->id(), currentThreadEventLoop->tid());
-                channel->newContext<MqttSession>()->tcp = channel;
+                hlogi("%s connected! connfd=%d id=%d\n", peeraddr.c_str(), channel->fd(), channel->id());
+                channel->newContextPtr<MqttSession>()->tcp = channel;
             }
             else {
-                printf("%s disconnected! connfd=%d id=%d tid=%ld\n", peeraddr.c_str(), channel->fd(), channel->id(), currentThreadEventLoop->tid());
-                MqttSession* set = channel->getContext<MqttSession>();
+                hlogi("%s disconnected! connfd=%d id=%d\n", peeraddr.c_str(), channel->fd(), channel->id());
+                auto set = channel->getContextPtr<MqttSession>();
                 closeSession(set);
             }
         };
     }
+
     void closeSession(MqttSession::Ptr set) {
         if (set) {
-            for (auto it : set->subs) {
-                delSubscribe(it, set);
-            }
-            delete set;
+            // topic_.remove_session(set);
         }
     }
 
@@ -255,13 +139,13 @@ public:
         static WebSocketService ws;
         ws.onopen = [](const WebSocketChannelPtr& channel, const HttpRequestPtr& req) {
             printf("onopen: GET %s\n", req->url.c_str());
-            channel->newContext<MqttSession>()->ws = channel;
+            channel->newContextPtr<MqttSession>()->ws = channel;
         };
         ws.onmessage = [this](const WebSocketChannelPtr& channel, const std::string& msg) {
-            MqttSession* set = channel->getContext<MqttSession>();
-            set->recv.append((void*)msg.c_str(), msg.size());
-            int size = set->recv.size();
-            unsigned char* p = (unsigned char*)set->recv.data();
+            auto set = channel->getContextPtr<MqttSession>();
+            set->recv_buf.append((void*)msg.c_str(), msg.size());
+            int size = set->recv_buf.size();
+            unsigned char* p = (unsigned char*)set->recv_buf.data();
             while (size > 1) {
                 mqtt_head_t head;
                 memset(&head, 0, sizeof(mqtt_head_t));
@@ -272,11 +156,11 @@ public:
                 p += head.length + headlen;
                 size -= head.length + headlen;
             }
-            set->recv.remove(p - (unsigned char*)set->recv.data());
+            set->recv_buf.remove(p - (unsigned char*)set->recv_buf.data());
         };
         ws.onclose = [this](const WebSocketChannelPtr& channel) {
             printf("onclose\n");
-            MqttSession* ctx = channel->getContext<MqttSession>();
+            auto ctx = channel->getContextPtr<MqttSession>();
             closeSession(ctx);
         };
         wsServer = std::make_shared<WebSocketServer>();
@@ -371,41 +255,25 @@ public:
             } else if (message.qos == 2) {
                 send_head_with_mid(channel, MQTT_TYPE_PUBREC, mid);
             }
-            std::set<MqttSession::Ptr> clients;
-            {
-                std::string topic(message.topic, message.topic_len);
-                std::unique_lock<std::recursive_mutex> l(lock);
-                // 保留retain消息
-                if (start[0] & 0x01) {
-                    if (message.payload_len > 0) {
-                        retainMap[topic].copy(start, end - start);
-                    } else {
-                        retainMap.erase(topic);
-                        return ;
-                    }
-                    // 清除retain标记
-                    start[0] &= ~0x01;
+            std::string topic(message.topic, message.topic_len);
+            // 保留retain消息
+            if (start[0] & 0x01) {
+                std::vector<uint8_t> retain;
+                if (message.payload_len > 0) {
+                    retain.resize(end - start);
+                    memcpy(retain.data(), start, end - start);
                 }
-
-                // publish type == 0
-                auto it = subsMap.find(topic);
-                if (it != subsMap.end()) {
-                    clients = it->second->socks;
-                    //it->second->publish(start, end - start);
-                }
-                else { // 通配符查找
-                    for (auto it : typeSubs) {
-                        auto subs = it.second;
-                        if (subs->match(topic)) {
-                            clients.insert(subs->socks.begin(), subs->socks.end());
-                            //subs->publish(start, end - start);
-                        }
-                    }
-                }
+                topic_tree_.set_retained_message(topic, retain, message.qos, head->dup);
+                // 清除retain标记
+                start[0] &= ~0x01;
             }
-            // 转发消息
-            for (auto chann : clients) {
-                chann->write(start, end - start);
+            
+
+            auto matchs = topic_tree_.get_subscribers(topic);
+            for (auto it : matchs) {
+                if (auto cli = it.session.lock()) {
+                    cli->write(start, end - start);
+                }
             }
 
             if (onPublish)
@@ -440,11 +308,37 @@ public:
                 message.topic = (char*)p;
                 p += message.topic_len;
                 POP8(p, message.qos);
+                if (onSubscribe) onSubscribe(channel, &message);
 
                 std::string topic(message.topic, message.topic_len);
-                addSubscribe(topic, channel);
-				channel->subs.insert(topic);
-                if (onSubscribe) onSubscribe(channel, &message);
+                topic_tree_.subscribe(topic, channel, message.qos);
+                for (auto it : topic_tree_.get_retained_messages(topic)) {
+                    // 发送保留消息
+                    auto& retained_msg = it.second;
+                    std::vector<uint8_t> buff(10 + it.first.size() + retained_msg.payload.size());
+                    mqtt_head_t retain_head;
+                    memset(&retain_head, 0, sizeof(retain_head));
+                    retain_head.type = MQTT_TYPE_PUBLISH;
+                    retain_head.retain = 1;
+                    retain_head.qos = std::min(message.qos, retained_msg.qos);
+                    retain_head.length = 2 + it.first.size() + retained_msg.payload.size();
+                    int len = mqtt_head_pack(&retain_head, &buff[0]);
+                    unsigned char* p = &buff[len];
+                    // topic
+                    len = it.first.size();
+                    if (len) {
+                        PUSH16(p, len);
+                        memcpy(p, it.first.data(), len);
+                        p += len;
+                    }
+                    // payload
+                    len = retained_msg.payload.size();
+                    if (len) {
+                        memcpy(p, retained_msg.payload.data(), len);
+                        p += len;
+                    }
+                    channel->write(buff.data(), p - buff.data());
+                }
             }
             break;
         case MQTT_TYPE_UNSUBSCRIBE: 
@@ -458,11 +352,10 @@ public:
                 // NOTE: Not deep copy
                 message.topic = (char*)p;
                 p += message.topic_len;
+                if (onUnsubscribe) onUnsubscribe(channel, &message);
 
                 std::string topic(message.topic, message.topic_len);
-                delSubscribe(topic, channel);
-				channel->subs.erase(topic);
-                if (onUnsubscribe) onUnsubscribe(channel, &message);
+                topic_tree_.unsubscribe(topic, channel);
             }        
             break;
         case MQTT_TYPE_PINGREQ: 
@@ -522,12 +415,15 @@ int main(int argc, char* argv[]) {
 
     std::string str;
     while (std::getline(std::cin, str)) {
-        if (str == "close") {
+        if (str == "dump" || str == "d") {
+            srv.topic_tree().dump_tree([](const std::string& line){
+                printf("%s\n", line.c_str());
+            });
+        } else if (str == "stat" || str == "s") {
+            auto stat = srv.topic_tree().get_statistics();
+            printf("Statistics: %zu %zu %zu %zu\n", stat.total_nodes, stat.total_subscribers, stat.total_retained_messages, stat.max_depth);
+        } else if (str == "exit" || str == "quit" || str == "q") {
             srv.closesocket();
-        } else if (str == "start") {
-            srv.start();
-        } else if (str == "stop") {
-            srv.stop();
             break;
         } else {
             srv.broadcast(str.data(), str.size());

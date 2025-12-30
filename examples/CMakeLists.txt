@@ -203,7 +203,7 @@ if(WITH_MQTT)
     target_compile_options(mqtt_client_test PRIVATE "$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
     target_link_libraries(mqtt_client_test ${HV_LIBRARIES})
 
-    add_executable(mqtt_server_test mqtt/mqtt_server_test.cpp)
+    add_executable(mqtt_server_test mqtt/mqtt_server_test.cpp mqtt/topic_tree.h mqtt/topic_tree.cpp)
     target_link_libraries(mqtt_server_test ${HV_LIBRARIES})
 
     list(APPEND EXAMPLES mqtt_sub mqtt_pub mqtt_client_test mqtt_server_test)
