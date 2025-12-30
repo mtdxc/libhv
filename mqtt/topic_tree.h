@@ -1,6 +1,5 @@
 #ifndef __MQTT_TOPIC_TREE_H__
 #define __MQTT_TOPIC_TREE_H__
-#pragma once
 
 #include <memory>
 #include <string>
@@ -12,8 +11,38 @@
 #include <sstream>
 #include <functional>
 
-// 前向声明
-class MqttSession;
+// for MqttSession
+#include "evpp/Channel.h"
+#include "WebSocketChannel.h"
+struct MqttSession {
+    using Ptr = std::shared_ptr<MqttSession>;
+    hv::SocketChannelPtr tcp;
+    WebSocketChannelPtr ws;
+    std::string recv_buf; // 用于ws的接收分包
+
+    int write(const void* buff, int size) {
+        int ret = 0;
+        if (tcp)
+            ret = tcp->write(buff, size);
+        else if (ws)
+            ret = ws->send((const char*)buff, size);
+        return ret;
+    }
+
+    bool close() {
+        int ret = -1;
+        if (tcp) {
+            ret = tcp->close(true);
+            tcp = nullptr;
+        } 
+        if (ws) {
+            ret = ws->close();
+            ws = nullptr;
+        }
+        recv_buf.clear();
+        return ret;
+    }
+};
 
 // 订阅信息
 struct SubscriptionInfo {
