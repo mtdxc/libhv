@@ -83,6 +83,7 @@ typedef struct mqtt_message_s {
     const char*     payload;
     unsigned char   qos;
     unsigned char   retain;
+    mqtt_str_t prop;
 } mqtt_message_t;
 
 BEGIN_EXTERN_C

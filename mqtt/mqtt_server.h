@@ -15,12 +15,11 @@ struct MqttSession {
     WebSocketChannelPtr ws;
     std::string recv_buf; // ws recv buffer
     unsigned char version = MQTT_PROTOCOL_V311; // default MQTT protocol version
-    std::string will_topic;
-    std::string will_payload;
+    std::string will_topic, will_payload, will_prop;
     uint16_t mid = 0;
     int publish(mqtt_message_t* msg);
 
-    uint8_t* skipProp(uint8_t*) const;
+    uint8_t* parseProp(uint8_t*, mqtt_str_t* prop) const;
     int sendAck(int type, unsigned short mid, unsigned char reason = 0);
     int send(int type, void* buff, int len);
     int write(const void* buff, int size);
@@ -45,7 +44,7 @@ public:
     void stop(bool wait_threads_stoped = true);
     void dump() const;
 
-    int publish(const std::string& topic, const std::string& msg, uint8_t qos = 0, bool retain = false);
+    int publish(const std::string& topic, const std::string& msg, const std::string& prop = "", uint8_t qos = 0, bool retain = false);
     int publish(mqtt_message_t* msg);
     typedef std::function<void(MqttSession::Ptr, mqtt_message_t*)> MqttMessageCallback;
     MqttMessageCallback onPublish;

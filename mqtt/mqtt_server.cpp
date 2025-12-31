@@ -28,11 +28,21 @@ bool MqttSession::close() {
     return ret;
 }
 
-uint8_t* MqttSession::skipProp(uint8_t* p) const {
-    if (version != MQTT_PROTOCOL_V5) return p;
+uint8_t* MqttSession::parseProp(uint8_t* p, mqtt_str_t* prop) const {
+    if (version != MQTT_PROTOCOL_V5) {
+        if (prop) {
+            prop->data = nullptr;
+            prop->len = 0;
+        }
+        return p;
+    }
     int prop_bytes = 0;
     int prop_len = (int)varint_decode(p, &prop_bytes);
     if (prop_bytes <= 0) return nullptr;
+    if (prop) {
+        prop->len = prop_len;
+        prop->data = (char*)p + prop_bytes;
+    }
     return p + prop_bytes + prop_len;
 }
 
@@ -58,8 +68,11 @@ int MqttSession::publish(mqtt_message_t* msg) {
     head.type = MQTT_TYPE_PUBLISH;
     head.length = 2 + msg->topic_len + msg->payload_len;
     if (msg->qos) head.length += 2;
+    uint8_t propb[5]; 
+    int propl = 0;
     if (version == MQTT_PROTOCOL_V5) {
-        head.length++;
+        propl = varint_encode(msg->prop.len, propb);
+        head.length += propl + msg->prop.len;
     }
     std::vector<uint8_t> buf(head.length - msg->payload_len + 12);
     uint8_t* p = &buf[0]; 
@@ -71,7 +84,8 @@ int MqttSession::publish(mqtt_message_t* msg) {
         PUSH16(p, mid);
     }
     if (version == MQTT_PROTOCOL_V5) {
-        *p++ = 0; // property
+        PUSH_N(p, propb, propl);
+        PUSH_N(p, msg->prop.data, msg->prop.len);
     }
     int ret = write(buf.data(), p - buf.data());
     if (msg->payload_len) {
@@ -150,12 +164,14 @@ void MqttServer::dump() const {
     return topic_tree_->dump_tree([](const std::string& line) { printf("%s\n", line.c_str()); });
 }
 
-int MqttServer::publish(const std::string& topic, const std::string& payload, uint8_t qos, bool retain) {
+int MqttServer::publish(const std::string& topic, const std::string& payload, const std::string& prop, uint8_t qos, bool retain) {
     mqtt_message_t msg;
     msg.payload = payload.c_str();
     msg.payload_len = payload.length();
     msg.topic = topic.c_str();
     msg.topic_len = topic.length();
+    msg.prop.data = prop.c_str();
+    msg.prop.len = prop.length();
     msg.qos = qos;
     msg.retain = retain;
     return publish(&msg);
@@ -176,9 +192,8 @@ int MqttServer::publish(mqtt_message_t * msg) {
 void MqttServer::closeSession(MqttSession::Ptr set) {
     if (set) {
         if (set->will_topic.size() > 0) {
-            publish(set->will_topic, set->will_payload);
-            set->will_payload.clear();
-            set->will_topic.clear();
+            publish(set->will_topic, set->will_payload, set->will_prop);
+            set->will_topic = set->will_payload = set->will_prop = "";
         }
         // topic_.remove_session(set);
     }
@@ -252,6 +267,7 @@ void MqttServer::stop(bool wait_threads_stoped) {
 
 void MqttServer::onMqttMessage(MqttSession::Ptr channel, mqtt_head_t* head, uint8_t* start, uint8_t* p) {
     int mid = 0;
+    mqtt_str_t prop;
     switch (head->type) {
     case MQTT_TYPE_CONNECT:
     {//MQTT_TYPE_CONNACK       = 2,
@@ -266,17 +282,19 @@ void MqttServer::onMqttMessage(MqttSession::Ptr channel, mqtt_head_t* head, uint
         POP16(p, conn.keepalive);
         channel->version = conn.version;
         // MQTT v5 adds a property block after keepalive; skip it if present.
-        p = channel->skipProp(p);
+        p = channel->parseProp(p, &prop);
 
         POPSTR(p, conn.client_id);
         if (p > end) return;
         if (conn.conn_flag & MQTT_CONN_HAS_WILL) {
             // skip will_proprties
-            p = channel->skipProp(p);
+            mqtt_str_t will_prop;
+            p = channel->parseProp(p, &will_prop);
             POPSTR(p, conn.will_topic);
             if (p > end) return;
             POPSTR(p, conn.will_payload);
             if (p > end) return;
+            channel->will_prop.assign(will_prop.data, will_prop.len);
             channel->will_topic.assign(conn.will_topic.data, conn.will_topic.len);
             channel->will_payload.assign(conn.will_payload.data, conn.will_payload.len);
         }
@@ -323,7 +341,7 @@ void MqttServer::onMqttMessage(MqttSession::Ptr channel, mqtt_head_t* head, uint
             POP16(p, mid);
         }
         // skip properties for MQTT v5
-        p = channel->skipProp(p);
+        p = channel->parseProp(p, &message.prop);
         message.payload_len = end - p;
         if (message.payload_len > 0) {
             // NOTE: Not deep copy
@@ -383,7 +401,7 @@ void MqttServer::onMqttMessage(MqttSession::Ptr channel, mqtt_head_t* head, uint
         if (head->length>1) {
             POP16(p, mid);
             // skip properties for MQTT v5
-            p = channel->skipProp(p);
+            p = channel->parseProp(p, &prop);
 
             mqtt_message_t message;
             memset(&message, 0, sizeof(mqtt_message_t));
@@ -424,7 +442,7 @@ void MqttServer::onMqttMessage(MqttSession::Ptr channel, mqtt_head_t* head, uint
         if (head->length>1) {
             POP16(p, mid);
             // skip properties for MQTT v5
-            p = channel->skipProp(p);
+            p = channel->parseProp(p, &prop);
 
             channel->sendAck(MQTT_TYPE_UNSUBACK, mid);
 
