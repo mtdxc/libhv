@@ -108,4 +108,4 @@ set(HTTP_SERVER_HEADERS
 set(MQTT_HEADERS
     mqtt/mqtt_protocol.h
     mqtt/mqtt_client.h
-)
+    mqtt/mqtt_server.h)

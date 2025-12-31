@@ -4,7 +4,7 @@
 #include <random>
 #include <chrono>
 #include <cassert>
-
+using namespace hv;
 TopicTree::TopicTree() : root_(std::make_shared<TopicNode>()) {
     root_->set_name("/");
 }
@@ -555,7 +555,7 @@ void TopicTree::clean_expired_subscriptions() {
     dfs(root_);
 }
 
-TopicTree::Statistics TopicTree::get_statistics() const {    
+Statistics TopicTree::get_statistics() const {    
     Statistics stats = {0, 0, 0, 0};
     std::lock_guard<std::mutex> lock(mutex_);
     collect_statistics(root_, 0, stats);
@@ -570,7 +570,7 @@ void TopicTree::collect_statistics(std::shared_ptr<TopicNode> node,
     
     stats.total_nodes++;
     stats.total_subscribers += node->subscribers.size();
-    stats.max_depth = std::max(stats.max_depth, depth);
+    stats.max_depth = (std::max)(stats.max_depth, depth);
     
     if (node->retained_message) {
         stats.total_retained_messages++;

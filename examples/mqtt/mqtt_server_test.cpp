@@ -43,8 +43,6 @@ int main(int argc, char* argv[]) {
     srv.onUnsubscribe = [](MqttSession::Ptr, mqtt_message_t* msg) {
         printf("onUnsubscribe %.*s\n", msg->topic_len, msg->topic);
     };
-    srv.setThreadNum(4);
-    srv.setLoadBalance(LB_LeastConnections);
 
 #if TEST_TLS
     hssl_ctx_opt_t ssl_opt;
@@ -60,17 +58,15 @@ int main(int argc, char* argv[]) {
     std::string str;
     while (std::getline(std::cin, str)) {
         if (str == "dump" || str == "d") {
-            srv.topic_tree().dump_tree([](const std::string& line){
-                printf("%s\n", line.c_str());
-            });
-        } else if (str == "stat" || str == "s") {
-            auto stat = srv.topic_tree().get_statistics();
-            printf("Statistics: %zu %zu %zu %zu\n", stat.total_nodes, stat.total_subscribers, stat.total_retained_messages, stat.max_depth);
+            srv.dump();
         } else if (str == "exit" || str == "quit" || str == "q") {
-            srv.closesocket();
+            srv.stop();
             break;
         } else {
-            srv.broadcast(str.data(), str.size());
+            int pos = str.find(' ');
+            if (pos != std::string::npos) {
+                srv.publish(str.substr(0, pos), str.substr(pos+1));
+            }
         }
     }
 

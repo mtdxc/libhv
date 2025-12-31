@@ -70,6 +70,7 @@ examples: hmain_test htimer_test hloop_test pipe_test \
 	mqtt_sub \
 	mqtt_pub \
 	mqtt_client_test \
+	mqtt_server_test \
 	jsonrpc
 	@echo "make examples done."
 
@@ -186,13 +187,16 @@ websocket_client_test: prepare
 	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS) util cpputil evpp http http/client" SRCS="examples/websocket_client_test.cpp examples/protoo.cpp"
 
 mqtt_sub: prepare
-	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS) mqtt" SRCS="examples/mqtt/mqtt_sub.c"
+	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS) mqtt util cpputil evpp http http/server" SRCS="examples/mqtt/mqtt_sub.c"
 
 mqtt_pub: prepare
-	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS) mqtt" SRCS="examples/mqtt/mqtt_pub.c"
+	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS) mqtt util cpputil evpp http http/server" SRCS="examples/mqtt/mqtt_pub.c"
 
 mqtt_client_test: prepare
-	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS) mqtt cpputil" SRCS="examples/mqtt/mqtt_client_test.cpp"
+	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS) mqtt util cpputil evpp http http/server" SRCS="examples/mqtt/mqtt_client_test.cpp"
+
+mqtt_server_test: prepare
+	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS) mqtt util cpputil evpp http http/server" SRCS="examples/mqtt/mqtt_server_test.cpp"
 
 kcptun: kcptun_client kcptun_server
 
