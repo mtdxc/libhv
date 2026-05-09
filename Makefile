@@ -8,6 +8,9 @@ ifeq ($(WITH_KCP), yes)
 CORE_SRCDIRS += event/kcp
 endif
 
+BUILD_SHARED ?= yes
+BUILD_STATIC ?= yes
+
 LIBHV_SRCDIRS = $(CORE_SRCDIRS) util
 LIBHV_HEADERS = hv.h hconfig.h hexport.h
 LIBHV_HEADERS += $(BASE_HEADERS) $(SSL_HEADERS) $(EVENT_HEADERS) $(UTIL_HEADERS)
@@ -52,8 +55,8 @@ default: all
 all: libhv examples
 	@echo "make all done, please enjoy libhv."
 
-examples: hmain_test htimer_test hloop_test pipe_test \
-	nc nmap tinyhttpd tinyproxyd httpd curl wget wrk consul \
+EXAMPLES = hmain_test htimer_test hloop_test pipe_test \
+	nc tinyhttpd tinyproxyd \
 	tcp_client_test \
 	tcp_echo_server \
 	tcp_chat_server \
@@ -64,14 +67,30 @@ examples: hmain_test htimer_test hloop_test pipe_test \
 	multi-acceptor-processes \
 	multi-acceptor-threads \
 	one-acceptor-multi-workers \
-	http_server_test http_client_test \
-	websocket_server_test \
-	websocket_client_test \
-	mqtt_sub \
-	mqtt_pub \
-	mqtt_client_test \
 	mqtt_server_test \
 	jsonrpc
+
+ifeq ($(WITH_EVPP), yes)
+EXAMPLES += nmap
+ifeq ($(WITH_HTTP), yes)
+EXAMPLES += wrk
+ifeq ($(WITH_HTTP_SERVER), yes)
+EXAMPLES += http_server_test websocket_server_test
+endif
+ifeq ($(WITH_HTTP_CLIENT), yes)
+EXAMPLES += curl wget consul http_client_test websocket_client_test
+ifeq ($(WITH_HTTP_SERVER), yes)
+EXAMPLES += httpd
+endif
+endif
+endif
+endif
+
+ifeq ($(WITH_MQTT), yes)
+EXAMPLES += mqtt_sub mqtt_pub mqtt_client_test
+endif
+
+examples: $(EXAMPLES)
 	@echo "make examples done."
 
 clean:
@@ -85,7 +104,17 @@ prepare:
 
 libhv:
 	$(MKDIR) lib
+ifeq ($(BUILD_SHARED), yes)
+ifeq ($(BUILD_STATIC), yes)
 	$(MAKEF) TARGET=$@ TARGET_TYPE="SHARED|STATIC" SRCDIRS="$(LIBHV_SRCDIRS)"
+else
+	$(MAKEF) TARGET=$@ TARGET_TYPE="SHARED" SRCDIRS="$(LIBHV_SRCDIRS)"
+endif
+else
+ifeq ($(BUILD_STATIC), yes)
+	$(MAKEF) TARGET=$@ TARGET_TYPE="STATIC" SRCDIRS="$(LIBHV_SRCDIRS)"
+endif
+endif
 	$(MKDIR) include/hv
 	$(CP) $(LIBHV_HEADERS) include/hv
 	@echo "make libhv done."
@@ -243,7 +272,7 @@ unittest: prepare
 	$(CXX) -g -Wall -O0 -std=c++11 -I. -Ibase            -o bin/hthread_test      unittest/hthread_test.cpp     -pthread
 	$(CC)  -g -Wall -O0 -std=c99   -I. -Ibase            -o bin/hmutex_test       unittest/hmutex_test.c        base/htime.c   -pthread
 	$(CC)  -g -Wall -O0 -std=c99   -I. -Ibase            -o bin/connect_test      unittest/connect_test.c       base/hsocket.c base/htime.c
-	$(CC)  -g -Wall -O0 -std=c99   -I. -Ibase            -o bin/socketpair_test   unittest/socketpair_test.c    base/hsocket.c
+	$(CC)  -g -Wall -O0 -std=c99   -I. -Ibase            -o bin/socketpair_test   unittest/socketpair_test.c    base/hsocket.c base/htime.c
 	$(CC)  -g -Wall -O0 -std=c99   -I. -Iutil            -o bin/base64            unittest/base64_test.c        util/base64.c
 	$(CC)  -g -Wall -O0 -std=c99   -I. -Iutil            -o bin/md5               unittest/md5_test.c           util/md5.c
 	$(CC)  -g -Wall -O0 -std=c99   -I. -Iutil            -o bin/sha1              unittest/sha1_test.c          util/sha1.c
@@ -257,10 +286,10 @@ unittest: prepare
 	$(CXX) -g -Wall -O0 -std=c++11 -I. -Ibase -Icpputil  -o bin/threadpool_test   unittest/threadpool_test.cpp  -pthread
 	$(CXX) -g -Wall -O0 -std=c++11 -I. -Ibase -Icpputil  -o bin/objectpool_test   unittest/objectpool_test.cpp  -pthread
 	$(CXX) -g -Wall -O0 -std=c++11 -I. -Ibase -Issl -Ievent -Ievpp -Icpputil -Ihttp -Ihttp/client -Ihttp/server -o bin/sizeof_test unittest/sizeof_test.cpp
-	$(CC)  -g -Wall -O0 -std=c99   -I. -Ibase -Iprotocol -o bin/nslookup          unittest/nslookup_test.c      protocol/dns.c  base/hsocket.c
+	$(CC)  -g -Wall -O0 -std=c99   -I. -Ibase -Iprotocol -o bin/nslookup          unittest/nslookup_test.c      protocol/dns.c  base/hsocket.c base/htime.c
 	$(CC)  -g -Wall -O0 -std=c99   -I. -Ibase -Iprotocol -o bin/ping              unittest/ping_test.c          protocol/icmp.c base/hsocket.c base/htime.c -DPRINT_DEBUG
-	$(CC)  -g -Wall -O0 -std=c99   -I. -Ibase -Iprotocol -o bin/ftp               unittest/ftp_test.c           protocol/ftp.c  base/hsocket.c
-	$(CC)  -g -Wall -O0 -std=c99   -I. -Ibase -Iprotocol -Iutil -o bin/sendmail   unittest/sendmail_test.c      protocol/smtp.c base/hsocket.c util/base64.c
+	$(CC)  -g -Wall -O0 -std=c99   -I. -Ibase -Iprotocol -o bin/ftp               unittest/ftp_test.c           protocol/ftp.c  base/hsocket.c base/htime.c
+	$(CC)  -g -Wall -O0 -std=c99   -I. -Ibase -Iprotocol -Iutil -o bin/sendmail   unittest/sendmail_test.c      protocol/smtp.c base/hsocket.c base/htime.c util/base64.c
 
 run-unittest: unittest
 	bash scripts/unittest.sh

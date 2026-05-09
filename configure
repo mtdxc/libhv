@@ -17,6 +17,12 @@ options:
   --enable-FEATURE
   --disable-FEATURE
 
+build:
+  --enable-shared           build shared library?          (DEFAULT: $BUILD_SHARED)
+  --disable-shared          do not build shared library
+  --enable-static           build static library?          (DEFAULT: $BUILD_STATIC)
+  --disable-static          do not build static library
+
 modules:
   --with-protocol       compile protocol module?        (DEFAULT: $WITH_PROTOCOL)
   --with-evpp           compile evpp module?            (DEFAULT: $WITH_EVPP)
@@ -38,6 +44,9 @@ dependencies:
 
 rudp:
   --with-kcp            compile with kcp?               (DEFAULT: $WITH_KCP)
+
+event:
+  --with-io_uring       compile with io_uring?          (DEFAULT: $WITH_IO_URING)
 
 END
 }
@@ -64,6 +73,20 @@ do
         --libdir=*)
             KEY="INSTALL_LIBDIR"
             VAL=${opt:9}
+            ;;
+        --enable-shared)
+            KEY="BUILD_SHARED"
+            ;;
+        --disable-shared)
+            KEY="BUILD_SHARED"
+            VAL=no
+            ;;
+        --enable-static)
+            KEY="BUILD_STATIC"
+            ;;
+        --disable-static)
+            KEY="BUILD_STATIC"
+            VAL=no
             ;;
         --with-*)
             KEY="WITH_${opt:7}"
@@ -278,6 +301,7 @@ option=WITH_MBEDTLS && check_option
 option=ENABLE_UDS && check_option
 option=USE_MULTIMAP && check_option
 option=WITH_KCP && check_option
+option=WITH_IO_URING && check_option
 
 # end confile
 cat << END >> $confile

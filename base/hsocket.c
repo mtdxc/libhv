@@ -1,6 +1,11 @@
 #include "hsocket.h"
 
 #include "hdef.h"
+#include "htime.h"
+
+#ifdef OS_UNIX
+#include <poll.h>
+#endif
 
 #ifdef OS_WIN
 #include "hatomic.h"
@@ -261,6 +266,20 @@ static int ListenFD(int sockfd) {
 static int ConnectFDTimeout(int connfd, int ms) {
     int err = 0;
     socklen_t optlen = sizeof(err);
+
+#ifdef OS_UNIX
+    // Use poll() to avoid FD_SETSIZE limit (fd >= 1024 crashes with select)
+    struct pollfd pfd;
+    pfd.fd = connfd;
+    pfd.events = POLLOUT;
+    pfd.revents = 0;
+    int ret = poll(&pfd, 1, ms);
+    if (ret < 0) {
+        perror("poll");
+        goto error;
+    }
+#else
+    // Windows: select() is safe (fd_set uses different implementation)
     struct timeval tv = { ms / 1000, (ms % 1000) * 1000 };
     fd_set writefds;
     FD_ZERO(&writefds);
@@ -270,6 +289,7 @@ static int ConnectFDTimeout(int connfd, int ms) {
         perror("select");
         goto error;
     }
+#endif
     if (ret == 0) {
         errno = ETIMEDOUT;
         goto error;
@@ -321,9 +341,16 @@ int ConnectNonblock(const char* host, int port) {
 }
 
 int ConnectTimeout(const char* host, int port, int ms) {
+    unsigned int start_time = gettick_ms();
     int connfd = Connect(host, port, 1);
     if (connfd < 0) return connfd;
-    return ConnectFDTimeout(connfd, ms);
+    unsigned int elapsed = gettick_ms() - start_time;
+    int remaining = ms - (int)elapsed;
+    if (remaining <= 0) {
+        closesocket(connfd);
+        return -ETIMEDOUT;
+    }
+    return ConnectFDTimeout(connfd, remaining);
 }
 
 #ifdef ENABLE_UDS

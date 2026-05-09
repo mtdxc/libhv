@@ -74,7 +74,11 @@ kcp_t* hio_get_kcp(hio_t* io, uint32_t conv, struct sockaddr* addr) {
         kcp->update_timer = htimer_add(io->loop, __kcp_update_timer_cb, update_interval, INFINITE);
         kcp->update_timer->privdata = rudp;
     }
-    // NOTE: alloc kcp->readbuf when hio_read_kcp
+    // NOTE: alloc kcp->readbuf now, otherwise hio_read_kcp will use default size (DEFAULT_KCP_READ_BUFSIZE)
+    if (setting->rcv_bufsize > 0) {
+        kcp->readbuf.len = setting->rcv_bufsize;
+        HV_ALLOC(kcp->readbuf.base, kcp->readbuf.len);
+    }
     return kcp;
 }
 
@@ -143,6 +147,11 @@ int hio_read_kcp(hio_t* io, void* buf, int readbytes) {
     while (1) {
         int nrecv = ikcp_recv(kcp->ikcp, kcp->readbuf.base, kcp->readbuf.len);
         // printf("ikcp_recv nrecv=%d\n", nrecv);
+        if (nrecv == -3) { // drop packet when larger than readbuf.len
+            int peeksize = ikcp_peeksize(kcp->ikcp);
+            ikcp_recv(kcp->ikcp, NULL, peeksize);
+            nrecv = 0;
+        }
         if (nrecv < 0) break;
         hio_read_cb(io, kcp->readbuf.base, nrecv);
         ret += nrecv;
