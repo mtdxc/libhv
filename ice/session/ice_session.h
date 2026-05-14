@@ -132,6 +132,7 @@ private:
     // Connectivity checks
     void sendConnectivityCheck(CandidatePair* pair);
     void onCheckSuccess(CandidatePair* pair, const StunMessage& response);
+    void setSelectPair(ice::CandidatePair* pair);
     void onCheckFailure(CandidatePair* pair, uint16_t errorCode);
     void scheduleNextCheck();
     void onCheckTimer();
@@ -158,10 +159,6 @@ private:
     void addTransaction(const StunTransaction& txn);
     void removeTransaction(const TransactionId& id);
     StunTransaction* findTransaction(const TransactionId& id);
-
-    // Generate credentials
-    static std::string generateUfrag();
-    static std::string generatePwd();
 
     // Form candidate pairs
     void formPairs();
