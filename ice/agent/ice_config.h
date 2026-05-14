@@ -17,7 +17,9 @@ struct NetAddr {
 
     NetAddr() = default;
     NetAddr(const std::string& h, int p) : host(h), port(p) {}
-
+    std::string toString() const {
+        return host + ":" + std::to_string(port);
+    }
     bool toSockaddr(sockaddr_u* addr) const {
         return sockaddr_set_ipport(addr, host.c_str(), port) == 0;
     }
