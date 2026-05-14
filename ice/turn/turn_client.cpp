@@ -1,5 +1,5 @@
 #include "turn_client.h"
-#include "../transport/udp_transport.h"
+#include "../agent/ice_agent.h"
 #include "../stun/stun_auth.h"
 
 #include <sstream>
@@ -16,7 +16,7 @@ static std::string txnIdToHex(const TransactionId& id) {
     return oss.str();
 }
 
-TurnClient::TurnClient(hv::EventLoopPtr loop, UdpTransport* transport)
+TurnClient::TurnClient(hv::EventLoopPtr loop, IceAgent* transport)
     : loop_(loop), transport_(transport) {
     memset(&server_addr_, 0, sizeof(server_addr_));
     memset(&relay_addr_, 0, sizeof(relay_addr_));
@@ -32,10 +32,12 @@ TurnClient::~TurnClient() {
         htimer_del(permission_timer_);
         permission_timer_ = nullptr;
     }
+    transport_->unregisterPair(server_addr_);
 }
 
 void TurnClient::setServer(const struct sockaddr* serverAddr) {
     memcpy(&server_addr_, serverAddr, SOCKADDR_LEN(serverAddr));
+    transport_->registerPair(server_addr_, this);
 }
 
 void TurnClient::setCredentials(const std::string& username, const std::string& password) {
@@ -150,7 +152,7 @@ int TurnClient::sendData(const void* data, size_t len, const struct sockaddr* pe
 
     // Check if we have a channel binding for this peer
     for (auto& kv : channels_) {
-        if (memcmp(&kv.second.peerAddr, peerAddr, SOCKADDR_LEN(peerAddr)) == 0) {
+        if (sockaddr_compare(&kv.second.peerAddr, (const sockaddr_u*)peerAddr) == 0) {
             return sendChannelData(data, len, kv.first);
         }
     }
@@ -281,6 +283,25 @@ void TurnClient::handleDataIndication(const StunMessage& msg) {
 
     if (onData) {
         onData(data, dataLen, (struct sockaddr*)&peerAddr);
+    }
+}
+
+void TurnClient::onRecvData(const uint8_t* data, size_t len, const struct sockaddr* addr) {
+    PacketType ptype = classifyPacket(data, len);
+    switch (ptype) {
+    case PacketType::STUN:
+    {
+        StunMessage msg;
+        if (!StunMessage::decode(data, len, &msg)) return;
+        onStunMessage(msg, addr);
+        break;
+    }
+    case PacketType::TURN_CHANNEL:
+        onChannelData(data, len);
+        break;
+    default:
+        hlogi("TurnClient: ignore %d data", len);
+        break;
     }
 }
 

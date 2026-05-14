@@ -13,18 +13,12 @@
 #include "../candidate/candidate_pair.h"
 #include "ice_checklist.h"
 #include "../stun/stun_message.h"
+#include "../agent/ice_agent.h"
 
 namespace ice {
 
-class UdpTransport;
-class TcpTransport;
-class TurnClient;
-
-// ICE Mode
-enum class IceMode {
-    Full,
-    Lite
-};
+// TURN allocation state (forward declaration from turn_client.h)
+enum class TurnState;
 
 // ICE State
 enum class IceState {
@@ -59,9 +53,9 @@ struct StunTransaction {
 };
 
 // ICE Session - one per peer connection component
-class IceSession : public std::enable_shared_from_this<IceSession> {
+class IceSession : public IDataRecv, public std::enable_shared_from_this<IceSession> {
 public:
-    IceSession(IceMode mode, hv::EventLoopPtr loop);
+    IceSession(IceMode mode, IceAgent* agent, hv::EventLoopPtr loop);
     ~IceSession();
 
     // Configuration
@@ -69,10 +63,6 @@ public:
     IceRole role() const { return role_; }
     void setNomination(NominationMode mode) { nomination_ = mode; }
     void setTiebreaker(uint64_t tb) { tiebreaker_ = tb; }
-
-    // Transport association
-    void setUdpTransport(UdpTransport* transport) { udp_transport_ = transport; }
-    void setTcpTransport(TcpTransport* transport) { tcp_transport_ = transport; }
 
     // Credentials
     std::string localUfrag() const { return local_ufrag_; }
@@ -104,10 +94,13 @@ public:
     // Get selected pair
     const CandidatePair* selectedPair() const { return selected_pair_; }
 
+    // TURN state notification (called by IceAgent)
+    void onTurnStateChanged(TurnState state);
+
     // Packet handlers (called by transport layer)
+    void onRecvData(const uint8_t* data, size_t len, const struct sockaddr* from) override;
     void onStunPacket(const uint8_t* data, size_t len, const struct sockaddr* from);
     void onDataPacket(const uint8_t* data, size_t len, const struct sockaddr* from);
-    void onChannelData(const uint8_t* data, size_t len, const struct sockaddr* from);
     void onTcpConnected(hio_t* io);
     void onTcpDisconnected(hio_t* io);
 
@@ -126,8 +119,8 @@ private:
 
     // STUN request handling
     void handleStunRequest(const StunMessage& msg, const struct sockaddr* from);
-    void handleStunResponse(const StunMessage& msg, const struct sockaddr* from);
-    void handleStunErrorResponse(const StunMessage& msg, const struct sockaddr* from);
+    void handleStunResponse(const StunMessage& msg);
+    void handleStunErrorResponse(const StunMessage& msg);
 
     // Connectivity checks
     void sendConnectivityCheck(CandidatePair* pair);
@@ -175,8 +168,7 @@ private:
     uint64_t tiebreaker_ = 0;
 
     hv::EventLoopPtr loop_;
-    UdpTransport* udp_transport_ = nullptr;
-    TcpTransport* tcp_transport_ = nullptr;
+    IceAgent* agent_ = nullptr;
 
     // Credentials
     std::string local_ufrag_;
@@ -203,9 +195,6 @@ private:
 
     // Gathering state
     int pending_gathering_requests_ = 0;
-
-    // TURN client (optional)
-    std::shared_ptr<TurnClient> turn_client_;
 };
 
 using IceSessionPtr = std::shared_ptr<IceSession>;

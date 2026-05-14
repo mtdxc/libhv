@@ -11,10 +11,11 @@
 #include "hsocket.h"
 
 #include "../stun/stun_message.h"
+#include "../agent/ice_agent.h"
 
 namespace ice {
 
-class UdpTransport;
+class IceAgent;
 
 // TURN allocation state
 enum class TurnState {
@@ -39,9 +40,9 @@ struct TurnChannelBinding {
 };
 
 // TURN Client (RFC 5766)
-class TurnClient : public std::enable_shared_from_this<TurnClient> {
+class TurnClient : public IDataRecv, public std::enable_shared_from_this<TurnClient> {
 public:
-    TurnClient(hv::EventLoopPtr loop, UdpTransport* transport);
+    TurnClient(hv::EventLoopPtr loop, IceAgent* transport);
     ~TurnClient();
 
     // Configuration
@@ -70,10 +71,12 @@ public:
     // Get relay address (allocated by TURN server)
     const sockaddr_u& relayAddr() const { return relay_addr_; }
     const sockaddr_u& serverReflexiveAddr() const { return srflx_addr_; }
+    const sockaddr_u& serverAddr() const { return server_addr_; }
 
     // Handle incoming STUN messages from TURN server
     void onStunMessage(const StunMessage& msg, const struct sockaddr* from);
     void onChannelData(const uint8_t* data, size_t len);
+    void onRecvData(const uint8_t* data, size_t len, const struct sockaddr* addr) override;
 
     // Callbacks
     std::function<void(TurnState)> onStateChange;
@@ -93,7 +96,7 @@ private:
     void startPermissionRefreshTimer();
 
     hv::EventLoopPtr loop_;
-    UdpTransport* transport_;
+    IceAgent* transport_;
     TurnState state_ = TurnState::Idle;
 
     // Server info

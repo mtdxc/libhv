@@ -1,25 +1,13 @@
 #include "ice_session.h"
-#include "../transport/udp_transport.h"
-#include "../transport/tcp_transport.h"
+#include "../agent/ice_agent.h"
 #include "../stun/stun_auth.h"
-
+#include "../turn/turn_client.h"
 #include "hloop.h"
 
 #include <cstdlib>
 #include <ctime>
 #include <sstream>
 #include <iomanip>
-
-#ifdef _WIN32
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <iphlpapi.h>
-#pragma comment(lib, "iphlpapi.lib")
-#else
-#include <arpa/inet.h>
-#include <ifaddrs.h>
-#include <net/if.h>
-#endif
 
 namespace ice {
 
@@ -54,8 +42,8 @@ static std::string randomString(int len) {
     return result;
 }
 
-IceSession::IceSession(IceMode mode, hv::EventLoopPtr loop)
-    : mode_(mode), loop_(loop) {
+IceSession::IceSession(IceMode mode, IceAgent* agent, hv::EventLoopPtr loop)
+    : mode_(mode), agent_(agent), loop_(loop) {
     local_ufrag_ = randomString(8);
     local_pwd_ = randomString(24);
     tiebreaker_ = ((uint64_t)rand() << 32) | rand();
@@ -89,12 +77,9 @@ void IceSession::close() {
     keepalive_timer_ = nullptr;
     transactions_.clear();
 
-    // Unregister from transport
-    if (udp_transport_) {
-        udp_transport_->unregisterSession(local_ufrag_);
-    }
-    if (tcp_transport_) {
-        tcp_transport_->unregisterSession(local_ufrag_);
+    // Unregister from agent
+    if (agent_) {
+        agent_->unregisterSession(local_ufrag_);
     }
 }
 
@@ -146,119 +131,60 @@ void IceSession::setRemoteCandidatesDone() {
 
 void IceSession::gatherCandidates() {
     if (state_ != IceState::New) return;
+    if (!agent_) return;
     setState(IceState::Gathering);
 
-    // Register with transport
-    if (udp_transport_) {
-        udp_transport_->registerSession(local_ufrag_, this);
-    }
-    if (tcp_transport_) {
-        tcp_transport_->registerSession(local_ufrag_, this);
+    // Register with agent
+    agent_->registerSession(local_ufrag_, this);
+
+    // gather host candidates
+    agent_->addHostCandidates(this);
+
+    auto config = agent_->config();
+    sockaddr_u addr;
+    // Send STUN binding requests to configured servers
+    for (const auto& server : config.stunServers) {
+        if(server.toSockaddr(&addr)) {
+            sendStunBindingRequest(&addr.sa, server.toString());
+        }
     }
 
-    gatherHostCandidates();
-
+    if (config.turnServers.size() > 0) {
+        // Delegate TURN allocation to IceAgent
+        if (!agent_->isTurnAllocated() && !agent_->isTurnAllocating()) {
+            agent_->allocateTurn();
+        }
+        if (agent_->isTurnAllocated()) {
+            // Already allocated, add candidates immediately
+            agent_->addTurnCandidates(this);
+        } else if (agent_->isTurnAllocating()) {
+            // Allocation in progress, wait for onTurnStateChanged notification
+            pending_gathering_requests_++;
+        }
+    }
     // If no STUN servers configured, gathering is complete
     if (pending_gathering_requests_ == 0) {
         onGatheringComplete();
     }
 }
 
-void IceSession::gatherHostCandidates() {
-#ifdef _WIN32
-    // Windows: Use GetAdaptersAddresses
-    ULONG bufLen = 0;
-    GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_PREFIX, nullptr, nullptr, &bufLen);
-    std::vector<uint8_t> buf(bufLen);
-    PIP_ADAPTER_ADDRESSES addrs = (PIP_ADAPTER_ADDRESSES)buf.data();
-    if (GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_PREFIX, nullptr, addrs, &bufLen) == NO_ERROR) {
-        for (auto adapter = addrs; adapter; adapter = adapter->Next) {
-            if (adapter->OperStatus != IfOperStatusUp) continue;
-            if (adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) continue;
+void IceSession::onTurnStateChanged(TurnState state) {
+    if (state_ != IceState::Gathering) return;
 
-            for (auto ua = adapter->FirstUnicastAddress; ua; ua = ua->Next) {
-                struct sockaddr* sa = ua->Address.lpSockaddr;
-                if (sa->sa_family != AF_INET && sa->sa_family != AF_INET6) 
-                    continue;
-
-                // Skip link-local IPv6
-                if (sa->sa_family == AF_INET6) {
-                    struct sockaddr_in6* sin6 = (struct sockaddr_in6*)sa;
-                    if (IN6_IS_ADDR_LINKLOCAL(&sin6->sin6_addr)) 
-                        continue;
-                }
-
-                IceCandidate cand;
-                cand.type = CandidateType::Host;
-                cand.protocol = TransportProtocol::UDP;
-                cand.componentId = 1;
-                memcpy(&cand.addr, sa, SOCKADDR_LEN(sa));
-                // Set port from transport
-                if (udp_transport_) {
-                    sockaddr_set_port(&cand.addr, udp_transport_->port());
-                }
-                memcpy(&cand.baseAddr, &cand.addr, sizeof(sockaddr_u));
-                cand.update();
-                addLocalCandidate(cand);
-
-                // TCP passive candidate (if TCP transport available)
-                if (tcp_transport_) {
-                    IceCandidate tcpCand = cand;
-                    tcpCand.protocol = TransportProtocol::TCP;
-                    tcpCand.tcpType = TcpType::Passive;
-                    sockaddr_set_port(&tcpCand.addr, tcp_transport_->port());
-                    memcpy(&tcpCand.baseAddr, &tcpCand.addr, sizeof(sockaddr_u));
-                    tcpCand.update();
-
-                    addLocalCandidate(tcpCand);
-                }
-            }
+    if (state == TurnState::Allocated) {
+        if (agent_) {
+            agent_->addTurnCandidates(this);
+        }
+        pending_gathering_requests_--;
+        if (pending_gathering_requests_ == 0) {
+            onGatheringComplete();
+        }
+    } else if (state == TurnState::Failed) {
+        pending_gathering_requests_--;
+        if (pending_gathering_requests_ == 0) {
+            onGatheringComplete();
         }
     }
-#else
-    // Unix/Linux/macOS: Use getifaddrs
-    struct ifaddrs* ifaddr;
-    if (getifaddrs(&ifaddr) == -1) return;
-
-    for (struct ifaddrs* ifa = ifaddr; ifa; ifa = ifa->ifa_next) {
-        if (!ifa->ifa_addr) continue;
-        if (!(ifa->ifa_flags & IFF_UP)) continue;
-        if (ifa->ifa_flags & IFF_LOOPBACK) continue;
-
-        struct sockaddr* sa = ifa->ifa_addr;
-        if (sa->sa_family != AF_INET && sa->sa_family != AF_INET6) continue;
-
-        // Skip link-local IPv6
-        if (sa->sa_family == AF_INET6) {
-            struct sockaddr_in6* sin6 = (struct sockaddr_in6*)sa;
-            if (IN6_IS_ADDR_LINKLOCAL(&sin6->sin6_addr)) continue;
-        }
-
-        IceCandidate cand;
-        cand.type = CandidateType::Host;
-        cand.protocol = TransportProtocol::UDP;
-        cand.componentId = 1;
-        memcpy(&cand.addr, sa, SOCKADDR_LEN(sa));
-        if (udp_transport_) {
-            sockaddr_set_port(&cand.addr, udp_transport_->port());
-        }
-        memcpy(&cand.baseAddr, &cand.addr, sizeof(sockaddr_u));
-        cand.updateId();
-        addLocalCandidate(cand);
-
-        if (tcp_transport_) {
-            IceCandidate tcpCand = cand;
-            tcpCand.protocol = TransportProtocol::TCP;
-            tcpCand.tcpType = TcpType::Passive;
-            sockaddr_set_port(&tcpCand.addr, tcp_transport_->port());
-            memcpy(&tcpCand.baseAddr, &tcpCand.addr, sizeof(sockaddr_u));
-            tcpCand.updateId();
-            addLocalCandidate(tcpCand);
-        }
-    }
-
-    freeifaddrs(ifaddr);
-#endif
 }
 
 void IceSession::sendStunBindingRequest(const struct sockaddr* server, const std::string& serverStr) {
@@ -266,8 +192,8 @@ void IceSession::sendStunBindingRequest(const struct sockaddr* server, const std
 
     auto buf = msg.encode(); // No auth for STUN server binding
 
-    if (udp_transport_) {
-        udp_transport_->sendTo(buf.data(), buf.size(), server);
+    if (agent_) {
+        agent_->sendTo(buf.data(), buf.size(), server);
     }
 
     // Track transaction
@@ -297,9 +223,9 @@ void IceSession::onGatheringResponse(const StunMessage& msg, const std::string& 
     cand.componentId = 1;
     memcpy(&cand.addr, &mapped, SOCKADDR_LEN((struct sockaddr*)&mapped));
 
-    // Base is the host candidate address (local addr of transport)
-    if (udp_transport_) {
-        memcpy(&cand.baseAddr, udp_transport_->localAddr(), SOCKADDR_LEN(udp_transport_->localAddr()));
+    // Base is the host candidate address (local addr of agent)
+    if (agent_) {
+        memcpy(&cand.baseAddr, agent_->udpLocalAddr(), SOCKADDR_LEN(agent_->udpLocalAddr()));
     }
     memcpy(&cand.relatedAddr, &cand.baseAddr, sizeof(sockaddr_u));
     cand.update(serverAddr);
@@ -402,19 +328,28 @@ void IceSession::sendConnectivityCheck(CandidatePair* pair) {
     auto buf = msg.encodeWithAuth(remote_pwd_);
 
     // Send via appropriate transport
-    if (pair->local.protocol == TransportProtocol::UDP) {
-        if (udp_transport_) {
-            udp_transport_->sendTo(buf.data(), buf.size(), &pair->remote.addr.sa);
+    if (pair->local.type == CandidateType::Relay) {
+        // Send via TURN relay
+        if (agent_ && agent_->isTurnAllocated()) {
+            agent_->sendViaRelay(buf.data(), buf.size(), &pair->remote.addr.sa);
+        }
+    } else if (pair->local.protocol == TransportProtocol::UDP) {
+        if (agent_) {
+            agent_->sendTo(buf.data(), buf.size(), &pair->remote.addr.sa);
         }
     } else if (pair->local.protocol == TransportProtocol::TCP) {
         if (pair->tcpIo) {
-            tcp_transport_->send(pair->tcpIo, buf.data(), buf.size());
+            agent_->send(pair->tcpIo, buf.data(), buf.size());
         } else if (pair->remote.tcpType == TcpType::Passive) {
             // Need to initiate TCP connection
-            if (tcp_transport_) {
-                tcp_transport_->connect(&pair->remote.addr.sa, this);
+            if (agent_) {
+                agent_->connectTcp(&pair->remote.addr.sa, this);
             }
             return; // Will retry after connection established
+        } else {
+            // active-active or unsupported TCP type: cannot establish connection
+            pair->state = PairState::Failed;
+            return;
         }
     }
 
@@ -431,6 +366,18 @@ void IceSession::sendConnectivityCheck(CandidatePair* pair) {
     addTransaction(txn);
 }
 
+void IceSession::onRecvData(const uint8_t* data, size_t len, const struct sockaddr* from) {
+    PacketType ptype = classifyPacket(data, len);
+    switch (ptype) {
+    case PacketType::STUN:
+        onStunPacket(data, len, from);
+        break;
+    case PacketType::DATA:
+        onDataPacket(data, len, from);
+        break;
+    }
+}
+
 void IceSession::onStunPacket(const uint8_t* data, size_t len, const struct sockaddr* from) {
     StunMessage msg;
     if (!StunMessage::decode(data, len, &msg)) return;
@@ -441,10 +388,10 @@ void IceSession::onStunPacket(const uint8_t* data, size_t len, const struct sock
         handleStunRequest(msg, from);
         break;
     case STUN_CLASS_SUCCESS_RESPONSE:
-        handleStunResponse(msg, from);
+        handleStunResponse(msg);
         break;
     case STUN_CLASS_ERROR_RESPONSE:
-        handleStunErrorResponse(msg, from);
+        handleStunErrorResponse(msg);
         break;
     case STUN_CLASS_INDICATION:
         // STUN indication (e.g., binding indication for keepalive) - ignore
@@ -544,7 +491,7 @@ void IceSession::handleStunRequest(const StunMessage& msg, const struct sockaddr
     }
 }
 
-void IceSession::handleStunResponse(const StunMessage& msg, const struct sockaddr* from) {
+void IceSession::handleStunResponse(const StunMessage& msg) {
     std::string key = transactionIdToKey(msg.transactionId());
     auto it = transactions_.find(key);
     if (it == transactions_.end()) return;
@@ -573,7 +520,7 @@ void IceSession::handleStunResponse(const StunMessage& msg, const struct sockadd
     }
 }
 
-void IceSession::handleStunErrorResponse(const StunMessage& msg, const struct sockaddr* from) {
+void IceSession::handleStunErrorResponse(const StunMessage& msg) {
     std::string key = transactionIdToKey(msg.transactionId());
     auto it = transactions_.find(key);
     if (it == transactions_.end()) return;
@@ -607,8 +554,8 @@ void IceSession::onCheckSuccess(CandidatePair* pair, const StunMessage& response
     pair->valid = true;
 
     // Register the valid pair for data routing
-    if (udp_transport_) {
-        udp_transport_->registerPair(pair->remote.addr, this);
+    if (agent_) {
+        agent_->registerPair(pair->remote.addr, this);
     }
 
     // First successful check
@@ -687,8 +634,8 @@ void IceSession::sendStunResponse(const StunMessage& request, const struct socka
     // Encode with MESSAGE-INTEGRITY using local password
     auto buf = response.encodeWithAuth(local_pwd_);
 
-    if (udp_transport_) {
-        udp_transport_->sendTo(buf.data(), buf.size(), to);
+    if (agent_) {
+        agent_->sendTo(buf.data(), buf.size(), to);
     }
 }
 
@@ -700,8 +647,8 @@ void IceSession::sendStunErrorResponse(const StunMessage& request, uint16_t code
 
     auto buf = response.encodeWithAuth(local_pwd_);
 
-    if (udp_transport_) {
-        udp_transport_->sendTo(buf.data(), buf.size(), to);
+    if (agent_) {
+        agent_->sendTo(buf.data(), buf.size(), to);
     }
 }
 
@@ -738,16 +685,18 @@ StunTransaction* IceSession::findTransaction(const TransactionId& id) {
 }
 
 int IceSession::send(const void* data, size_t len) {
-    if (!selected_pair_) return -1;
+    if (!selected_pair_ || !agent_) return -1;
+    // Relay candidate: send via TURN
+    if (selected_pair_->local.type == CandidateType::Relay) {
+        return agent_->sendViaRelay(data, len, &selected_pair_->remote.addr.sa);
+    }
     switch (selected_pair_->local.protocol) {
     case TransportProtocol::UDP:
-        if (udp_transport_) {
-            return udp_transport_->sendTo(data, len, &selected_pair_->remote.addr.sa);
-        }
+        return agent_->sendTo(data, len, &selected_pair_->remote.addr.sa);
         break;
     case TransportProtocol::TCP:
-        if (tcp_transport_ && selected_pair_->tcpIo) {
-            return tcp_transport_->send(selected_pair_->tcpIo, data, len);
+        if (selected_pair_->tcpIo) {
+            return agent_->send(selected_pair_->tcpIo, data, len);
         }
         break;
     default:
@@ -762,25 +711,13 @@ void IceSession::onDataPacket(const uint8_t* data, size_t len, const struct sock
     }
 }
 
-void IceSession::onChannelData(const uint8_t* data, size_t len, const struct sockaddr* from) {
-    // TURN ChannelData: strip 4-byte header and deliver
-    if (len < 4) return;
-    uint16_t dataLen = ((uint16_t)data[2] << 8) | data[3];
-    if (4 + dataLen > len) return;
-    if (onData) {
-        onData(data + 4, dataLen);
-    }
-}
 
 void IceSession::onTcpConnected(hio_t* io) {
     // Associate TCP connection with the matching pair
-    struct sockaddr* peeraddr = hio_peeraddr(io);
-    sockaddr_u peerAddr;
-    memcpy(&peerAddr, peeraddr, SOCKADDR_LEN(peeraddr));
-
+    sockaddr_u* peeraddr = (sockaddr_u*)hio_peeraddr(io);
     for (auto& pair : checklist_.pairs()) {
         if (pair.local.protocol == TransportProtocol::TCP &&
-            sockaddr_compare(&pair.remote.addr, &peerAddr) == 0) {
+            sockaddr_compare(&pair.remote.addr, peeraddr) == 0) {
             pair.tcpIo = io;
             // Now send the connectivity check
             sendConnectivityCheck(&pair);
