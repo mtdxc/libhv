@@ -53,7 +53,10 @@ struct IceCandidate {
         memset(&relatedAddr, 0, sizeof(relatedAddr));
         memset(&baseAddr, 0, sizeof(baseAddr));
     }
-
+    void update(const std::string& serverAddr="");
+    std::string toSdp() const;
+    bool fromSdp(const std::string& sdp);
+    
     // Get address as string "ip:port"
     std::string addrString() const;
     std::string relatedAddrString() const;

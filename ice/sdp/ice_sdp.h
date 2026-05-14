@@ -20,9 +20,6 @@ public:
         bool isLite = false,
         bool trickle = true);
 
-    // Generate a single a=candidate line
-    static std::string generateCandidateLine(const IceCandidate& candidate);
-
     // Parse SDP attributes and extract ICE info
     struct ParseResult {
         std::string ufrag;
@@ -34,8 +31,6 @@ public:
 
     static ParseResult parseAttributes(const std::string& sdp);
 
-    // Parse a single a=candidate: line
-    static bool parseCandidate(const std::string& line, IceCandidate* candidate);
 };
 
 } // namespace ice

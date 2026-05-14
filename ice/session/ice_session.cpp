@@ -54,18 +54,10 @@ static std::string randomString(int len) {
     return result;
 }
 
-std::string IceSession::generateUfrag() {
-    return randomString(8);
-}
-
-std::string IceSession::generatePwd() {
-    return randomString(24);
-}
-
 IceSession::IceSession(IceMode mode, hv::EventLoopPtr loop)
     : mode_(mode), loop_(loop) {
-    local_ufrag_ = generateUfrag();
-    local_pwd_ = generatePwd();
+    local_ufrag_ = randomString(8);
+    local_pwd_ = randomString(24);
     tiebreaker_ = ((uint64_t)rand() << 32) | rand();
 }
 
@@ -186,12 +178,14 @@ void IceSession::gatherHostCandidates() {
 
             for (auto ua = adapter->FirstUnicastAddress; ua; ua = ua->Next) {
                 struct sockaddr* sa = ua->Address.lpSockaddr;
-                if (sa->sa_family != AF_INET && sa->sa_family != AF_INET6) continue;
+                if (sa->sa_family != AF_INET && sa->sa_family != AF_INET6) 
+                    continue;
 
                 // Skip link-local IPv6
                 if (sa->sa_family == AF_INET6) {
                     struct sockaddr_in6* sin6 = (struct sockaddr_in6*)sa;
-                    if (IN6_IS_ADDR_LINKLOCAL(&sin6->sin6_addr)) continue;
+                    if (IN6_IS_ADDR_LINKLOCAL(&sin6->sin6_addr)) 
+                        continue;
                 }
 
                 IceCandidate cand;
@@ -201,18 +195,10 @@ void IceSession::gatherHostCandidates() {
                 memcpy(&cand.addr, sa, SOCKADDR_LEN(sa));
                 // Set port from transport
                 if (udp_transport_) {
-                    if (sa->sa_family == AF_INET) {
-                        cand.addr.sin.sin_port = htons(udp_transport_->port());
-                    } else {
-                        cand.addr.sin6.sin6_port = htons(udp_transport_->port());
-                    }
+                    sockaddr_set_port(&cand.addr, udp_transport_->port());
                 }
                 memcpy(&cand.baseAddr, &cand.addr, sizeof(sockaddr_u));
-                cand.priority = computeCandidatePriority(
-                    CandidateType::Host,
-                    computeLocalPreference(cand.addr, TransportProtocol::UDP),
-                    cand.componentId);
-                cand.foundation = generateFoundation(CandidateType::Host, cand.baseAddr, TransportProtocol::UDP);
+                cand.update();
                 addLocalCandidate(cand);
 
                 // TCP passive candidate (if TCP transport available)
@@ -220,17 +206,10 @@ void IceSession::gatherHostCandidates() {
                     IceCandidate tcpCand = cand;
                     tcpCand.protocol = TransportProtocol::TCP;
                     tcpCand.tcpType = TcpType::Passive;
-                    if (sa->sa_family == AF_INET) {
-                        tcpCand.addr.sin.sin_port = htons(tcp_transport_->port());
-                    } else {
-                        tcpCand.addr.sin6.sin6_port = htons(tcp_transport_->port());
-                    }
+                    sockaddr_set_port(&tcpCand.addr, tcp_transport_->port());
                     memcpy(&tcpCand.baseAddr, &tcpCand.addr, sizeof(sockaddr_u));
-                    tcpCand.priority = computeCandidatePriority(
-                        CandidateType::Host,
-                        computeLocalPreference(tcpCand.addr, TransportProtocol::TCP),
-                        tcpCand.componentId);
-                    tcpCand.foundation = generateFoundation(CandidateType::Host, tcpCand.baseAddr, TransportProtocol::TCP);
+                    tcpCand.update();
+
                     addLocalCandidate(tcpCand);
                 }
             }
@@ -261,35 +240,19 @@ void IceSession::gatherHostCandidates() {
         cand.componentId = 1;
         memcpy(&cand.addr, sa, SOCKADDR_LEN(sa));
         if (udp_transport_) {
-            if (sa->sa_family == AF_INET) {
-                cand.addr.sin.sin_port = htons(udp_transport_->port());
-            } else {
-                cand.addr.sin6.sin6_port = htons(udp_transport_->port());
-            }
+            sockaddr_set_port(&cand.addr, udp_transport_->port());
         }
         memcpy(&cand.baseAddr, &cand.addr, sizeof(sockaddr_u));
-        cand.priority = computeCandidatePriority(
-            CandidateType::Host,
-            computeLocalPreference(cand.addr, TransportProtocol::UDP),
-            cand.componentId);
-        cand.foundation = generateFoundation(CandidateType::Host, cand.baseAddr, TransportProtocol::UDP);
+        cand.updateId();
         addLocalCandidate(cand);
 
         if (tcp_transport_) {
             IceCandidate tcpCand = cand;
             tcpCand.protocol = TransportProtocol::TCP;
             tcpCand.tcpType = TcpType::Passive;
-            if (sa->sa_family == AF_INET) {
-                tcpCand.addr.sin.sin_port = htons(tcp_transport_->port());
-            } else {
-                tcpCand.addr.sin6.sin6_port = htons(tcp_transport_->port());
-            }
+            sockaddr_set_port(&tcpCand.addr, tcp_transport_->port());
             memcpy(&tcpCand.baseAddr, &tcpCand.addr, sizeof(sockaddr_u));
-            tcpCand.priority = computeCandidatePriority(
-                CandidateType::Host,
-                computeLocalPreference(tcpCand.addr, TransportProtocol::TCP),
-                tcpCand.componentId);
-            tcpCand.foundation = generateFoundation(CandidateType::Host, tcpCand.baseAddr, TransportProtocol::TCP);
+            tcpCand.updateId();
             addLocalCandidate(tcpCand);
         }
     }
@@ -336,17 +299,10 @@ void IceSession::onGatheringResponse(const StunMessage& msg, const std::string& 
 
     // Base is the host candidate address (local addr of transport)
     if (udp_transport_) {
-        memcpy(&cand.baseAddr, udp_transport_->localAddr(),
-               SOCKADDR_LEN(udp_transport_->localAddr()));
+        memcpy(&cand.baseAddr, udp_transport_->localAddr(), SOCKADDR_LEN(udp_transport_->localAddr()));
     }
     memcpy(&cand.relatedAddr, &cand.baseAddr, sizeof(sockaddr_u));
-
-    cand.priority = computeCandidatePriority(
-        CandidateType::ServerReflexive,
-        computeLocalPreference(cand.addr, TransportProtocol::UDP),
-        cand.componentId);
-    cand.foundation = generateFoundation(CandidateType::ServerReflexive,
-                                          cand.baseAddr, TransportProtocol::UDP, serverAddr);
+    cand.update(serverAddr);
     addLocalCandidate(cand);
 }
 
@@ -550,10 +506,7 @@ void IceSession::handleStunRequest(const StunMessage& msg, const struct sockaddr
             // Already succeeded
             if (useCandidate && role_ == IceRole::Controlled) {
                 matchedPair->nominated = true;
-                selected_pair_ = matchedPair;
-                if (onSelectedPair) onSelectedPair(*selected_pair_);
-                setState(IceState::Completed);
-                startKeepalive();
+                setSelectPair(matchedPair);
             }
         } else if (matchedPair->state != PairState::InProgress) {
             // Trigger check
@@ -567,8 +520,7 @@ void IceSession::handleStunRequest(const StunMessage& msg, const struct sockaddr
         prflxCandidate.componentId = 1;
         memcpy(&prflxCandidate.addr, from, SOCKADDR_LEN(from));
         prflxCandidate.priority = msg.getPriority();
-        prflxCandidate.foundation = generateFoundation(CandidateType::PeerReflexive,
-                                                        prflxCandidate.addr, TransportProtocol::UDP);
+        prflxCandidate.foundation = generateFoundation(prflxCandidate.type, prflxCandidate.addr, prflxCandidate.protocol);
         remote_candidates_.push_back(prflxCandidate);
 
         // Create new pair
@@ -588,10 +540,7 @@ void IceSession::handleStunRequest(const StunMessage& msg, const struct sockaddr
         matchedPair->nominated = true;
         matchedPair->state = PairState::Succeeded;
         matchedPair->valid = true;
-        selected_pair_ = matchedPair;
-        if (onSelectedPair) onSelectedPair(*selected_pair_);
-        setState(IceState::Completed);
-        startKeepalive();
+        setSelectPair(matchedPair);
     }
 }
 
@@ -672,10 +621,7 @@ void IceSession::onCheckSuccess(CandidatePair* pair, const StunMessage& response
         if (nomination_ == NominationMode::Aggressive) {
             // Already sent USE-CANDIDATE
             pair->nominated = true;
-            selected_pair_ = pair;
-            if (onSelectedPair) onSelectedPair(*selected_pair_);
-            setState(IceState::Completed);
-            startKeepalive();
+            setSelectPair(pair);
         } else if (nomination_ == NominationMode::Regular && !selected_pair_) {
             // Nominate the first successful pair
             nominate(pair);
@@ -683,12 +629,16 @@ void IceSession::onCheckSuccess(CandidatePair* pair, const StunMessage& response
     } else {
         // Controlled: wait for USE-CANDIDATE from request
         if (pair->nominated) {
-            selected_pair_ = pair;
-            if (onSelectedPair) onSelectedPair(*selected_pair_);
-            setState(IceState::Completed);
-            startKeepalive();
+            setSelectPair(pair);
         }
     }
+}
+
+void IceSession::setSelectPair(ice::CandidatePair* pair) {
+    selected_pair_ = pair;
+    if (onSelectedPair) onSelectedPair(*selected_pair_);
+    setState(IceState::Completed);
+    startKeepalive();
 }
 
 void IceSession::onCheckFailure(CandidatePair* pair, uint16_t errorCode) {
@@ -773,7 +723,8 @@ void IceSession::removeTransaction(const TransactionId& id) {
     std::string key = transactionIdToKey(id);
     auto it = transactions_.find(key);
     if (it != transactions_.end()) {
-        if (it->second.timer) htimer_del(it->second.timer);
+        if (it->second.timer) 
+            htimer_del(it->second.timer);
         transactions_.erase(it);
     }
 }
@@ -781,21 +732,26 @@ void IceSession::removeTransaction(const TransactionId& id) {
 StunTransaction* IceSession::findTransaction(const TransactionId& id) {
     std::string key = transactionIdToKey(id);
     auto it = transactions_.find(key);
-    if (it != transactions_.end()) return &it->second;
+    if (it != transactions_.end()) 
+        return &it->second;
     return nullptr;
 }
 
 int IceSession::send(const void* data, size_t len) {
     if (!selected_pair_) return -1;
-
-    if (selected_pair_->local.protocol == TransportProtocol::UDP) {
+    switch (selected_pair_->local.protocol) {
+    case TransportProtocol::UDP:
         if (udp_transport_) {
             return udp_transport_->sendTo(data, len, &selected_pair_->remote.addr.sa);
         }
-    } else if (selected_pair_->local.protocol == TransportProtocol::TCP) {
+        break;
+    case TransportProtocol::TCP:
         if (tcp_transport_ && selected_pair_->tcpIo) {
             return tcp_transport_->send(selected_pair_->tcpIo, data, len);
         }
+        break;
+    default:
+        break;
     }
     return -1;
 }
@@ -855,12 +811,12 @@ void IceSession::startKeepalive() {
 }
 
 void IceSession::sendKeepalive() {
-    if (!selected_pair_ || !udp_transport_) return;
+    if (!selected_pair_) return;
 
     // Send STUN binding indication (no transaction, no response expected)
     StunMessage msg(STUN_METHOD_BINDING, STUN_CLASS_INDICATION);
     auto buf = msg.encode();
-    udp_transport_->sendTo(buf.data(), buf.size(), &selected_pair_->remote.addr.sa);
+    send(buf.data(), buf.size());
 }
 
 } // namespace ice
