@@ -20,11 +20,8 @@ int UdpTransport::bind(const std::string& host, int port) {
     io_ = hloop_create_udp_server(loop, host.c_str(), port);
     if (!io_) return -1;
 
-    port_ = hio_localaddr(io_)->sa_family == AF_INET
-        ? ntohs(((struct sockaddr_in*)hio_localaddr(io_))->sin_port)
-        : ntohs(((struct sockaddr_in6*)hio_localaddr(io_))->sin6_port);
-
     memcpy(&local_addr_, hio_localaddr(io_), SOCKADDR_LEN(hio_localaddr(io_)));
+    port_ = sockaddr_port(&local_addr_);
 
     // Set read callback
     hio_setcb_read(io_, [](hio_t* io, void* buf, int readbytes) {

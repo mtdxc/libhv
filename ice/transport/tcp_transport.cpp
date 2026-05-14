@@ -7,6 +7,14 @@ namespace ice {
 
 TcpTransport::TcpTransport(hv::EventLoopPtr loop)
     : loop_(loop) {
+    memset(&unpack_setting_, 0, sizeof(unpack_setting_t));
+    unpack_setting_.mode = UNPACK_BY_LENGTH_FIELD;
+    unpack_setting_.package_max_length = DEFAULT_PACKAGE_MAX_LENGTH;
+    unpack_setting_.body_offset = 2;
+    unpack_setting_.length_field_offset = 0;
+    unpack_setting_.length_field_bytes = 2;
+    unpack_setting_.length_field_coding = ENCODE_BY_BIG_ENDIAN;
+    unpack_setting_.length_adjustment = 0;
 }
 
 TcpTransport::~TcpTransport() {
@@ -22,10 +30,7 @@ int TcpTransport::listen(const std::string& host, int port) {
 
     hevent_set_userdata(listen_io_, this);
 
-    port_ = hio_localaddr(listen_io_)->sa_family == AF_INET
-        ? ntohs(((struct sockaddr_in*)hio_localaddr(listen_io_))->sin_port)
-        : ntohs(((struct sockaddr_in6*)hio_localaddr(listen_io_))->sin6_port);
-
+    port_ = sockaddr_port((sockaddr_u*)hio_localaddr(listen_io_)); 
     return port_;
 }
 
@@ -60,6 +65,7 @@ int TcpTransport::connect(const struct sockaddr* addr, IceSession* session) {
     hio_setcb_connect(io, onConnect);
     hio_setcb_read(io, onRecv);
     hio_setcb_close(io, onClose);
+    hio_set_unpack(io, &unpack_setting_);
     hio_connect(io);
 
     return (int)id;
@@ -134,6 +140,7 @@ void TcpTransport::onAccept(hio_t* io) {
     hevent_set_userdata(io, self);
     hio_setcb_read(io, onRecv);
     hio_setcb_close(io, onClose);
+    hio_set_unpack(io, &self->unpack_setting_);
     hio_read(io);
 }
 
@@ -155,7 +162,9 @@ void TcpTransport::onConnect(hio_t* io) {
 void TcpTransport::onRecv(hio_t* io, void* buf, int readbytes) {
     TcpTransport* self = (TcpTransport*)hevent_userdata(io);
     if (!self) return;
-    self->handleRecv(io, (const uint8_t*)buf, readbytes);
+    // Skip 2-byte RFC 4571 length header (unpack callback includes full frame)
+    if (readbytes <= 2) return;
+    self->handleRecv(io, (const uint8_t*)buf + 2, readbytes - 2);
 }
 
 void TcpTransport::onClose(hio_t* io) {
