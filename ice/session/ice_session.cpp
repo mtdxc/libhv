@@ -824,7 +824,7 @@ void IceSession::onTcpConnected(hio_t* io) {
 
     for (auto& pair : checklist_.pairs()) {
         if (pair.local.protocol == TransportProtocol::TCP &&
-            memcmp(&pair.remote.addr, &peerAddr, SOCKADDR_LEN(peeraddr)) == 0) {
+            sockaddr_compare(&pair.remote.addr, &peerAddr) == 0) {
             pair.tcpIo = io;
             // Now send the connectivity check
             sendConnectivityCheck(&pair);

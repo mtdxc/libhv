@@ -74,6 +74,9 @@ private:
 
     // Session lookup by ufrag
     std::unordered_map<std::string, IceSession*> ufrag_map_;
+
+    // RFC 4571 unpack setting (2-byte big-endian length field)
+    unpack_setting_t unpack_setting_;
 };
 
 } // namespace ice
