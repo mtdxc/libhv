@@ -39,18 +39,6 @@ enum class NominationMode {
 
 const char* iceStateString(IceState state);
 
-// STUN Transaction for tracking requests
-struct StunTransaction {
-    TransactionId id;
-    CandidatePair* pair = nullptr;       // Associated candidate pair (for connectivity checks)
-    struct sockaddr_storage destAddr;     // Where the request was sent
-    uint64_t sentTime = 0;               // ms
-    int retransmitCount = 0;
-    uint32_t rto = 500;                  // Initial RTO ms
-    htimer_t* timer = nullptr;           // Retransmit timer
-    bool isGathering = false;            // STUN binding for gathering (not connectivity check)
-    std::string serverAddr;              // STUN/TURN server address (for gathering)
-};
 
 // ICE Session - one per peer connection component
 class IceSession : public IDataRecv, public std::enable_shared_from_this<IceSession> {
@@ -119,8 +107,6 @@ private:
 
     // STUN request handling
     void handleStunRequest(const StunMessage& msg, const struct sockaddr* from);
-    void handleStunResponse(const StunMessage& msg);
-    void handleStunErrorResponse(const StunMessage& msg);
 
     // Connectivity checks
     void sendConnectivityCheck(CandidatePair* pair);
@@ -148,11 +134,6 @@ private:
     void sendStunErrorResponse(const StunMessage& request, uint16_t code,
                                const std::string& reason, const struct sockaddr* to);
 
-    // Transaction management
-    void addTransaction(const StunTransaction& txn);
-    void removeTransaction(const TransactionId& id);
-    StunTransaction* findTransaction(const TransactionId& id);
-    bool hasTransaction(const TransactionId& id) {return findTransaction(id)!=nullptr;}
     // Form candidate pairs
     void formPairs();
 
@@ -190,8 +171,6 @@ private:
     htimer_t* keepalive_timer_ = nullptr;
     int check_interval_ms_ = 50; // Ta
 
-    // Transactions
-    std::unordered_map<std::string, StunTransaction> transactions_; // key: hex(transaction_id)
 
     // Gathering state
     int pending_gathering_requests_ = 0;
