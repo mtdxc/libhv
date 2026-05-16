@@ -6,18 +6,11 @@
 
 #include <cstdlib>
 #include <ctime>
+#include <memory>
 #include <sstream>
 #include <iomanip>
 
 namespace ice {
-
-static std::string transactionIdToKey(const TransactionId& id) {
-    std::ostringstream oss;
-    for (auto b : id) {
-        oss << std::hex << std::setw(2) << std::setfill('0') << (int)b;
-    }
-    return oss.str();
-}
 
 const char* iceStateString(IceState state) {
     switch (state) {
@@ -66,16 +59,9 @@ void IceSession::close() {
         if (keepalive_timer_) {
             htimer_del(keepalive_timer_);
         }
-        // Cancel pending transactions
-        for (auto& kv : transactions_) {
-            if (kv.second.timer) {
-                htimer_del(kv.second.timer);
-            }
-        }
     }
     check_timer_ = nullptr;
     keepalive_timer_ = nullptr;
-    transactions_.clear();
 
     // Unregister from agent
     if (agent_) {
@@ -189,21 +175,18 @@ void IceSession::onTurnStateChanged(TurnState state) {
 
 void IceSession::sendStunBindingRequest(const struct sockaddr* server, const std::string& serverStr) {
     StunMessage msg(STUN_METHOD_BINDING, STUN_CLASS_REQUEST);
-
-    auto buf = msg.encode(); // No auth for STUN server binding
-
-    if (agent_) {
-        agent_->sendTo(buf.data(), buf.size(), server);
-    }
-
-    // Track transaction
-    StunTransaction txn;
-    txn.id = msg.transactionId();
-    memcpy(&txn.destAddr, server, SOCKADDR_LEN(server));
-    txn.sentTime = hloop_now_ms(loop_->loop());
-    txn.isGathering = true;
-    txn.serverAddr = serverStr;
-    addTransaction(txn);
+    std::weak_ptr<IceSession> weak_self = shared_from_this();
+    agent_->StunRequest(msg, server, [weak_self, serverStr](StunMessage* resp, int code) {
+        if (auto self = weak_self.lock()) {
+            if (resp) {
+                self->onGatheringResponse(*resp, serverStr);
+            }
+            self->pending_gathering_requests_--;
+            if (self->pending_gathering_requests_ == 0) {
+                self->onGatheringComplete();
+            }
+        }
+    });
     pending_gathering_requests_++;
 }
 
@@ -358,12 +341,33 @@ void IceSession::sendConnectivityCheck(CandidatePair* pair) {
     pair->lastSendTime = hloop_now_ms(loop_->loop());
     pair->state = PairState::InProgress;
 
-    StunTransaction txn;
-    txn.id = msg.transactionId();
-    txn.pair = pair;
-    memcpy(&txn.destAddr, &pair->remote.addr, sizeof(pair->remote.addr));
-    txn.sentTime = pair->lastSendTime;
-    addTransaction(txn);
+    std::weak_ptr<IceSession> weak_self = shared_from_this();
+    agent_->addTransaction(msg.transactionId(), [weak_self, this, pair](StunMessage* resp, int code) {
+        auto self = weak_self.lock();
+        if (!self) return;
+        if (resp) {
+            if(resp->cls() == STUN_CLASS_SUCCESS_RESPONSE) {
+                onCheckSuccess(pair, *resp);
+            } else if (resp->cls() == STUN_CLASS_ERROR_RESPONSE) {
+                uint16_t errorCode = 0;
+                std::string reason;
+                resp->getErrorCode(&errorCode, &reason);
+
+                if (errorCode == STUN_ERROR_ROLE_CONFLICT) {
+                    // Switch role and retry
+                    handleRoleConflict(role_ == IceRole::Controlled);
+                    if (pair) {
+                        pair->state = PairState::Waiting;
+                        checklist_.addTriggeredCheck(*pair);
+                    }
+                    return;
+                }
+                onCheckFailure(pair, code);
+            }
+        } else {
+            onCheckFailure(pair, code);
+        }
+    });
 }
 
 void IceSession::onRecvData(const uint8_t* data, size_t len, const struct sockaddr* from) {
@@ -386,12 +390,6 @@ void IceSession::onStunPacket(const uint8_t* data, size_t len, const struct sock
     switch (cls) {
     case STUN_CLASS_REQUEST:
         handleStunRequest(msg, from);
-        break;
-    case STUN_CLASS_SUCCESS_RESPONSE:
-        handleStunResponse(msg);
-        break;
-    case STUN_CLASS_ERROR_RESPONSE:
-        handleStunErrorResponse(msg);
         break;
     case STUN_CLASS_INDICATION:
         // STUN indication (e.g., binding indication for keepalive) - ignore
@@ -488,64 +486,6 @@ void IceSession::handleStunRequest(const StunMessage& msg, const struct sockaddr
         matchedPair->state = PairState::Succeeded;
         matchedPair->valid = true;
         setSelectPair(matchedPair);
-    }
-}
-
-void IceSession::handleStunResponse(const StunMessage& msg) {
-    std::string key = transactionIdToKey(msg.transactionId());
-    auto it = transactions_.find(key);
-    if (it == transactions_.end()) return;
-
-    StunTransaction& txn = it->second;
-
-    if (txn.isGathering) {
-        // This is a response to a gathering STUN request
-        onGatheringResponse(msg, txn.serverAddr);
-        pending_gathering_requests_--;
-        if (txn.timer) htimer_del(txn.timer);
-        transactions_.erase(it);
-        if (pending_gathering_requests_ == 0) {
-            onGatheringComplete();
-        }
-        return;
-    }
-
-    // Connectivity check response
-    CandidatePair* pair = txn.pair;
-    if (txn.timer) htimer_del(txn.timer);
-    transactions_.erase(it);
-
-    if (pair) {
-        onCheckSuccess(pair, msg);
-    }
-}
-
-void IceSession::handleStunErrorResponse(const StunMessage& msg) {
-    std::string key = transactionIdToKey(msg.transactionId());
-    auto it = transactions_.find(key);
-    if (it == transactions_.end()) return;
-
-    StunTransaction& txn = it->second;
-    CandidatePair* pair = txn.pair;
-    if (txn.timer) htimer_del(txn.timer);
-    transactions_.erase(it);
-
-    uint16_t errorCode = 0;
-    std::string reason;
-    msg.getErrorCode(&errorCode, &reason);
-
-    if (errorCode == STUN_ERROR_ROLE_CONFLICT) {
-        // Switch role and retry
-        handleRoleConflict(role_ == IceRole::Controlled);
-        if (pair) {
-            pair->state = PairState::Waiting;
-            checklist_.addTriggeredCheck(*pair);
-        }
-        return;
-    }
-
-    if (pair) {
-        onCheckFailure(pair, errorCode);
     }
 }
 
@@ -650,38 +590,6 @@ void IceSession::sendStunErrorResponse(const StunMessage& request, uint16_t code
     if (agent_) {
         agent_->sendTo(buf.data(), buf.size(), to);
     }
-}
-
-void IceSession::addTransaction(const StunTransaction& txn) {
-    std::string key = transactionIdToKey(txn.id);
-    transactions_[key] = txn;
-
-    // Set retransmit timer for UDP (not needed for TCP)
-    StunTransaction& stored = transactions_[key];
-    stored.timer = htimer_add(loop_->loop(), [](htimer_t* timer) {
-        // Retransmit timeout
-        IceSession* self = (IceSession*)hevent_userdata(timer);
-        // TODO: implement retransmission logic
-    }, txn.rto, 1); // one-shot
-    hevent_set_userdata(stored.timer, this);
-}
-
-void IceSession::removeTransaction(const TransactionId& id) {
-    std::string key = transactionIdToKey(id);
-    auto it = transactions_.find(key);
-    if (it != transactions_.end()) {
-        if (it->second.timer) 
-            htimer_del(it->second.timer);
-        transactions_.erase(it);
-    }
-}
-
-StunTransaction* IceSession::findTransaction(const TransactionId& id) {
-    std::string key = transactionIdToKey(id);
-    auto it = transactions_.find(key);
-    if (it != transactions_.end()) 
-        return &it->second;
-    return nullptr;
 }
 
 int IceSession::send(const void* data, size_t len) {

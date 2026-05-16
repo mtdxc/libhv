@@ -3,6 +3,7 @@
 #include "../stun/stun_auth.h"
 #include "../session/ice_session.h"
 #include "../turn/turn_client.h"
+#include "hloop.h"
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -121,6 +122,15 @@ void IceAgent::stop() {
     }
     ufrag_map_.clear();
     pair_map_.clear();
+
+    // Cancel pending transactions
+    for (auto& kv : transactions_) {
+        if (kv.second.timer) {
+            htimer_del(kv.second.timer);
+        }
+    }
+    transactions_.clear();
+
 }
 
 IceSessionPtr IceAgent::createSession(IceMode mode) {
@@ -167,6 +177,32 @@ void IceAgent::unregisterPair(const sockaddr_u& addr) {
     });
 }
 
+void IceAgent::StunRequest(const StunMessage& req, const struct sockaddr* server, std::function<void(StunMessage* resp, int code)> callback) {
+    auto msg = req.encode();
+    sendTo(msg.data(), msg.size(), server);
+    if (callback) {
+        addTransaction(req.transactionId(), callback);
+    }
+}
+
+void IceAgent::addTransaction(const TransactionId& txnId, StunCallback callback) {
+    if (callback) {
+        StunTransaction txn;
+        txn.sentTime = hloop_now_ms(loop_->loop());
+        txn.callback = callback;
+        // Start retransmission timer
+        htimer_t* timer = htimer_add(loop_->loop(), [](htimer_t* t) {
+            IceAgent* self = (IceAgent*)hevent_userdata(t);
+            if (self) {
+                //self->onStunRequestTimeout(t);
+            }
+        }, txn.rto, 0);
+        hevent_set_userdata(timer, this);
+        txn.timer = timer;
+        transactions_[txnId] = txn;
+    }
+}
+
 void IceAgent::processStunMsg(const uint8_t* data, size_t len, const struct sockaddr* addr) {
     StunMessage msg;
     if (!StunMessage::decode(data, len, &msg)) return;
@@ -189,12 +225,16 @@ void IceAgent::processStunMsg(const uint8_t* data, size_t len, const struct sock
             }
         }
     } else { // stun响应
-        // call with transaction id
-        for (auto& kv : ufrag_map_) {
-            if (kv.second && kv.second->hasTransaction(msg.transactionId())) {
-                kv.second->onRecvData(data, len, addr);
-                return;
+        auto it = transactions_.find(msg.transactionId());
+        if (it != transactions_.end()) {
+            StunTransaction& txn = it->second;
+            if (txn.callback) {
+                txn.callback(&msg, 0);
             }
+            if (txn.timer) {
+                htimer_del(txn.timer);
+            }
+            transactions_.erase(it);
         }
     }
 }

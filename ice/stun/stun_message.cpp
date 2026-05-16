@@ -404,6 +404,9 @@ void StunMessage::encodeAttributes(std::vector<uint8_t>& buf) const {
 }
 
 std::vector<uint8_t> StunMessage::encode() const {
+    if (auth_.length()) {
+        return encodeWithAuth(auth_);
+    }
     std::vector<uint8_t> buf;
     buf.reserve(256);
 

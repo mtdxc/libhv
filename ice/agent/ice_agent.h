@@ -1,6 +1,7 @@
 #ifndef ICE_AGENT_H_
 #define ICE_AGENT_H_
 
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <memory>
@@ -39,7 +40,6 @@ inline PacketType classifyPacket(const uint8_t* data, size_t len) {
 class IDataRecv {
 public:
     virtual void onRecvData(const uint8_t* data, size_t len, const sockaddr* addr) = 0;
-    virtual bool hasTransaction(const TransactionId& id) { return false; }
     virtual void onTcpConnected(hio_t* io) {}
     virtual void onTcpDisconnected(hio_t* io) {}
 };
@@ -59,9 +59,26 @@ struct TcpIceConnection {
     bool identified = false; // true after first STUN exchange
 };
 
+// STUN Transaction for tracking requests
+using StunCallback = std::function<void(StunMessage* resp, int code)>;
+struct StunTransaction {
+    TransactionId id;
+    std::vector<uint8_t> msg;
+    uint64_t sentTime = 0;               // ms
+    int retransmitCount = 0;
+    uint32_t rto = 500;                  // Initial RTO ms
+    htimer_t* timer = nullptr;           // Retransmit timer
+    StunCallback callback; // Callback on response or timeout
+};
+
 // IceAgent: Top-level API managing all ICE sessions and transport
 class IceAgent {
+    // Transactions
+    std::map<TransactionId, StunTransaction> transactions_; // key: hex(transaction_id)
 public:
+    void StunRequest(const StunMessage& msg, const struct sockaddr* server, StunCallback callback);
+    void addTransaction(const TransactionId& id, StunCallback callback);
+
     // Create agent with optional external event loop
     // If loop is null, creates its own EventLoopThread
     explicit IceAgent(hv::EventLoopPtr loop = nullptr);

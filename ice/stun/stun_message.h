@@ -181,6 +181,7 @@ public:
     // Encode/Decode
     // Encode message to buffer (without integrity/fingerprint)
     std::vector<uint8_t> encode() const;
+    void setAuth(const std::string& password) { auth_ = password; }
     // Encode with MESSAGE-INTEGRITY and FINGERPRINT
     std::vector<uint8_t> encodeWithAuth(const std::string& password) const;
 
@@ -204,6 +205,7 @@ private:
     std::vector<StunAttribute> attrs_;
     // Store raw bytes for integrity verification
     mutable std::vector<uint8_t> raw_data_;
+    std::string auth_;
 };
 
 } // namespace ice
