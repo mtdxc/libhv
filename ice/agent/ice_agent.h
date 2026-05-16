@@ -10,7 +10,7 @@
 
 #include "EventLoopThread.h"
 #include "ice_config.h"
-
+#include "../stun/stun_message.h"
 namespace ice {
 class IceSession;
 class TurnClient;
@@ -39,6 +39,7 @@ inline PacketType classifyPacket(const uint8_t* data, size_t len) {
 class IDataRecv {
 public:
     virtual void onRecvData(const uint8_t* data, size_t len, const sockaddr* addr) = 0;
+    virtual bool hasTransaction(const TransactionId& id) { return false; }
     virtual void onTcpConnected(hio_t* io) {}
     virtual void onTcpDisconnected(hio_t* io) {}
 };
@@ -133,6 +134,7 @@ private:
 
     // UDP callbacks
     void onUdpRecv(const uint8_t* data, size_t len, const struct sockaddr* addr);
+    void processStunMsg(const uint8_t* data, size_t len, const struct sockaddr* addr);
 
     // TCP callbacks (static trampolines)
     static void onTcpAccept(hio_t* io);

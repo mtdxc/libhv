@@ -167,10 +167,47 @@ void IceAgent::unregisterPair(const sockaddr_u& addr) {
     });
 }
 
+void IceAgent::processStunMsg(const uint8_t* data, size_t len, const struct sockaddr* addr) {
+    StunMessage msg;
+    if (!StunMessage::decode(data, len, &msg)) return;
+
+    if (msg.cls() == STUN_CLASS_REQUEST || msg.cls() == STUN_CLASS_INDICATION) 
+    { // stun 请求
+        if (msg.getUsername().empty()) {
+            return ;
+        }
+        std::string ufrag, username = msg.getUsername();
+        size_t colon = username.find(':');
+        if (colon != std::string::npos) {
+            ufrag = username.substr(0, colon);
+        }
+        if (!ufrag.empty()) {
+            auto it = ufrag_map_.find(ufrag);
+            if (it != ufrag_map_.end() && it->second) {
+                it->second->onRecvData(data, len, addr);
+                return;
+            }
+        }
+    } else { // stun响应
+        // call with transaction id
+        for (auto& kv : ufrag_map_) {
+            if (kv.second && kv.second->hasTransaction(msg.transactionId())) {
+                kv.second->onRecvData(data, len, addr);
+                return;
+            }
+        }
+    }
+}
+
 void IceAgent::onUdpRecv(const uint8_t* data, size_t len, const sockaddr* addr) {
+    PacketType ptype = classifyPacket(data, len);
     auto it = pair_map_.find(*(sockaddr_u*)addr);
     if (it != pair_map_.end()) {
         it->second->onRecvData(data, len, addr);
+#if 1
+    } else if(ptype == PacketType::STUN) {
+        processStunMsg(data, len, addr);
+#else
     } else {
         uint16_t msg_type = ((uint16_t)data[0] << 8) | data[1];
         uint16_t cls = stun_get_class(msg_type);
@@ -191,6 +228,7 @@ void IceAgent::onUdpRecv(const uint8_t* data, size_t len, const sockaddr* addr) 
                 return;
             }
         }
+#endif
     }
 }
 
