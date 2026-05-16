@@ -152,7 +152,7 @@ private:
     void addTransaction(const StunTransaction& txn);
     void removeTransaction(const TransactionId& id);
     StunTransaction* findTransaction(const TransactionId& id);
-
+    bool hasTransaction(const TransactionId& id) {return findTransaction(id)!=nullptr;}
     // Form candidate pairs
     void formPairs();
 
