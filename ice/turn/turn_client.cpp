@@ -9,7 +9,7 @@
 namespace ice {
 
 TurnClient::TurnClient(hv::EventLoopPtr loop, IceAgent* transport)
-    : loop_(loop), transport_(transport) {
+    : loop_(loop), agent_(transport) {
     memset(&server_addr_, 0, sizeof(server_addr_));
     memset(&relay_addr_, 0, sizeof(relay_addr_));
     memset(&srflx_addr_, 0, sizeof(srflx_addr_));
@@ -24,33 +24,54 @@ TurnClient::~TurnClient() {
         htimer_del(permission_timer_);
         permission_timer_ = nullptr;
     }
-    transport_->unregisterPair(server_addr_);
+    if (io_!=agent_->udpIo()) {
+        hio_close(io_);
+    }
+    agent_->unregisterPair(server_addr_);
 }
 
-void TurnClient::setServer(const struct sockaddr* serverAddr) {
-    memcpy(&server_addr_, serverAddr, SOCKADDR_LEN(serverAddr));
-    transport_->registerPair(server_addr_, this);
-}
-
-void TurnClient::setCredentials(const std::string& username, const std::string& password) {
-    username_ = username;
-    password_ = password;
+bool TurnClient::setConfig(const TurnServerConfig& config) {
+    config_ = config;
+    return 0 == sockaddr_set_ipport(&server_addr_, config_.addr.host.c_str(), config_.addr.port);
 }
 
 void TurnClient::allocate() {
     if (state_ != TurnState::Idle && state_ != TurnState::Failed) return;
     state_ = TurnState::Allocating;
     if (onStateChange) onStateChange(state_);
+    if (config_.protocol == TurnServerConfig::UDP){
+        io_ = agent_->udpIo();
+        agent_->registerPair(server_addr_, this);
+        sendAllocateRequest();
+    }
+    else {
+        agent_->connectTcp(&server_addr_.sa, this);
+    }
+}
+
+void TurnClient::onTcpConnected(hio_t* io) { 
+    io_ = io; 
     sendAllocateRequest();
 }
 
+void TurnClient::onTcpDisconnected(hio_t* io) { 
+    if (io == io_) {
+        io_ = nullptr;
+        // Reconnect on disconnect
+        if (state_ != TurnState::Idle && state_ != TurnState::Failed) {
+            agent_->connectTcp(&server_addr_.sa, this);
+        }
+    }
+}
+
 void TurnClient::sendAllocateRequest() {
+    if(!io_) return;
     StunMessage msg(TURN_METHOD_ALLOCATE, STUN_CLASS_REQUEST);
     msg.addRequestedTransport(17); // UDP = 17
     msg.addLifetime(lifetime_);
 
     std::weak_ptr<TurnClient> weakSelf = shared_from_this();
-    transport_->StunRequest(msg, &server_addr_.sa, [weakSelf](StunMessage* resp, int code) {
+    agent_->StunRequest(msg, &server_addr_.sa, io_, [weakSelf](StunMessage* resp, int code) {
         auto self = weakSelf.lock();
         if (resp && self) {
             if(resp->cls() == STUN_CLASS_SUCCESS_RESPONSE) {
@@ -66,18 +87,18 @@ void TurnClient::sendAllocateRequestWithAuth() {
     StunMessage msg(TURN_METHOD_ALLOCATE, STUN_CLASS_REQUEST);
     msg.addRequestedTransport(17);
     msg.addLifetime(lifetime_);
-    msg.addUsername(username_);
+    msg.addUsername(config_.username);
     msg.addRealm(realm_);
     msg.addNonce(nonce_);
 
     // For long-term credentials, key = MD5(username:realm:password)
     // Simplified: use password directly for HMAC
     // In production, compute key = MD5(username + ":" + realm + ":" + password)
-    std::string key = username_ + ":" + realm_ + ":" + password_;
+    std::string key = config_.username + ":" + realm_ + ":" + config_.password;
     // For simplicity, use password as HMAC key
-    msg.setAuth(password_);
+    msg.setAuth(config_.password);
     std::weak_ptr<TurnClient> weakSelf = shared_from_this();
-    transport_->StunRequest(msg, &server_addr_.sa, [weakSelf](StunMessage* resp, int code) {
+    agent_->StunRequest(msg, &server_addr_.sa, io_, [weakSelf](StunMessage* resp, int code) {
         auto self = weakSelf.lock();
         if (resp && self) {
             if(resp->cls() == STUN_CLASS_SUCCESS_RESPONSE) {
@@ -99,16 +120,16 @@ void TurnClient::deallocate() {
 }
 
 void TurnClient::channelBind(const struct sockaddr* peerAddr, uint16_t channelNumber) {
-    if (state_ != TurnState::Allocated) return;
+    if (state_ != TurnState::Allocated || !io_) return;
     if (channelNumber < 0x4000 || channelNumber > 0x7FFE) return;
 
     StunMessage msg(TURN_METHOD_CHANNEL_BIND, STUN_CLASS_REQUEST);
     msg.addChannelNumber(channelNumber);
     msg.addXorPeerAddress(peerAddr);
-    msg.addUsername(username_);
+    msg.addUsername(config_.username);
     msg.addRealm(realm_);
     msg.addNonce(nonce_);
-    msg.setAuth(password_);
+    msg.setAuth(config_.password);
 
     TurnChannelBinding binding;
     binding.channelNumber = channelNumber;
@@ -116,7 +137,7 @@ void TurnClient::channelBind(const struct sockaddr* peerAddr, uint16_t channelNu
     binding.expireTime = hloop_now_ms(loop_->loop()) + 600000; 
     // 10 min
     std::weak_ptr<TurnClient> weakSelf = shared_from_this();
-    transport_->StunRequest(msg, &server_addr_.sa, [=](StunMessage* resp, int code) {
+    agent_->StunRequest(msg, &server_addr_.sa, io_, [=](StunMessage* resp, int code) {
         auto self = weakSelf.lock();
         if (resp && self) {
             if (resp->cls() == STUN_CLASS_SUCCESS_RESPONSE) {
@@ -129,7 +150,7 @@ void TurnClient::channelBind(const struct sockaddr* peerAddr, uint16_t channelNu
 }
 
 int TurnClient::sendData(const void* data, size_t len, const struct sockaddr* peerAddr) {
-    if (state_ != TurnState::Allocated) return -1;
+    if (state_ != TurnState::Allocated || !io_) return -1;
 
     // Check if we have a channel binding for this peer
     for (auto& kv : channels_) {
@@ -144,11 +165,11 @@ int TurnClient::sendData(const void* data, size_t len, const struct sockaddr* pe
     msg.addData(data, len);
 
     auto buf = msg.encode(); // Indications don't need auth
-    return transport_->sendTo(buf.data(), buf.size(), &server_addr_.sa);
+    return agent_->send(buf.data(), buf.size(), &server_addr_.sa, io_);
 }
 
 int TurnClient::sendChannelData(const void* data, size_t len, uint16_t channelNumber) {
-    if (state_ != TurnState::Allocated) return -1;
+    if (state_ != TurnState::Allocated || !io_) return -1;
 
     // ChannelData format: 2-byte channel number + 2-byte length + data
     std::vector<uint8_t> buf(4 + len);
@@ -162,7 +183,7 @@ int TurnClient::sendChannelData(const void* data, size_t len, uint16_t channelNu
     size_t padded = (buf.size() + 3) & ~3;
     buf.resize(padded, 0);
 
-    return transport_->sendTo(buf.data(), buf.size(), &server_addr_.sa);
+    return agent_->send(buf.data(), buf.size(), &server_addr_.sa, io_); // Changed from sendTo to send
 }
 
 void TurnClient::onStunRequest(StunMessage& msg, const sockaddr* addr, hio_t* io) {
@@ -260,16 +281,17 @@ void TurnClient::onChannelData(const uint8_t* data, size_t len) {
 
 
 void TurnClient::refresh(uint32_t lifetime) {
-    if (state_ != TurnState::Allocated) return;
+    if (state_ != TurnState::Allocated || !io_) return;
 
     StunMessage msg(TURN_METHOD_REFRESH, STUN_CLASS_REQUEST);
     msg.addLifetime(lifetime);
-    msg.addUsername(username_);
+    msg.addUsername(config_.username);
     msg.addRealm(realm_);
     msg.addNonce(nonce_);
+    msg.setAuth(config_.password);
 
     std::weak_ptr<TurnClient> weakSelf = shared_from_this();
-    transport_->StunRequest(msg, &server_addr_.sa, [weakSelf](StunMessage* resp, int code) {
+    agent_->StunRequest(msg, &server_addr_.sa, io_, [weakSelf](StunMessage* resp, int code) {
         auto self = weakSelf.lock();
         if (resp && self) {
             if (resp->cls() == STUN_CLASS_SUCCESS_RESPONSE){
@@ -313,19 +335,19 @@ void TurnClient::startPermissionRefreshTimer() {
 }
 
 void TurnClient::createPermission(const struct sockaddr* peerAddr) {
-    if (state_ != TurnState::Allocated) return;
+    if (state_ != TurnState::Allocated || !io_) return;
 
     StunMessage msg(TURN_METHOD_CREATE_PERMISSION, STUN_CLASS_REQUEST);
     msg.addXorPeerAddress(peerAddr);
-    msg.addUsername(username_);
+    msg.addUsername(config_.username);
     msg.addRealm(realm_);
     msg.addNonce(nonce_);
-    msg.setAuth(password_);
+    msg.setAuth(config_.password);
 
     std::weak_ptr<TurnClient> weakSelf = shared_from_this();
     sockaddr_u peerAddrU;
     memcpy(&peerAddrU, peerAddr, SOCKADDR_LEN(peerAddr));
-    transport_->StunRequest(msg, &server_addr_.sa, [weakSelf, peerAddrU](StunMessage* resp, int code) {
+    agent_->StunRequest(msg, &server_addr_.sa, io_, [weakSelf, peerAddrU](StunMessage* resp, int code) {
         auto self = weakSelf.lock();
         if (resp && self) {
             if (resp->cls() == STUN_CLASS_SUCCESS_RESPONSE) {
