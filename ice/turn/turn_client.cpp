@@ -8,14 +8,6 @@
 
 namespace ice {
 
-static std::string txnIdToHex(const TransactionId& id) {
-    std::ostringstream oss;
-    for (auto b : id) {
-        oss << std::hex << std::setw(2) << std::setfill('0') << (int)b;
-    }
-    return oss.str();
-}
-
 TurnClient::TurnClient(hv::EventLoopPtr loop, IceAgent* transport)
     : loop_(loop), transport_(transport) {
     memset(&server_addr_, 0, sizeof(server_addr_));
@@ -57,10 +49,17 @@ void TurnClient::sendAllocateRequest() {
     msg.addRequestedTransport(17); // UDP = 17
     msg.addLifetime(lifetime_);
 
-    auto buf = msg.encode(); // First request without auth
-    transport_->sendTo(buf.data(), buf.size(), &server_addr_.sa);
-
-    pending_transactions_[txnIdToHex(msg.transactionId())] = msg.transactionId();
+    std::weak_ptr<TurnClient> weakSelf = shared_from_this();
+    transport_->StunRequest(msg, &server_addr_.sa, [weakSelf](StunMessage* resp, int code) {
+        auto self = weakSelf.lock();
+        if (resp && self) {
+            if(resp->cls() == STUN_CLASS_SUCCESS_RESPONSE) {
+                self->handleAllocateResponse(*resp);
+            } else {
+                self->handleAllocateError(*resp);
+            }
+        }
+    });
 }
 
 void TurnClient::sendAllocateRequestWithAuth() {
@@ -76,24 +75,18 @@ void TurnClient::sendAllocateRequestWithAuth() {
     // In production, compute key = MD5(username + ":" + realm + ":" + password)
     std::string key = username_ + ":" + realm_ + ":" + password_;
     // For simplicity, use password as HMAC key
-    auto buf = msg.encodeWithAuth(password_);
-    transport_->sendTo(buf.data(), buf.size(), &server_addr_.sa);
-
-    pending_transactions_[txnIdToHex(msg.transactionId())] = msg.transactionId();
-}
-
-void TurnClient::refresh(uint32_t lifetime) {
-    if (state_ != TurnState::Allocated) return;
-
-    StunMessage msg(TURN_METHOD_REFRESH, STUN_CLASS_REQUEST);
-    msg.addLifetime(lifetime);
-    msg.addUsername(username_);
-    msg.addRealm(realm_);
-    msg.addNonce(nonce_);
-
-    auto buf = msg.encodeWithAuth(password_);
-    transport_->sendTo(buf.data(), buf.size(), &server_addr_.sa);
-    pending_transactions_[txnIdToHex(msg.transactionId())] = msg.transactionId();
+    msg.setAuth(password_);
+    std::weak_ptr<TurnClient> weakSelf = shared_from_this();
+    transport_->StunRequest(msg, &server_addr_.sa, [weakSelf](StunMessage* resp, int code) {
+        auto self = weakSelf.lock();
+        if (resp && self) {
+            if(resp->cls() == STUN_CLASS_SUCCESS_RESPONSE) {
+                self->handleAllocateResponse(*resp);
+            } else {
+                self->handleAllocateError(*resp);
+            }
+        }
+    });
 }
 
 void TurnClient::deallocate() {
@@ -103,26 +96,6 @@ void TurnClient::deallocate() {
         htimer_del(refresh_timer_);
         refresh_timer_ = nullptr;
     }
-}
-
-void TurnClient::createPermission(const struct sockaddr* peerAddr) {
-    if (state_ != TurnState::Allocated) return;
-
-    StunMessage msg(TURN_METHOD_CREATE_PERMISSION, STUN_CLASS_REQUEST);
-    msg.addXorPeerAddress(peerAddr);
-    msg.addUsername(username_);
-    msg.addRealm(realm_);
-    msg.addNonce(nonce_);
-
-    auto buf = msg.encodeWithAuth(password_);
-    transport_->sendTo(buf.data(), buf.size(), &server_addr_.sa);
-    pending_transactions_[txnIdToHex(msg.transactionId())] = msg.transactionId();
-
-    // Add to permissions list
-    TurnPermission perm;
-    memcpy(&perm.peerAddr, peerAddr, SOCKADDR_LEN(peerAddr));
-    perm.expireTime = hloop_now_ms(loop_->loop()) + 300000; // 5 min
-    permissions_.push_back(perm);
 }
 
 void TurnClient::channelBind(const struct sockaddr* peerAddr, uint16_t channelNumber) {
@@ -135,16 +108,24 @@ void TurnClient::channelBind(const struct sockaddr* peerAddr, uint16_t channelNu
     msg.addUsername(username_);
     msg.addRealm(realm_);
     msg.addNonce(nonce_);
-
-    auto buf = msg.encodeWithAuth(password_);
-    transport_->sendTo(buf.data(), buf.size(), &server_addr_.sa);
-    pending_transactions_[txnIdToHex(msg.transactionId())] = msg.transactionId();
+    msg.setAuth(password_);
 
     TurnChannelBinding binding;
     binding.channelNumber = channelNumber;
     memcpy(&binding.peerAddr, peerAddr, SOCKADDR_LEN(peerAddr));
-    binding.expireTime = hloop_now_ms(loop_->loop()) + 600000; // 10 min
-    channels_[channelNumber] = binding;
+    binding.expireTime = hloop_now_ms(loop_->loop()) + 600000; 
+    // 10 min
+    std::weak_ptr<TurnClient> weakSelf = shared_from_this();
+    transport_->StunRequest(msg, &server_addr_.sa, [=](StunMessage* resp, int code) {
+        auto self = weakSelf.lock();
+        if (resp && self) {
+            if (resp->cls() == STUN_CLASS_SUCCESS_RESPONSE) {
+                self->channels_[channelNumber] = binding;
+            } else if (resp->cls() == STUN_CLASS_ERROR_RESPONSE) {
+                ;//handleChannelBindError(*resp);
+            }
+        }
+    }); 
 }
 
 int TurnClient::sendData(const void* data, size_t len, const struct sockaddr* peerAddr) {
@@ -184,33 +165,11 @@ int TurnClient::sendChannelData(const void* data, size_t len, uint16_t channelNu
     return transport_->sendTo(buf.data(), buf.size(), &server_addr_.sa);
 }
 
-void TurnClient::onStunMessage(const StunMessage& msg, const struct sockaddr* from) {
+void TurnClient::onStunRequest(StunMessage& msg, const sockaddr* addr, hio_t* io) {
     uint16_t method = msg.method();
     uint16_t cls = msg.cls();
-
-    if (cls == STUN_CLASS_SUCCESS_RESPONSE) {
-        switch (method) {
-        case TURN_METHOD_ALLOCATE:
-            handleAllocateResponse(msg);
-            break;
-        case TURN_METHOD_REFRESH:
-            handleRefreshResponse(msg);
-            break;
-        case TURN_METHOD_CREATE_PERMISSION:
-            handleCreatePermissionResponse(msg);
-            break;
-        case TURN_METHOD_CHANNEL_BIND:
-            handleChannelBindResponse(msg);
-            break;
-        }
-    } else if (cls == STUN_CLASS_ERROR_RESPONSE) {
-        if (method == TURN_METHOD_ALLOCATE) {
-            handleAllocateError(msg);
-        }
-    } else if (cls == STUN_CLASS_INDICATION) {
-        if (method == TURN_METHOD_DATA) {
-            handleDataIndication(msg);
-        }
+    if (cls == STUN_CLASS_INDICATION || method == TURN_METHOD_DATA) {
+        handleDataIndication(msg);
     }
 }
 
@@ -257,21 +216,6 @@ void TurnClient::handleAllocateError(const StunMessage& msg) {
     if (onStateChange) onStateChange(state_);
 }
 
-void TurnClient::handleRefreshResponse(const StunMessage& msg) {
-    uint32_t newLifetime = msg.getLifetime();
-    if (newLifetime > 0) {
-        lifetime_ = newLifetime;
-    }
-}
-
-void TurnClient::handleCreatePermissionResponse(const StunMessage& msg) {
-    // Permission created successfully - no additional action needed
-}
-
-void TurnClient::handleChannelBindResponse(const StunMessage& msg) {
-    // Channel bound successfully - no additional action needed
-}
-
 void TurnClient::handleDataIndication(const StunMessage& msg) {
     // Data from peer via TURN server
     const uint8_t* data = nullptr;
@@ -289,13 +233,6 @@ void TurnClient::handleDataIndication(const StunMessage& msg) {
 void TurnClient::onRecvData(const uint8_t* data, size_t len, const struct sockaddr* addr) {
     PacketType ptype = classifyPacket(data, len);
     switch (ptype) {
-    case PacketType::STUN:
-    {
-        StunMessage msg;
-        if (!StunMessage::decode(data, len, &msg)) return;
-        onStunMessage(msg, addr);
-        break;
-    }
     case PacketType::TURN_CHANNEL:
         onChannelData(data, len);
         break;
@@ -321,6 +258,32 @@ void TurnClient::onChannelData(const uint8_t* data, size_t len) {
     }
 }
 
+
+void TurnClient::refresh(uint32_t lifetime) {
+    if (state_ != TurnState::Allocated) return;
+
+    StunMessage msg(TURN_METHOD_REFRESH, STUN_CLASS_REQUEST);
+    msg.addLifetime(lifetime);
+    msg.addUsername(username_);
+    msg.addRealm(realm_);
+    msg.addNonce(nonce_);
+
+    std::weak_ptr<TurnClient> weakSelf = shared_from_this();
+    transport_->StunRequest(msg, &server_addr_.sa, [weakSelf](StunMessage* resp, int code) {
+        auto self = weakSelf.lock();
+        if (resp && self) {
+            if (resp->cls() == STUN_CLASS_SUCCESS_RESPONSE){
+                uint32_t newLifetime = resp->getLifetime();
+                if (newLifetime > 0) {
+                    self->lifetime_ = newLifetime;
+                }
+            } else {
+               // handleRefreshError(*resp);
+            }
+        }
+    });
+}
+
 void TurnClient::startRefreshTimer() {
     if (refresh_timer_) {
         htimer_del(refresh_timer_);
@@ -343,10 +306,33 @@ void TurnClient::startPermissionRefreshTimer() {
         TurnClient* self = (TurnClient*)hevent_userdata(timer);
         if (!self) return;
         for (auto& perm : self->permissions_) {
-            self->createPermission(&perm.peerAddr.sa);
+            self->createPermission(&perm.first.sa);
         }
     }, 240000, INFINITE);
     hevent_set_userdata(permission_timer_, this);
 }
 
+void TurnClient::createPermission(const struct sockaddr* peerAddr) {
+    if (state_ != TurnState::Allocated) return;
+
+    StunMessage msg(TURN_METHOD_CREATE_PERMISSION, STUN_CLASS_REQUEST);
+    msg.addXorPeerAddress(peerAddr);
+    msg.addUsername(username_);
+    msg.addRealm(realm_);
+    msg.addNonce(nonce_);
+    msg.setAuth(password_);
+
+    std::weak_ptr<TurnClient> weakSelf = shared_from_this();
+    sockaddr_u peerAddrU;
+    memcpy(&peerAddrU, peerAddr, SOCKADDR_LEN(peerAddr));
+    transport_->StunRequest(msg, &server_addr_.sa, [weakSelf, peerAddrU](StunMessage* resp, int code) {
+        auto self = weakSelf.lock();
+        if (resp && self) {
+            if (resp->cls() == STUN_CLASS_SUCCESS_RESPONSE) {
+                self->permissions_[peerAddrU] = hloop_now_ms(self->loop_->loop()) + 300000;
+            } else {
+            }
+        }
+    });
+}
 } // namespace ice

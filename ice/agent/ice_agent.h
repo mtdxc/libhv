@@ -40,6 +40,7 @@ inline PacketType classifyPacket(const uint8_t* data, size_t len) {
 class IDataRecv {
 public:
     virtual void onRecvData(const uint8_t* data, size_t len, const sockaddr* addr) = 0;
+    virtual void onStunRequest(StunMessage& req, const sockaddr* addr, hio_t* io) = 0;
     virtual void onTcpConnected(hio_t* io) {}
     virtual void onTcpDisconnected(hio_t* io) {}
 };
@@ -119,7 +120,7 @@ public:
     // UDP send
     int sendTo(const void* data, size_t len, const struct sockaddr* addr);
     // hio send(tcp or udp)
-    int send(hio_t* io, const void* data, size_t len);
+    int send(const void* data, size_t len, const struct sockaddr* addr, hio_t* io);
     int sendViaRelay(const void* data, size_t len, const struct sockaddr* peer);
 
     // TCP connect / send / close
@@ -150,8 +151,8 @@ private:
     std::shared_ptr<TurnClient> turn_client_;
 
     // UDP callbacks
-    void onUdpRecv(const uint8_t* data, size_t len, const struct sockaddr* addr);
-    void processStunMsg(const uint8_t* data, size_t len, const struct sockaddr* addr);
+    void onRecvPdu(const uint8_t* data, size_t len, const struct sockaddr* addr, hio_t* io);
+    void processStunMsg(const uint8_t* data, size_t len, const struct sockaddr* addr, hio_t* io);
 
     // TCP callbacks (static trampolines)
     static void onTcpAccept(hio_t* io);

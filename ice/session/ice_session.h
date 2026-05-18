@@ -87,10 +87,10 @@ public:
 
     // Packet handlers (called by transport layer)
     void onRecvData(const uint8_t* data, size_t len, const struct sockaddr* from) override;
-    void onStunPacket(const uint8_t* data, size_t len, const struct sockaddr* from);
-    void onDataPacket(const uint8_t* data, size_t len, const struct sockaddr* from);
-    void onTcpConnected(hio_t* io);
-    void onTcpDisconnected(hio_t* io);
+    // STUN request handling
+    void onStunRequest(StunMessage& req, const sockaddr* addr, hio_t* io) override;
+    void onTcpConnected(hio_t* io) override;
+    void onTcpDisconnected(hio_t* io) override;
 
     // Callbacks
     std::function<void(IceState)> onStateChange;
@@ -104,9 +104,6 @@ public:
 private:
     // State management
     void setState(IceState state);
-
-    // STUN request handling
-    void handleStunRequest(const StunMessage& msg, const struct sockaddr* from);
 
     // Connectivity checks
     void sendConnectivityCheck(CandidatePair* pair);
@@ -130,9 +127,9 @@ private:
     void handleRoleConflict(bool isControlling);
 
     // Send STUN response
-    void sendStunResponse(const StunMessage& request, const struct sockaddr* to);
-    void sendStunErrorResponse(const StunMessage& request, uint16_t code,
-                               const std::string& reason, const struct sockaddr* to);
+    void sendStunResponse(const StunMessage& request, const struct sockaddr* to, hio_t* io);
+    void sendStunErrorResponse(const StunMessage& request, uint16_t code, const std::string& reason, 
+                               const struct sockaddr* to, hio_t* io);
 
     // Form candidate pairs
     void formPairs();

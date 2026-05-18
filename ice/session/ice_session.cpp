@@ -322,7 +322,7 @@ void IceSession::sendConnectivityCheck(CandidatePair* pair) {
         }
     } else if (pair->local.protocol == TransportProtocol::TCP) {
         if (pair->tcpIo) {
-            agent_->send(pair->tcpIo, buf.data(), buf.size());
+            agent_->send(buf.data(), buf.size(), &pair->remote.addr.sa, pair->tcpIo);
         } else if (pair->remote.tcpType == TcpType::Passive) {
             // Need to initiate TCP connection
             if (agent_) {
@@ -371,38 +371,17 @@ void IceSession::sendConnectivityCheck(CandidatePair* pair) {
 }
 
 void IceSession::onRecvData(const uint8_t* data, size_t len, const struct sockaddr* from) {
-    PacketType ptype = classifyPacket(data, len);
-    switch (ptype) {
-    case PacketType::STUN:
-        onStunPacket(data, len, from);
-        break;
-    case PacketType::DATA:
-        onDataPacket(data, len, from);
-        break;
+    if (onData) {
+        onData(data, len);
     }
 }
 
-void IceSession::onStunPacket(const uint8_t* data, size_t len, const struct sockaddr* from) {
-    StunMessage msg;
-    if (!StunMessage::decode(data, len, &msg)) return;
-
-    uint16_t cls = msg.cls();
-    switch (cls) {
-    case STUN_CLASS_REQUEST:
-        handleStunRequest(msg, from);
-        break;
-    case STUN_CLASS_INDICATION:
-        // STUN indication (e.g., binding indication for keepalive) - ignore
-        break;
-    }
-}
-
-void IceSession::handleStunRequest(const StunMessage& msg, const struct sockaddr* from) {
+void IceSession::onStunRequest(StunMessage& msg, const struct sockaddr* from, hio_t* io) {
     if (msg.method() != STUN_METHOD_BINDING) return;
 
     // Verify MESSAGE-INTEGRITY with local password
     if (!msg.verifyIntegrity(local_pwd_)) {
-        sendStunErrorResponse(msg, STUN_ERROR_UNAUTHORIZED, "Unauthorized", from);
+        sendStunErrorResponse(msg, STUN_ERROR_UNAUTHORIZED, "Unauthorized", from, io);
         return;
     }
 
@@ -411,7 +390,7 @@ void IceSession::handleStunRequest(const StunMessage& msg, const struct sockaddr
         // Both think they're controlling
         uint64_t remoteTie = msg.getIceControlling();
         if (tiebreaker_ >= remoteTie) {
-            sendStunErrorResponse(msg, STUN_ERROR_ROLE_CONFLICT, "Role Conflict", from);
+            sendStunErrorResponse(msg, STUN_ERROR_ROLE_CONFLICT, "Role Conflict", from, io);
             return;
         } else {
             handleRoleConflict(false); // Switch to controlled
@@ -421,13 +400,13 @@ void IceSession::handleStunRequest(const StunMessage& msg, const struct sockaddr
         if (tiebreaker_ >= remoteTie) {
             handleRoleConflict(true); // Switch to controlling
         } else {
-            sendStunErrorResponse(msg, STUN_ERROR_ROLE_CONFLICT, "Role Conflict", from);
+            sendStunErrorResponse(msg, STUN_ERROR_ROLE_CONFLICT, "Role Conflict", from, io);
             return;
         }
     }
 
     // Send success response
-    sendStunResponse(msg, from);
+    sendStunResponse(msg, from, io);
 
     // Triggered check (RFC 8445 Section 7.3.1.4)
     // Find or create pair for this check
@@ -564,7 +543,7 @@ void IceSession::handleRoleConflict(bool switchToControlling) {
     checklist_.sort();
 }
 
-void IceSession::sendStunResponse(const StunMessage& request, const struct sockaddr* to) {
+void IceSession::sendStunResponse(const StunMessage& request, const struct sockaddr* to, hio_t* io) {
     StunMessage response(STUN_METHOD_BINDING, STUN_CLASS_SUCCESS_RESPONSE);
     response.setTransactionId(request.transactionId());
 
@@ -574,22 +553,18 @@ void IceSession::sendStunResponse(const StunMessage& request, const struct socka
     // Encode with MESSAGE-INTEGRITY using local password
     auto buf = response.encodeWithAuth(local_pwd_);
 
-    if (agent_) {
-        agent_->sendTo(buf.data(), buf.size(), to);
-    }
+    agent_->send(buf.data(), buf.size(), to, io);
 }
 
 void IceSession::sendStunErrorResponse(const StunMessage& request, uint16_t code,
-                                        const std::string& reason, const struct sockaddr* to) {
+                                        const std::string& reason, const struct sockaddr* to, hio_t* io) {
     StunMessage response(STUN_METHOD_BINDING, STUN_CLASS_ERROR_RESPONSE);
     response.setTransactionId(request.transactionId());
     response.addErrorCode(code, reason);
 
     auto buf = response.encodeWithAuth(local_pwd_);
 
-    if (agent_) {
-        agent_->sendTo(buf.data(), buf.size(), to);
-    }
+    agent_->send(buf.data(), buf.size(), to, io);
 }
 
 int IceSession::send(const void* data, size_t len) {
@@ -604,7 +579,7 @@ int IceSession::send(const void* data, size_t len) {
         break;
     case TransportProtocol::TCP:
         if (selected_pair_->tcpIo) {
-            return agent_->send(selected_pair_->tcpIo, data, len);
+            return agent_->send(data, len, &selected_pair_->remote.addr.sa, selected_pair_->tcpIo);
         }
         break;
     default:
@@ -612,13 +587,6 @@ int IceSession::send(const void* data, size_t len) {
     }
     return -1;
 }
-
-void IceSession::onDataPacket(const uint8_t* data, size_t len, const struct sockaddr* from) {
-    if (onData) {
-        onData(data, len);
-    }
-}
-
 
 void IceSession::onTcpConnected(hio_t* io) {
     // Associate TCP connection with the matching pair

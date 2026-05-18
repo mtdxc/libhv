@@ -61,7 +61,7 @@ int IceAgent::start() {
         IceAgent* self = (IceAgent*)hio_context(io);
         if (self) {
             auto addr = hio_peeraddr(io);
-            self->onUdpRecv((const uint8_t*)buf, readbytes, addr);
+            self->onRecvPdu((const uint8_t*)buf, readbytes, addr, io);
         }
     });
     hio_set_context(udp_io_, this);
@@ -203,7 +203,7 @@ void IceAgent::addTransaction(const TransactionId& txnId, StunCallback callback)
     }
 }
 
-void IceAgent::processStunMsg(const uint8_t* data, size_t len, const struct sockaddr* addr) {
+void IceAgent::processStunMsg(const uint8_t* data, size_t len, const struct sockaddr* addr, hio_t* io) {
     StunMessage msg;
     if (!StunMessage::decode(data, len, &msg)) return;
 
@@ -220,8 +220,7 @@ void IceAgent::processStunMsg(const uint8_t* data, size_t len, const struct sock
         if (!ufrag.empty()) {
             auto it = ufrag_map_.find(ufrag);
             if (it != ufrag_map_.end() && it->second) {
-                it->second->onRecvData(data, len, addr);
-                return;
+                it->second->onStunRequest(msg, addr, io);
             }
         }
     } else { // stun响应
@@ -239,36 +238,16 @@ void IceAgent::processStunMsg(const uint8_t* data, size_t len, const struct sock
     }
 }
 
-void IceAgent::onUdpRecv(const uint8_t* data, size_t len, const sockaddr* addr) {
+void IceAgent::onRecvPdu(const uint8_t* data, size_t len, const sockaddr* addr, hio_t* io) {
     PacketType ptype = classifyPacket(data, len);
-    auto it = pair_map_.find(*(sockaddr_u*)addr);
-    if (it != pair_map_.end()) {
-        it->second->onRecvData(data, len, addr);
-#if 1
-    } else if(ptype == PacketType::STUN) {
-        processStunMsg(data, len, addr);
-#else
-    } else {
-        uint16_t msg_type = ((uint16_t)data[0] << 8) | data[1];
-        uint16_t cls = stun_get_class(msg_type);
-        if (cls == STUN_CLASS_REQUEST || cls == STUN_CLASS_INDICATION) {
-            std::string ufrag = extractLocalUfrag(data, len);
-            if (!ufrag.empty()) {
-                auto it = ufrag_map_.find(ufrag);
-                if (it != ufrag_map_.end() && it->second) {
-                    it->second->onRecvData(data, len, addr);
-                    return;
-                }
-            }
+    if (ptype == PacketType::STUN) {
+        processStunMsg(data, len, addr, io);
+    }
+    else{
+        auto it = pair_map_.find(*(sockaddr_u*)addr);
+        if (it != pair_map_.end()) {
+            it->second->onRecvData(data, len, addr);
         }
-        // fallback
-        for (auto& kv : ufrag_map_) {
-            if (kv.second) {
-                kv.second->onRecvData(data, len, addr);
-                return;
-            }
-        }
-#endif
     }
 }
 
@@ -337,15 +316,19 @@ int IceAgent::connectTcp(const struct sockaddr* addr, IDataRecv* session) {
     return (int)id;
 }
 
-int IceAgent::send(hio_t* io, const void* data, size_t len) {
-    if (!io) return -1;
+int IceAgent::send(const void* data, size_t len, const struct sockaddr* addr, hio_t* io) {
+    if (!io) {
+        if (turn_client_ && turn_client_->isAllocated())
+            return turn_client_->sendData(data, len, addr);
+        return -1;
+    }
     if (hio_type(io) == HIO_TYPE_TCP) {
         uint8_t header[2];
         header[0] = (uint8_t)((len >> 8) & 0xFF);
         header[1] = (uint8_t)(len & 0xFF);
         hio_write(io, header, 2);
     }
-    return hio_write(io, data, len);
+    return hio_sendto(io, data, len, (struct sockaddr*)addr);
 }
 
 void IceAgent::closeTcpConnection(hio_t* io) {
@@ -386,13 +369,6 @@ void IceAgent::onTcpConnect(hio_t* io) {
     }
 }
 
-void IceAgent::onTcpRecv(hio_t* io, void* buf, int readbytes) {
-    IceAgent* self = (IceAgent*)hevent_userdata(io);
-    if (!self) return;
-    if (readbytes <= 2) return;
-    self->handleTcpRecv(io, (const uint8_t*)buf + 2, readbytes - 2);
-}
-
 void IceAgent::onTcpClose(hio_t* io) {
     IceAgent* self = (IceAgent*)hevent_userdata(io);
     if (!self) return;
@@ -407,6 +383,13 @@ void IceAgent::onTcpClose(hio_t* io) {
     }
 }
 
+void IceAgent::onTcpRecv(hio_t* io, void* buf, int readbytes) {
+    IceAgent* self = (IceAgent*)hevent_userdata(io);
+    if (!self) return;
+    if (readbytes <= 2) return;
+    self->handleTcpRecv(io, (const uint8_t*)buf + 2, readbytes - 2);
+}
+
 void IceAgent::handleTcpRecv(hio_t* io, const uint8_t* data, size_t len) {
     uint32_t id = hio_id(io);
     auto it = tcp_connections_.find(id);
@@ -414,11 +397,15 @@ void IceAgent::handleTcpRecv(hio_t* io, const uint8_t* data, size_t len) {
 
     if (!it->second.identified) {
         identifyTcpConnection(io, data, len);
-        return;
     }
 
     if (it->second.session) {
-        it->second.session->onRecvData(data, len, hio_peeraddr(io));
+        PacketType ptype = classifyPacket(data, len);
+        if (ptype == PacketType::STUN) {
+            processStunMsg(data, len, hio_peeraddr(io), io);
+        } else {
+            it->second.session->onRecvData(data, len, hio_peeraddr(io));
+        }
     }
 }
 
@@ -428,7 +415,6 @@ void IceAgent::identifyTcpConnection(hio_t* io, const uint8_t* data, size_t len)
         hio_close(io);
         return;
     }
-
     if (len < 20) return;
 
     std::string local_ufrag = extractLocalUfrag(data, len);
@@ -447,8 +433,6 @@ void IceAgent::identifyTcpConnection(hio_t* io, const uint8_t* data, size_t len)
         it->second.ufrag = local_ufrag;
         it->second.identified = true;
     }
-
-    sit->second->onRecvData(data, len, (const sockaddr*)hio_peeraddr(io));
 }
 
 // addLoacalIceCandidate helper api
@@ -619,7 +603,7 @@ void IceAgent::allocateTurn() {
 
         // Route peer data received via TURN to the appropriate session
         turn_client_->onData = [this](const void* data, size_t len, const struct sockaddr* peerAddr) {
-            onUdpRecv((const uint8_t*)data, len, (const sockaddr*)peerAddr);
+            onRecvPdu((const uint8_t*)data, len, (const sockaddr*)peerAddr, nullptr);
         };
 
         // Notify sessions when TURN state changes
