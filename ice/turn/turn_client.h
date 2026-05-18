@@ -26,11 +26,6 @@ enum class TurnState {
     Failed
 };
 
-// TURN permission entry
-struct TurnPermission {
-    sockaddr_u peerAddr;
-    uint64_t expireTime; // ms
-};
 
 // TURN channel binding
 struct TurnChannelBinding {
@@ -74,9 +69,10 @@ public:
     const sockaddr_u& serverAddr() const { return server_addr_; }
 
     // Handle incoming STUN messages from TURN server
-    void onStunMessage(const StunMessage& msg, const struct sockaddr* from);
-    void onChannelData(const uint8_t* data, size_t len);
+    virtual void onStunRequest(StunMessage& req, const sockaddr* addr, hio_t* io) override;
     void onRecvData(const uint8_t* data, size_t len, const struct sockaddr* addr) override;
+
+    void onChannelData(const uint8_t* data, size_t len);
 
     // Callbacks
     std::function<void(TurnState)> onStateChange;
@@ -88,8 +84,6 @@ private:
     void handleAllocateResponse(const StunMessage& msg);
     void handleAllocateError(const StunMessage& msg);
     void handleRefreshResponse(const StunMessage& msg);
-    void handleCreatePermissionResponse(const StunMessage& msg);
-    void handleChannelBindResponse(const StunMessage& msg);
     void handleDataIndication(const StunMessage& msg);
 
     void startRefreshTimer();
@@ -113,8 +107,8 @@ private:
     sockaddr_u srflx_addr_;
     uint32_t lifetime_ = 600; // seconds
 
-    // Permissions
-    std::vector<TurnPermission> permissions_;
+    // Permissions addr-> expireTime
+    std::map<sockaddr_u, uint64_t, SockaddrCompare> permissions_;
 
     // Channel bindings
     std::unordered_map<uint16_t, TurnChannelBinding> channels_;
@@ -124,8 +118,6 @@ private:
     htimer_t* refresh_timer_ = nullptr;
     htimer_t* permission_timer_ = nullptr;
 
-    // Pending transactions
-    std::unordered_map<std::string, TransactionId> pending_transactions_;
 };
 
 using TurnClientPtr = std::shared_ptr<TurnClient>;
