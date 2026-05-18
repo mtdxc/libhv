@@ -1,7 +1,7 @@
 set(ICE_SRCS
     stun/stun_message.cpp
     stun/stun_auth.cpp
-    candidate/ice_candidate.cpp
+    session/ice_candidate.cpp
     session/ice_session.cpp
     turn/turn_client.cpp
     turn/turn_server.cpp
@@ -13,8 +13,8 @@ set(ICE_HEADERS
     ice.h
     stun/stun_message.h
     stun/stun_auth.h
-    candidate/ice_candidate.h
-    candidate/candidate_pair.h
+    session/ice_candidate.h
+    session/candidate_pair.h
     session/ice_session.h
     session/ice_checklist.h
     turn/turn_client.h

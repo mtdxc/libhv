@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <functional>
 
-#include "../candidate/candidate_pair.h"
+#include "candidate_pair.h"
 
 namespace ice {
 

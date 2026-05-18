@@ -3,7 +3,7 @@
 
 #include <string>
 #include <vector>
-#include "../candidate/ice_candidate.h"
+#include "../session/ice_candidate.h"
 
 namespace ice {
 

@@ -9,8 +9,8 @@
 
 #include "EventLoop.h"
 
-#include "../candidate/ice_candidate.h"
-#include "../candidate/candidate_pair.h"
+#include "ice_candidate.h"
+#include "candidate_pair.h"
 #include "ice_checklist.h"
 #include "../stun/stun_message.h"
 #include "../agent/ice_agent.h"
