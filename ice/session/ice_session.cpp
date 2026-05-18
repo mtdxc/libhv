@@ -176,7 +176,7 @@ void IceSession::onTurnStateChanged(TurnState state) {
 void IceSession::sendStunBindingRequest(const struct sockaddr* server, const std::string& serverStr) {
     StunMessage msg(STUN_METHOD_BINDING, STUN_CLASS_REQUEST);
     std::weak_ptr<IceSession> weak_self = shared_from_this();
-    agent_->StunRequest(msg, server, [weak_self, serverStr](StunMessage* resp, int code) {
+    agent_->StunRequest(msg, server, agent_->udpIo(), [weak_self, serverStr](StunMessage* resp, int code) {
         if (auto self = weak_self.lock()) {
             if (resp) {
                 self->onGatheringResponse(*resp, serverStr);
@@ -309,20 +309,15 @@ void IceSession::sendConnectivityCheck(CandidatePair* pair) {
 
     // Encode with MESSAGE-INTEGRITY (using remote password)
     auto buf = msg.encodeWithAuth(remote_pwd_);
-
+    hio_t* io = nullptr;
     // Send via appropriate transport
     if (pair->local.type == CandidateType::Relay) {
         // Send via TURN relay
-        if (agent_ && agent_->isTurnAllocated()) {
-            agent_->sendViaRelay(buf.data(), buf.size(), &pair->remote.addr.sa);
-        }
     } else if (pair->local.protocol == TransportProtocol::UDP) {
-        if (agent_) {
-            agent_->sendTo(buf.data(), buf.size(), &pair->remote.addr.sa);
-        }
+        io = agent_->udpIo();
     } else if (pair->local.protocol == TransportProtocol::TCP) {
         if (pair->tcpIo) {
-            agent_->send(buf.data(), buf.size(), &pair->remote.addr.sa, pair->tcpIo);
+            io = pair->tcpIo;
         } else if (pair->remote.tcpType == TcpType::Passive) {
             // Need to initiate TCP connection
             if (agent_) {
@@ -335,6 +330,8 @@ void IceSession::sendConnectivityCheck(CandidatePair* pair) {
             return;
         }
     }
+
+    agent_->send(buf.data(), buf.size(), &pair->remote.addr.sa, io);
 
     // Track transaction
     pair->transactionId = msg.transactionId();
@@ -569,23 +566,18 @@ void IceSession::sendStunErrorResponse(const StunMessage& request, uint16_t code
 
 int IceSession::send(const void* data, size_t len) {
     if (!selected_pair_ || !agent_) return -1;
-    // Relay candidate: send via TURN
+    hio_t* io = nullptr;
     if (selected_pair_->local.type == CandidateType::Relay) {
-        return agent_->sendViaRelay(data, len, &selected_pair_->remote.addr.sa);
     }
-    switch (selected_pair_->local.protocol) {
-    case TransportProtocol::UDP:
-        return agent_->sendTo(data, len, &selected_pair_->remote.addr.sa);
-        break;
-    case TransportProtocol::TCP:
-        if (selected_pair_->tcpIo) {
-            return agent_->send(data, len, &selected_pair_->remote.addr.sa, selected_pair_->tcpIo);
+    else if(selected_pair_->local.protocol == TransportProtocol::UDP){
+        io = agent_->udpIo();
+    } else {
+        io = selected_pair_->tcpIo;
+        if (!io) {
+            return -1;
         }
-        break;
-    default:
-        break;
     }
-    return -1;
+    return agent_->send(data, len, &selected_pair_->remote.addr.sa, io);
 }
 
 void IceSession::onTcpConnected(hio_t* io) {

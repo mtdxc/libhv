@@ -48,7 +48,7 @@ public:
 // Compare sockaddr for use as map key
 struct SockaddrCompare {
     bool operator()(const sockaddr_u& a, const sockaddr_u& b) const {
-        return 0 == sockaddr_compare(&a, &b);
+        return sockaddr_compare(&a, &b) < 0;
     }
 };
 
@@ -77,7 +77,7 @@ class IceAgent {
     // Transactions
     std::map<TransactionId, StunTransaction> transactions_; // key: hex(transaction_id)
 public:
-    void StunRequest(const StunMessage& msg, const struct sockaddr* server, StunCallback callback);
+    void StunRequest(const StunMessage& msg, const struct sockaddr* server, hio_t* io, StunCallback callback);
     void addTransaction(const TransactionId& id, StunCallback callback);
 
     // Create agent with optional external event loop
@@ -116,12 +116,9 @@ public:
     bool isRunning() const { return running_; }
 
     // ---- Transport APIs (used by IceSession) ----
-
-    // UDP send
-    int sendTo(const void* data, size_t len, const struct sockaddr* addr);
-    // hio send(tcp or udp)
+    hio_t* udpIo() const { return udp_io_; }
+    // hio send(tcp or udp or relay)
     int send(const void* data, size_t len, const struct sockaddr* addr, hio_t* io);
-    int sendViaRelay(const void* data, size_t len, const struct sockaddr* peer);
 
     // TCP connect / send / close
     int connectTcp(const struct sockaddr* addr, IDataRecv* session);

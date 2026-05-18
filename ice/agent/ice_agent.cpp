@@ -91,10 +91,6 @@ void IceAgent::stop() {
     if (!running_) return;
     running_ = false;
 
-    if (loop_thread_) {
-        loop_thread_->stop(true);
-    }
-
     for (auto& session : sessions_) {
         session->close();
     }
@@ -131,6 +127,10 @@ void IceAgent::stop() {
     }
     transactions_.clear();
 
+    if (loop_thread_) {
+        loop_thread_->stop(true);
+    }
+
 }
 
 IceSessionPtr IceAgent::createSession(IceMode mode) {
@@ -147,10 +147,20 @@ void IceAgent::destroySession(const IceSessionPtr& session) {
 }
 
 // ---- UDP APIs ----
-
-int IceAgent::sendTo(const void* data, size_t len, const struct sockaddr* addr) {
-    if (!udp_io_) return -1;
-    return hio_sendto(udp_io_, data, len, (struct sockaddr*)addr);
+int IceAgent::send(const void* data, size_t len, const struct sockaddr* addr, hio_t* io) {
+    if (!io) {
+        // sendViaRelay
+        if (turn_client_ && turn_client_->isAllocated())
+            return turn_client_->sendData(data, len, addr);
+        return -1;
+    }
+    if (hio_type(io) == HIO_TYPE_TCP) {
+        uint8_t header[2];
+        header[0] = (uint8_t)((len >> 8) & 0xFF);
+        header[1] = (uint8_t)(len & 0xFF);
+        hio_write(io, header, 2);
+    }
+    return hio_sendto(io, data, len, (struct sockaddr*)addr);
 }
 
 void IceAgent::registerSession(const std::string& ufrag, IDataRecv* session) {
@@ -177,9 +187,10 @@ void IceAgent::unregisterPair(const sockaddr_u& addr) {
     });
 }
 
-void IceAgent::StunRequest(const StunMessage& req, const struct sockaddr* server, std::function<void(StunMessage* resp, int code)> callback) {
+void IceAgent::StunRequest(const StunMessage& req, const struct sockaddr* server, hio_t* io,
+    std::function<void(StunMessage* resp, int code)> callback) {
     auto msg = req.encode();
-    sendTo(msg.data(), msg.size(), server);
+    send(msg.data(), msg.size(), server, io);
     if (callback) {
         addTransaction(req.transactionId(), callback);
     }
@@ -314,21 +325,6 @@ int IceAgent::connectTcp(const struct sockaddr* addr, IDataRecv* session) {
     hio_connect(io);
 
     return (int)id;
-}
-
-int IceAgent::send(const void* data, size_t len, const struct sockaddr* addr, hio_t* io) {
-    if (!io) {
-        if (turn_client_ && turn_client_->isAllocated())
-            return turn_client_->sendData(data, len, addr);
-        return -1;
-    }
-    if (hio_type(io) == HIO_TYPE_TCP) {
-        uint8_t header[2];
-        header[0] = (uint8_t)((len >> 8) & 0xFF);
-        header[1] = (uint8_t)(len & 0xFF);
-        hio_write(io, header, 2);
-    }
-    return hio_sendto(io, data, len, (struct sockaddr*)addr);
 }
 
 void IceAgent::closeTcpConnection(hio_t* io) {
@@ -572,14 +568,6 @@ bool IceAgent::isTurnAllocating() const {
     return turn_client_ && turn_client_->state() == TurnState::Allocating;
 }
 
-int IceAgent::sendViaRelay(const void* data, size_t len, const struct sockaddr* peer) {
-    int ret = -1;
-    if (turn_client_ && turn_client_->isAllocated()) {
-        ret = turn_client_->sendData(data, len, peer);
-    }
-    return ret;
-}
-
 void IceAgent::createTurnPermission(const struct sockaddr* peerAddr) {
     if (turn_client_ && turn_client_->isAllocated()) {
         turn_client_->createPermission(peerAddr);
@@ -598,8 +586,7 @@ void IceAgent::allocateTurn() {
         if (!server.addr.toSockaddr(&addr)) continue;
 
         turn_client_ = std::make_shared<TurnClient>(loop_, this);
-        turn_client_->setServer(&addr.sa);
-        turn_client_->setCredentials(server.username, server.password);
+        turn_client_->setConfig(server);
 
         // Route peer data received via TURN to the appropriate session
         turn_client_->onData = [this](const void* data, size_t len, const struct sockaddr* peerAddr) {

@@ -41,8 +41,8 @@ public:
     ~TurnClient();
 
     // Configuration
-    void setServer(const struct sockaddr* serverAddr);
-    void setCredentials(const std::string& username, const std::string& password);
+    bool setConfig(const TurnServerConfig& config);
+    const TurnServerConfig& getConfig() const { return config_; }
 
     // Allocation
     void allocate();
@@ -69,8 +69,10 @@ public:
     const sockaddr_u& serverAddr() const { return server_addr_; }
 
     // Handle incoming STUN messages from TURN server
-    virtual void onStunRequest(StunMessage& req, const sockaddr* addr, hio_t* io) override;
+    void onStunRequest(StunMessage& req, const sockaddr* addr, hio_t* io) override;
     void onRecvData(const uint8_t* data, size_t len, const struct sockaddr* addr) override;
+    void onTcpConnected(hio_t* io) override;
+    void onTcpDisconnected(hio_t* io) override;
 
     void onChannelData(const uint8_t* data, size_t len);
 
@@ -90,13 +92,13 @@ private:
     void startPermissionRefreshTimer();
 
     hv::EventLoopPtr loop_;
-    IceAgent* transport_;
+    hio_t* io_ = nullptr;
+    IceAgent* agent_;
     TurnState state_ = TurnState::Idle;
 
     // Server info
     sockaddr_u server_addr_;
-    std::string username_;
-    std::string password_;
+    TurnServerConfig config_;
 
     // Authentication (long-term credentials)
     std::string realm_;
