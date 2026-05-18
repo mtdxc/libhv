@@ -80,7 +80,7 @@ public:
     int send(const void* data, size_t len);
 
     // Get selected pair
-    const CandidatePair* selectedPair() const { return selected_pair_; }
+    CandidatePairPtr selectedPair() const { return selected_pair_; }
 
     // TURN state notification (called by IceAgent)
     void onTurnStateChanged(TurnState state);
@@ -106,15 +106,15 @@ private:
     void setState(IceState state);
 
     // Connectivity checks
-    void sendConnectivityCheck(CandidatePair* pair);
-    void onCheckSuccess(CandidatePair* pair, const StunMessage& response);
-    void setSelectPair(ice::CandidatePair* pair);
-    void onCheckFailure(CandidatePair* pair, uint16_t errorCode);
+    void sendConnectivityCheck(CandidatePairPtr pair);
+    void onCheckSuccess(CandidatePairPtr pair, const StunMessage& response);
+    void setSelectPair(ice::CandidatePairPtr pair);
+    void onCheckFailure(CandidatePairPtr pair, uint16_t errorCode);
     void scheduleNextCheck();
     void onCheckTimer();
 
     // Nomination
-    void nominate(CandidatePair* pair);
+    void nominate(CandidatePairPtr pair);
     void checkNominationComplete();
 
     // Gathering helpers
@@ -161,7 +161,7 @@ private:
 
     // Check list
     IceCheckList checklist_;
-    CandidatePair* selected_pair_ = nullptr;
+    CandidatePairPtr selected_pair_ = nullptr;
 
     // Timers
     htimer_t* check_timer_ = nullptr;

@@ -100,11 +100,11 @@ void IceSession::addRemoteCandidate(const IceCandidate& candidate) {
             if (local.componentId != candidate.componentId) continue;
             if (local.addr.sa.sa_family != candidate.addr.sa.sa_family) continue;
 
-            CandidatePair pair;
-            pair.local = local;
-            pair.remote = candidate;
-            pair.computePriority(role_);
-            pair.state = PairState::Waiting; // New pairs start as Waiting (trickle)
+            CandidatePairPtr pair = std::make_shared<CandidatePair>();
+            pair->local = local;
+            pair->remote = candidate;
+            pair->computePriority(role_);
+            pair->state = PairState::Waiting; // New pairs start as Waiting (trickle)
             checklist_.addPair(pair);
         }
         checklist_.sort();
@@ -236,10 +236,10 @@ void IceSession::formPairs() {
             if (local.componentId != remote.componentId) continue;
             if (local.addr.sa.sa_family != remote.addr.sa.sa_family) continue;
 
-            CandidatePair pair;
-            pair.local = local;
-            pair.remote = remote;
-            pair.computePriority(role_);
+            CandidatePairPtr pair = std::make_shared<CandidatePair>();
+            pair->local = local;
+            pair->remote = remote;
+            pair->computePriority(role_);
             checklist_.addPair(pair);
         }
     }
@@ -269,7 +269,7 @@ void IceSession::startChecks() {
 }
 
 void IceSession::onCheckTimer() {
-    CandidatePair* pair = checklist_.getNextPair();
+    CandidatePairPtr pair = checklist_.getNextPair();
     if (pair) {
         sendConnectivityCheck(pair);
     } else if (checklist_.isComplete()) {
@@ -282,7 +282,7 @@ void IceSession::onCheckTimer() {
     }
 }
 
-void IceSession::sendConnectivityCheck(CandidatePair* pair) {
+void IceSession::sendConnectivityCheck(CandidatePairPtr pair) {
     StunMessage msg(STUN_METHOD_BINDING, STUN_CLASS_REQUEST);
 
     // USERNAME = remote_ufrag:local_ufrag
@@ -308,7 +308,8 @@ void IceSession::sendConnectivityCheck(CandidatePair* pair) {
     }
 
     // Encode with MESSAGE-INTEGRITY (using remote password)
-    auto buf = msg.encodeWithAuth(remote_pwd_);
+    msg.setAuth(remote_pwd_);
+
     hio_t* io = nullptr;
     // Send via appropriate transport
     if (pair->local.type == CandidateType::Relay) {
@@ -316,8 +317,8 @@ void IceSession::sendConnectivityCheck(CandidatePair* pair) {
     } else if (pair->local.protocol == TransportProtocol::UDP) {
         io = agent_->udpIo();
     } else if (pair->local.protocol == TransportProtocol::TCP) {
-        if (pair->tcpIo) {
-            io = pair->tcpIo;
+        if (pair->io) {
+            io = pair->io;
         } else if (pair->remote.tcpType == TcpType::Passive) {
             // Need to initiate TCP connection
             if (agent_) {
@@ -331,15 +332,13 @@ void IceSession::sendConnectivityCheck(CandidatePair* pair) {
         }
     }
 
-    agent_->send(buf.data(), buf.size(), &pair->remote.addr.sa, io);
-
     // Track transaction
     pair->transactionId = msg.transactionId();
     pair->lastSendTime = hloop_now_ms(loop_->loop());
     pair->state = PairState::InProgress;
 
     std::weak_ptr<IceSession> weak_self = shared_from_this();
-    agent_->addTransaction(msg.transactionId(), [weak_self, this, pair](StunMessage* resp, int code) {
+    agent_->StunRequest(msg, &pair->remote.addr.sa, io, [weak_self, this, pair](StunMessage* resp, int code) {
         auto self = weak_self.lock();
         if (!self) return;
         if (resp) {
@@ -355,7 +354,7 @@ void IceSession::sendConnectivityCheck(CandidatePair* pair) {
                     handleRoleConflict(role_ == IceRole::Controlled);
                     if (pair) {
                         pair->state = PairState::Waiting;
-                        checklist_.addTriggeredCheck(*pair);
+                        checklist_.addTriggeredCheck(pair);
                     }
                     return;
                 }
@@ -413,11 +412,11 @@ void IceSession::onStunRequest(StunMessage& msg, const struct sockaddr* from, hi
     sockaddr_u fromAddr;
     memcpy(&fromAddr, from, SOCKADDR_LEN(from));
 
-    CandidatePair* matchedPair = nullptr;
+    CandidatePairPtr matchedPair = nullptr;
     for (auto& pair : checklist_.pairs()) {
-        sockaddr_u remoteAddr = pair.remote.addr;
-        if (memcmp(&remoteAddr, &fromAddr, SOCKADDR_LEN(from)) == 0) {
-            matchedPair = &pair;
+        sockaddr_u remoteAddr = pair->remote.addr;
+        if (sockaddr_compare(&remoteAddr, &fromAddr) == 0) {
+            matchedPair = pair;
             break;
         }
     }
@@ -431,7 +430,7 @@ void IceSession::onStunRequest(StunMessage& msg, const struct sockaddr* from, hi
             }
         } else if (matchedPair->state != PairState::InProgress) {
             // Trigger check
-            checklist_.addTriggeredCheck(*matchedPair);
+            checklist_.addTriggeredCheck(matchedPair);
         }
     } else {
         // Peer-reflexive candidate discovery (RFC 8445 Section 7.3.1.3)
@@ -446,11 +445,11 @@ void IceSession::onStunRequest(StunMessage& msg, const struct sockaddr* from, hi
 
         // Create new pair
         if (!local_candidates_.empty()) {
-            CandidatePair newPair;
-            newPair.local = local_candidates_[0]; // Use first local candidate
-            newPair.remote = prflxCandidate;
-            newPair.computePriority(role_);
-            newPair.state = PairState::Waiting;
+            CandidatePairPtr newPair = std::make_shared<CandidatePair>();
+            newPair->local = local_candidates_[0]; // Use first local candidate
+            newPair->remote = prflxCandidate;
+            newPair->computePriority(role_);
+            newPair->state = PairState::Waiting;
             checklist_.addPair(newPair);
             checklist_.addTriggeredCheck(newPair);
         }
@@ -465,7 +464,7 @@ void IceSession::onStunRequest(StunMessage& msg, const struct sockaddr* from, hi
     }
 }
 
-void IceSession::onCheckSuccess(CandidatePair* pair, const StunMessage& response) {
+void IceSession::onCheckSuccess(CandidatePairPtr pair, const StunMessage& response) {
     pair->state = PairState::Succeeded;
     pair->valid = true;
 
@@ -497,14 +496,14 @@ void IceSession::onCheckSuccess(CandidatePair* pair, const StunMessage& response
     }
 }
 
-void IceSession::setSelectPair(ice::CandidatePair* pair) {
+void IceSession::setSelectPair(CandidatePairPtr pair) {
     selected_pair_ = pair;
     if (onSelectedPair) onSelectedPair(*selected_pair_);
     setState(IceState::Completed);
     startKeepalive();
 }
 
-void IceSession::onCheckFailure(CandidatePair* pair, uint16_t errorCode) {
+void IceSession::onCheckFailure(CandidatePairPtr pair, uint16_t errorCode) {
     pair->state = PairState::Failed;
 
     if (checklist_.allFailed()) {
@@ -512,7 +511,7 @@ void IceSession::onCheckFailure(CandidatePair* pair, uint16_t errorCode) {
     }
 }
 
-void IceSession::nominate(CandidatePair* pair) {
+void IceSession::nominate(CandidatePairPtr pair) {
     pair->nominated = true;
     // Send another connectivity check with USE-CANDIDATE
     pair->state = PairState::InProgress;
@@ -535,7 +534,7 @@ void IceSession::handleRoleConflict(bool switchToControlling) {
     }
     // Recompute pair priorities
     for (auto& pair : checklist_.pairs()) {
-        pair.computePriority(role_);
+        pair->computePriority(role_);
     }
     checklist_.sort();
 }
@@ -572,7 +571,7 @@ int IceSession::send(const void* data, size_t len) {
     else if(selected_pair_->local.protocol == TransportProtocol::UDP){
         io = agent_->udpIo();
     } else {
-        io = selected_pair_->tcpIo;
+        io = selected_pair_->io;
         if (!io) {
             return -1;
         }
@@ -584,11 +583,11 @@ void IceSession::onTcpConnected(hio_t* io) {
     // Associate TCP connection with the matching pair
     sockaddr_u* peeraddr = (sockaddr_u*)hio_peeraddr(io);
     for (auto& pair : checklist_.pairs()) {
-        if (pair.local.protocol == TransportProtocol::TCP &&
-            sockaddr_compare(&pair.remote.addr, peeraddr) == 0) {
-            pair.tcpIo = io;
+        if (pair->local.protocol == TransportProtocol::TCP &&
+            sockaddr_compare(&pair->remote.addr, peeraddr) == 0) {
+            pair->io = io;
             // Now send the connectivity check
-            sendConnectivityCheck(&pair);
+            sendConnectivityCheck(pair);
             break;
         }
     }
@@ -597,10 +596,10 @@ void IceSession::onTcpConnected(hio_t* io) {
 void IceSession::onTcpDisconnected(hio_t* io) {
     // Mark associated pairs as failed
     for (auto& pair : checklist_.pairs()) {
-        if (pair.tcpIo == io) {
-            pair.tcpIo = nullptr;
-            if (pair.state == PairState::InProgress) {
-                pair.state = PairState::Failed;
+        if (pair->io == io) {
+            pair->io = nullptr;
+            if (pair->state == PairState::InProgress) {
+                pair->state = PairState::Failed;
             }
         }
     }
