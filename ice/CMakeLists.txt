@@ -4,6 +4,7 @@ set(ICE_SRCS
     candidate/ice_candidate.cpp
     session/ice_session.cpp
     turn/turn_client.cpp
+    turn/turn_server.cpp
     agent/ice_agent.cpp
     sdp/ice_sdp.cpp
 )
@@ -17,6 +18,7 @@ set(ICE_HEADERS
     session/ice_session.h
     session/ice_checklist.h
     turn/turn_client.h
+    turn/turn_server.h
     agent/ice_agent.h
     agent/ice_config.h
     sdp/ice_sdp.h
