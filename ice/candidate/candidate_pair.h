@@ -34,7 +34,7 @@ struct CandidatePair {
     bool valid = false;       // Appears in valid list
 
     // For TCP connections
-    hio_t* tcpIo = nullptr;
+    hio_t* io = nullptr;
 
     // Transaction tracking
     TransactionId transactionId;
@@ -72,7 +72,7 @@ struct CandidatePair {
         return priority < other.priority;
     }
 };
-
+using CandidatePairPtr = std::shared_ptr<CandidatePair>;
 } // namespace ice
 
 #endif // ICE_CANDIDATE_PAIR_H_

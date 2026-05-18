@@ -16,15 +16,15 @@ public:
     IceCheckList() = default;
 
     // Add a candidate pair
-    void addPair(const CandidatePair& pair) {
+    void addPair(CandidatePairPtr pair) {
         pairs_.push_back(pair);
     }
 
     // Sort pairs by priority (descending)
     void sort() {
         std::sort(pairs_.begin(), pairs_.end(),
-                  [](const CandidatePair& a, const CandidatePair& b) {
-                      return a.priority > b.priority;
+                  [](const CandidatePairPtr& a, const CandidatePairPtr& b) {
+                      return a->priority > b->priority;
                   });
     }
 
@@ -32,24 +32,24 @@ public:
     void prune();
 
     // Add triggered check (higher priority than ordinary checks)
-    void addTriggeredCheck(const CandidatePair& pair) {
+    void addTriggeredCheck(CandidatePairPtr pair) {
         triggered_queue_.push_back(pair);
     }
 
     // Get next pair to check
     // Returns nullptr if no pairs available for checking
-    CandidatePair* getNextPair() {
+    CandidatePairPtr getNextPair() {
         // Triggered checks first
         if (!triggered_queue_.empty()) {
             // Move triggered to in-progress in main list
-            CandidatePair& tp = triggered_queue_.front();
+            CandidatePairPtr tp = triggered_queue_.front();
             for (auto& p : pairs_) {
-                if (p.local.foundation == tp.local.foundation &&
-                    p.remote.foundation == tp.remote.foundation &&
-                    p.state != PairState::InProgress) {
-                    p.state = PairState::InProgress;
+                if (p->local.foundation == tp->local.foundation &&
+                    p->remote.foundation == tp->remote.foundation &&
+                    p->state != PairState::InProgress) {
+                    p->state = PairState::InProgress;
                     triggered_queue_.pop_front();
-                    return &p;
+                    return p;
                 }
             }
             triggered_queue_.pop_front();
@@ -57,17 +57,17 @@ public:
 
         // Ordinary checks: find highest priority Waiting pair
         for (auto& p : pairs_) {
-            if (p.state == PairState::Waiting) {
-                p.state = PairState::InProgress;
-                return &p;
+            if (p->state == PairState::Waiting) {
+                p->state = PairState::InProgress;
+                return p;
             }
         }
 
         // If no Waiting, unfreeze Frozen pairs
         for (auto& p : pairs_) {
-            if (p.state == PairState::Frozen) {
-                p.state = PairState::InProgress;
-                return &p;
+            if (p->state == PairState::Frozen) {
+                p->state = PairState::InProgress;
+                return p;
             }
         }
 
@@ -75,33 +75,33 @@ public:
     }
 
     // Find pair by transaction ID
-    CandidatePair* findByTransaction(const TransactionId& tid) {
+    CandidatePairPtr findByTransaction(const TransactionId& tid) {
         for (auto& p : pairs_) {
-            if (p.transactionId == tid && p.state == PairState::InProgress) {
-                return &p;
+            if (p->transactionId == tid && p->state == PairState::InProgress) {
+                return p;
             }
         }
         return nullptr;
     }
 
     // Find pair by local and remote candidate addresses
-    CandidatePair* findByAddresses(const sockaddr_u& localAddr, const sockaddr_u& remoteAddr);
+    CandidatePairPtr findByAddresses(const sockaddr_u& localAddr, const sockaddr_u& remoteAddr);
 
     // Get the nominated pair (selected pair)
-    CandidatePair* getNominatedPair() {
+    CandidatePairPtr getNominatedPair() {
         for (auto& p : pairs_) {
-            if (p.nominated && p.state == PairState::Succeeded) {
-                return &p;
+            if (p->nominated && p->state == PairState::Succeeded) {
+                return p;
             }
         }
         return nullptr;
     }
 
     // Get best valid pair
-    CandidatePair* getBestValidPair() {
+    CandidatePairPtr getBestValidPair() {
         for (auto& p : pairs_) {
-            if (p.valid && p.state == PairState::Succeeded) {
-                return &p;
+            if (p->valid && p->state == PairState::Succeeded) {
+                return p;
             }
         }
         return nullptr;
@@ -110,7 +110,7 @@ public:
     // Check if all pairs are in terminal states
     bool isComplete() const {
         for (const auto& p : pairs_) {
-            if (p.state != PairState::Succeeded && p.state != PairState::Failed) {
+            if (p->state != PairState::Succeeded && p->state != PairState::Failed) {
                 return false;
             }
         }
@@ -120,7 +120,7 @@ public:
     // Check if all pairs failed
     bool allFailed() const {
         for (const auto& p : pairs_) {
-            if (p.state != PairState::Failed) return false;
+            if (p->state != PairState::Failed) return false;
         }
         return !pairs_.empty();
     }
@@ -128,29 +128,29 @@ public:
     // Has any succeeded pair
     bool hasSucceeded() const {
         for (const auto& p : pairs_) {
-            if (p.state == PairState::Succeeded) return true;
+            if (p->state == PairState::Succeeded) return true;
         }
         return false;
     }
 
     // Access pairs
-    std::vector<CandidatePair>& pairs() { return pairs_; }
-    const std::vector<CandidatePair>& pairs() const { return pairs_; }
+    std::vector<CandidatePairPtr>& pairs() { return pairs_; }
+    const std::vector<CandidatePairPtr>& pairs() const { return pairs_; }
     size_t size() const { return pairs_.size(); }
     bool empty() const { return pairs_.empty(); }
 
     // Set all Frozen to Waiting (initial unfreeze)
     void unfreezeAll() {
-        for (auto& p : pairs_) {
-            if (p.state == PairState::Frozen) {
-                p.state = PairState::Waiting;
+        for (auto p : pairs_) {
+            if (p->state == PairState::Frozen) {
+                p->state = PairState::Waiting;
             }
         }
     }
 
 private:
-    std::vector<CandidatePair> pairs_;
-    std::deque<CandidatePair> triggered_queue_;
+    std::vector<CandidatePairPtr> pairs_;
+    std::deque<CandidatePairPtr> triggered_queue_;
 };
 
 } // namespace ice
