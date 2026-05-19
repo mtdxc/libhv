@@ -4,6 +4,7 @@
 #include "../session/ice_session.h"
 #include "../turn/turn_client.h"
 #include "hloop.h"
+#include <algorithm>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -121,9 +122,7 @@ void IceAgent::stop() {
 
     // Cancel pending transactions
     for (auto& kv : transactions_) {
-        if (kv.second.timer) {
-            htimer_del(kv.second.timer);
-        }
+        delete kv.second; // ~StunTransaction() handles htimer_del
     }
     transactions_.clear();
 
@@ -159,8 +158,10 @@ int IceAgent::send(const void* data, size_t len, const struct sockaddr* addr, hi
         header[0] = (uint8_t)((len >> 8) & 0xFF);
         header[1] = (uint8_t)(len & 0xFF);
         hio_write(io, header, 2);
+        hio_write(io, data, len);
+    } else {
+        return hio_sendto(io, data, len, (struct sockaddr*)addr);
     }
-    return hio_sendto(io, data, len, (struct sockaddr*)addr);
 }
 
 void IceAgent::registerSession(const std::string& ufrag, IDataRecv* session) {
@@ -189,29 +190,68 @@ void IceAgent::unregisterPair(const sockaddr_u& addr) {
 
 void IceAgent::StunRequest(const StunMessage& req, const struct sockaddr* server, hio_t* io,
     std::function<void(StunMessage* resp, int code)> callback) {
-    auto msg = req.encode();
-    send(msg.data(), msg.size(), server, io);
+    auto encoded = req.encode();
+    send(encoded.data(), encoded.size(), server, io);
     if (callback) {
-        addTransaction(req.transactionId(), callback);
+        auto* txn = new StunTransaction();
+        txn->agent = this;
+        txn->id = req.transactionId();
+        txn->msg = std::move(encoded);
+        memcpy(&txn->destAddr, server, SOCKADDR_LEN(server));
+        txn->io = io;
+        txn->sentTime = hloop_now_ms(loop_->loop());
+        txn->rto = 100; // RFC 5389 initial RTO
+        txn->callback = callback;
+
+        // Start retransmission timer (one-shot, rescheduled on each retransmit)
+        // StunTransaction* itself is the htimer userdata
+        htimer_t* timer = htimer_add(loop_->loop(), [](htimer_t* t) {
+            auto* txn = (StunTransaction*)hevent_userdata(t);
+            if (txn && txn->agent) {
+                txn->agent->onStunRetransmit(txn);
+            }
+        }, txn->rto, 0);
+        hevent_set_userdata(timer, txn);
+        txn->timer = timer;
+
+        transactions_[txn->id] = txn;
     }
 }
 
-void IceAgent::addTransaction(const TransactionId& txnId, StunCallback callback) {
-    if (callback) {
-        StunTransaction txn;
-        txn.sentTime = hloop_now_ms(loop_->loop());
-        txn.callback = callback;
-        // Start retransmission timer
-        htimer_t* timer = htimer_add(loop_->loop(), [](htimer_t* t) {
-            IceAgent* self = (IceAgent*)hevent_userdata(t);
-            if (self) {
-                //self->onStunRequestTimeout(t);
-            }
-        }, txn.rto, 0);
-        hevent_set_userdata(timer, this);
-        txn.timer = timer;
-        transactions_[txnId] = txn;
+void IceAgent::onStunRetransmit(StunTransaction* txn) {
+    // Defensive: verify txn is still in map
+    auto it = transactions_.find(txn->id);
+    if (it == transactions_.end() || it->second != txn) return;
+
+    // Check if maximum retransmissions exceeded (RFC 5389 Section 7.2.1)
+    if (txn->retransmitCount >= StunTransaction::MAX_RETRANSMIT) {
+        // Transaction timed out — notify callback with error
+        if (txn->callback) {
+            txn->callback(nullptr, -1); // code=-1 indicates timeout
+        }
+        transactions_.erase(it);
+        delete txn; // ~StunTransaction() handles htimer_del
+        return;
     }
+
+    // Retransmit the STUN message
+    send(txn->msg.data(), txn->msg.size(), &txn->destAddr.sa, txn->io);
+    txn->retransmitCount++;
+
+    // Exponential backoff: RTO = min(RTO * 2, MAX_RTO)
+    txn->rto = (std::min)(txn->rto * 2, StunTransaction::MAX_RTO);
+
+    // Delete old timer and schedule a new one-shot timer
+    if (txn->timer) {
+        htimer_del(txn->timer);
+    }
+    txn->timer = htimer_add(loop_->loop(), [](htimer_t* t) {
+        auto* txn = (StunTransaction*)hevent_userdata(t);
+        if (txn && txn->agent) {
+            txn->agent->onStunRetransmit(txn);
+        }
+    }, txn->rto, 0);
+    hevent_set_userdata(txn->timer, txn);
 }
 
 void IceAgent::processStunMsg(const uint8_t* data, size_t len, const struct sockaddr* addr, hio_t* io) {
@@ -237,14 +277,12 @@ void IceAgent::processStunMsg(const uint8_t* data, size_t len, const struct sock
     } else { // stun响应
         auto it = transactions_.find(msg.transactionId());
         if (it != transactions_.end()) {
-            StunTransaction& txn = it->second;
-            if (txn.callback) {
-                txn.callback(&msg, 0);
-            }
-            if (txn.timer) {
-                htimer_del(txn.timer);
+            StunTransaction* txn = it->second;
+            if (txn->callback) {
+                txn->callback(&msg, 0);
             }
             transactions_.erase(it);
+            delete txn; // ~StunTransaction() handles htimer_del
         }
     }
 }

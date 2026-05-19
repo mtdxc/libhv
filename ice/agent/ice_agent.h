@@ -15,6 +15,7 @@
 namespace ice {
 class IceSession;
 class TurnClient;
+class IceAgent;
 // ICE Mode
 enum class IceMode {
     Full,
@@ -62,23 +63,35 @@ struct TcpIceConnection {
 
 // STUN Transaction for tracking requests
 using StunCallback = std::function<void(StunMessage* resp, int code)>;
+
 struct StunTransaction {
+    IceAgent* agent = nullptr;          // owning agent, also used as htimer userdata
     TransactionId id;
-    std::vector<uint8_t> msg;
+    std::vector<uint8_t> msg;           // encoded STUN message for retransmission
+    sockaddr_u destAddr;                 // destination address for retransmission
+    hio_t* io = nullptr;                 // IO handle for retransmission
     uint64_t sentTime = 0;               // ms
     int retransmitCount = 0;
-    uint32_t rto = 500;                  // Initial RTO ms
-    htimer_t* timer = nullptr;           // Retransmit timer
-    StunCallback callback; // Callback on response or timeout
+    uint32_t rto = 100;                  // Initial RTO ms (RFC 5389)
+    static constexpr int MAX_RETRANSMIT = 7; // RFC 5389 Section 7.2.1
+    static constexpr uint32_t MAX_RTO = 1600; // Cap RTO at 1.6s
+    htimer_t* timer = nullptr;           // Retransmit timer (userdata = this StunTransaction*)
+    StunCallback callback;               // Callback on response or timeout
+
+    ~StunTransaction() {
+        if (timer) {
+            htimer_del(timer);
+            timer = nullptr;
+        }
+    }
 };
 
 // IceAgent: Top-level API managing all ICE sessions and transport
 class IceAgent {
     // Transactions
-    std::map<TransactionId, StunTransaction> transactions_; // key: hex(transaction_id)
+    std::map<TransactionId, StunTransaction*> transactions_;
 public:
     void StunRequest(const StunMessage& msg, const struct sockaddr* server, hio_t* io, StunCallback callback);
-    void addTransaction(const TransactionId& id, StunCallback callback);
 
     // Create agent with optional external event loop
     // If loop is null, creates its own EventLoopThread
@@ -150,6 +163,9 @@ private:
     // UDP callbacks
     void onRecvPdu(const uint8_t* data, size_t len, const struct sockaddr* addr, hio_t* io);
     void processStunMsg(const uint8_t* data, size_t len, const struct sockaddr* addr, hio_t* io);
+
+    // STUN transaction retransmission
+    void onStunRetransmit(StunTransaction* txn);
 
     // TCP callbacks (static trampolines)
     static void onTcpAccept(hio_t* io);
