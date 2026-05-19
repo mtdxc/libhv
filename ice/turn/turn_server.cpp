@@ -8,6 +8,7 @@
 
 #include "hloop.h"
 #include "hbase.h"
+#include "md5.h"
 #include "htime.h"
 #include "hlog.h"
 #include "../stun/stun_auth.h"
@@ -323,8 +324,11 @@ bool TurnServer::authenticate(const StunMessage& msg,
         return false;
     }
 
-    // Verify MESSAGE-INTEGRITY using long-term key
-    if (!msg.verifyIntegrity(uit->second)) {
+    // Verify MESSAGE-INTEGRITY using long-term key: MD5(username:realm:password)
+    std::string raw = username + ":" + realm + ":" + uit->second;
+    char hex[33] = {0};
+    hv_md5_hex((unsigned char*)raw.data(), (unsigned int)raw.size(), hex, sizeof(hex));
+    if (!msg.verifyIntegrity(std::string(hex, 32))) {
         sendError(msg, STUN_ERROR_UNAUTHORIZED, "Bad credentials", from, io);
         return false;
     }
@@ -337,8 +341,13 @@ bool TurnServer::authenticate(const StunMessage& msg,
 }
 
 bool TurnServer::verifyLongTermAuth(const StunMessage& msg,
+                                    const std::string& username,
+                                    const std::string& realm,
                                     const std::string& password) const {
-    return msg.verifyIntegrity(password);
+    std::string raw = username + ":" + realm + ":" + password;
+    char hex[33] = {0};
+    hv_md5_hex((unsigned char*)raw.data(), (unsigned int)raw.size(), hex, sizeof(hex));
+    return msg.verifyIntegrity(std::string(hex, 32));
 }
 
 // ────────────────────────────────────────────────────────────

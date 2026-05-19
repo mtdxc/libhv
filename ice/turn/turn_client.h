@@ -91,6 +91,9 @@ private:
     void startRefreshTimer();
     void startPermissionRefreshTimer();
 
+    // RFC 5766 Section 10.2: long-term credential HMAC key = MD5(username:realm:password)
+    std::string longTermKey() const;
+
     hv::EventLoopPtr loop_;
     hio_t* io_ = nullptr;
     IceAgent* agent_;

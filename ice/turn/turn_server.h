@@ -120,6 +120,8 @@ private:
     static std::string generateNonce();
     // Verify long-term HMAC-SHA1 integrity
     bool verifyLongTermAuth(const StunMessage& msg,
+                            const std::string& username,
+                            const std::string& realm,
                             const std::string& password) const;
 
     // ---- Response helpers ----

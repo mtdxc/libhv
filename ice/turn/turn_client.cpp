@@ -1,6 +1,7 @@
 #include "turn_client.h"
 #include "../agent/ice_agent.h"
 #include "../stun/stun_auth.h"
+#include "md5.h"
 
 #include <sstream>
 #include <iomanip>
@@ -28,6 +29,15 @@ TurnClient::~TurnClient() {
         hio_close(io_);
     }
     agent_->unregisterPair(server_addr_);
+}
+
+// RFC 5766 Section 10.2: long-term credential HMAC key
+// key = MD5(username ":" realm ":" password) as 32-char lowercase hex string
+std::string TurnClient::longTermKey() const {
+    std::string raw = config_.username + ":" + realm_ + ":" + config_.password;
+    char hex[33] = {0};
+    hv_md5_hex((unsigned char*)raw.data(), (unsigned int)raw.size(), hex, sizeof(hex));
+    return std::string(hex, 32);
 }
 
 bool TurnClient::setConfig(const TurnServerConfig& config) {
@@ -90,13 +100,7 @@ void TurnClient::sendAllocateRequestWithAuth() {
     msg.addUsername(config_.username);
     msg.addRealm(realm_);
     msg.addNonce(nonce_);
-
-    // For long-term credentials, key = MD5(username:realm:password)
-    // Simplified: use password directly for HMAC
-    // In production, compute key = MD5(username + ":" + realm + ":" + password)
-    std::string key = config_.username + ":" + realm_ + ":" + config_.password;
-    // For simplicity, use password as HMAC key
-    msg.setAuth(config_.password);
+    msg.setAuth(longTermKey());
     std::weak_ptr<TurnClient> weakSelf = shared_from_this();
     agent_->StunRequest(msg, &server_addr_.sa, io_, [weakSelf](StunMessage* resp, int code) {
         auto self = weakSelf.lock();
@@ -129,7 +133,7 @@ void TurnClient::channelBind(const struct sockaddr* peerAddr, uint16_t channelNu
     msg.addUsername(config_.username);
     msg.addRealm(realm_);
     msg.addNonce(nonce_);
-    msg.setAuth(config_.password);
+    msg.setAuth(longTermKey());
 
     TurnChannelBinding binding;
     binding.channelNumber = channelNumber;
@@ -288,7 +292,7 @@ void TurnClient::refresh(uint32_t lifetime) {
     msg.addUsername(config_.username);
     msg.addRealm(realm_);
     msg.addNonce(nonce_);
-    msg.setAuth(config_.password);
+    msg.setAuth(longTermKey());
 
     std::weak_ptr<TurnClient> weakSelf = shared_from_this();
     agent_->StunRequest(msg, &server_addr_.sa, io_, [weakSelf](StunMessage* resp, int code) {
@@ -342,7 +346,7 @@ void TurnClient::createPermission(const struct sockaddr* peerAddr) {
     msg.addUsername(config_.username);
     msg.addRealm(realm_);
     msg.addNonce(nonce_);
-    msg.setAuth(config_.password);
+    msg.setAuth(longTermKey());
 
     std::weak_ptr<TurnClient> weakSelf = shared_from_this();
     sockaddr_u peerAddrU;
