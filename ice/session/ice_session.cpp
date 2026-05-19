@@ -59,9 +59,17 @@ void IceSession::close() {
         if (keepalive_timer_) {
             htimer_del(keepalive_timer_);
         }
+        if (gathering_timer_) {
+            htimer_del(gathering_timer_);
+        }
+        if (connectivity_timer_) {
+            htimer_del(connectivity_timer_);
+        }
     }
     check_timer_ = nullptr;
     keepalive_timer_ = nullptr;
+    gathering_timer_ = nullptr;
+    connectivity_timer_ = nullptr;
 
     // Unregister from agent
     if (agent_) {
@@ -151,6 +159,17 @@ void IceSession::gatherCandidates() {
     // If no STUN servers configured, gathering is complete
     if (pending_gathering_requests_ == 0) {
         onGatheringComplete();
+    } else {
+        // Start gathering timeout timer (RFC 8445: gathering should not hang forever)
+        int timeoutMs = config.gatheringTimeoutMs > 0 ? config.gatheringTimeoutMs : 10000;
+        gathering_timer_ = htimer_add(loop_->loop(), [](htimer_t* timer) {
+            IceSession* self = (IceSession*)hevent_userdata(timer);
+            if (self) {
+                self->gathering_timer_ = nullptr;
+                self->onGatheringComplete();
+            }
+        }, timeoutMs, 0);
+        hevent_set_userdata(gathering_timer_, this);
     }
 }
 
@@ -217,6 +236,12 @@ void IceSession::onGatheringResponse(const StunMessage& msg, const std::string& 
 
 void IceSession::onGatheringComplete() {
     if (state_ == IceState::Gathering) {
+        // Cancel gathering timeout timer
+        if (gathering_timer_) {
+            htimer_del(gathering_timer_);
+            gathering_timer_ = nullptr;
+        }
+
         // If remote credentials already set, start checking
         if (!remote_ufrag_.empty()) {
             formPairs();
@@ -265,6 +290,24 @@ void IceSession::startChecks() {
             if (self) self->onCheckTimer();
         }, check_interval_ms_, INFINITE);
         hevent_set_userdata(check_timer_, this);
+    }
+
+    // Start connectivity timeout timer
+    if (!connectivity_timer_ && agent_) {
+        int timeoutMs = agent_->config().connectivityTimeoutMs;
+        if (timeoutMs <= 0) timeoutMs = 30000;
+        connectivity_timer_ = htimer_add(loop_->loop(), [](htimer_t* timer) {
+            IceSession* self = (IceSession*)hevent_userdata(timer);
+            if (!self) return;
+            self->connectivity_timer_ = nullptr;
+            // Timeout: if not completed/connected, mark as failed
+            if (self->state_ == IceState::Checking || self->state_ == IceState::Connected) {
+                if (!self->selected_pair_) {
+                    self->setState(IceState::Failed);
+                }
+            }
+        }, timeoutMs, 0);
+        hevent_set_userdata(connectivity_timer_, this);
     }
 }
 
@@ -436,17 +479,42 @@ void IceSession::onStunRequest(StunMessage& msg, const struct sockaddr* from, hi
         // Peer-reflexive candidate discovery (RFC 8445 Section 7.3.1.3)
         IceCandidate prflxCandidate;
         prflxCandidate.type = CandidateType::PeerReflexive;
-        prflxCandidate.protocol = TransportProtocol::UDP;
+        // Determine protocol from the transport the request arrived on
+        prflxCandidate.protocol = (io && hio_type(io) == HIO_TYPE_TCP)
+                                  ? TransportProtocol::TCP
+                                  : TransportProtocol::UDP;
         prflxCandidate.componentId = 1;
         memcpy(&prflxCandidate.addr, from, SOCKADDR_LEN(from));
         prflxCandidate.priority = msg.getPriority();
         prflxCandidate.foundation = generateFoundation(prflxCandidate.type, prflxCandidate.addr, prflxCandidate.protocol);
         remote_candidates_.push_back(prflxCandidate);
 
-        // Create new pair
-        if (!local_candidates_.empty()) {
+        // Create new pair — find the local candidate whose base address
+        // matches the local address the request was received on
+        const IceCandidate* bestLocal = nullptr;
+        if (io) {
+            const sockaddr* localAddr = hio_localaddr(io);
+            for (const auto& lc : local_candidates_) {
+                if (lc.protocol != prflxCandidate.protocol) continue;
+                if (sockaddr_compare(&lc.baseAddr, (const sockaddr_u*)localAddr) == 0) {
+                    bestLocal = &lc;
+                    break;
+                }
+            }
+        }
+        if (!bestLocal && !local_candidates_.empty()) {
+            // Fallback: use first candidate of matching protocol
+            for (const auto& lc : local_candidates_) {
+                if (lc.protocol == prflxCandidate.protocol) {
+                    bestLocal = &lc;
+                    break;
+                }
+            }
+        }
+
+        if (bestLocal) {
             CandidatePairPtr newPair = std::make_shared<CandidatePair>();
-            newPair->local = local_candidates_[0]; // Use first local candidate
+            newPair->local = *bestLocal;
             newPair->remote = prflxCandidate;
             newPair->computePriority(role_);
             newPair->state = PairState::Waiting;
@@ -501,6 +569,12 @@ void IceSession::setSelectPair(CandidatePairPtr pair) {
     if (onSelectedPair) onSelectedPair(*selected_pair_);
     setState(IceState::Completed);
     startKeepalive();
+
+    // Cancel connectivity timeout timer since we have a selected pair
+    if (connectivity_timer_) {
+        htimer_del(connectivity_timer_);
+        connectivity_timer_ = nullptr;
+    }
 }
 
 void IceSession::onCheckFailure(CandidatePairPtr pair, uint16_t errorCode) {

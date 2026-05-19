@@ -91,6 +91,7 @@ class IceAgent {
     // Transactions
     std::map<TransactionId, StunTransaction*> transactions_;
 public:
+    // 当hio为nullptr，数据通过relay方式转发，否则通过hio指定的tcp或udp方式转发
     void StunRequest(const StunMessage& msg, const struct sockaddr* server, hio_t* io, StunCallback callback);
 
     // Create agent with optional external event loop
@@ -130,7 +131,7 @@ public:
 
     // ---- Transport APIs (used by IceSession) ----
     hio_t* udpIo() const { return udp_io_; }
-    // hio send(tcp or udp or relay)
+    // 当hio为nullptr，数据通过relay方式转发，否则通过hio指定的tcp或udp方式转发
     int send(const void* data, size_t len, const struct sockaddr* addr, hio_t* io);
 
     // TCP connect / send / close
