@@ -166,6 +166,8 @@ private:
     // Timers
     htimer_t* check_timer_ = nullptr;
     htimer_t* keepalive_timer_ = nullptr;
+    htimer_t* gathering_timer_ = nullptr;
+    htimer_t* connectivity_timer_ = nullptr;
     int check_interval_ms_ = 50; // Ta
 
 

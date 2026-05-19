@@ -158,7 +158,7 @@ int IceAgent::send(const void* data, size_t len, const struct sockaddr* addr, hi
         header[0] = (uint8_t)((len >> 8) & 0xFF);
         header[1] = (uint8_t)(len & 0xFF);
         hio_write(io, header, 2);
-        hio_write(io, data, len);
+        return hio_write(io, data, len);
     } else {
         return hio_sendto(io, data, len, (struct sockaddr*)addr);
     }
