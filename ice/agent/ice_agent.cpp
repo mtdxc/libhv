@@ -4,6 +4,7 @@
 #include "../session/ice_session.h"
 #include "../turn/turn_client.h"
 #include "hloop.h"
+#include "hlog.h"
 #include <algorithm>
 
 #ifdef _WIN32
@@ -83,7 +84,7 @@ int IceAgent::start() {
     if (loop_thread_ && !loop_thread_->isRunning()) {
         loop_thread_->start();
     }
-
+    hlogi("IceAgent start udpPort=%d tcpPort=%d", udp_port_, tcp_port_);
     running_ = true;
     return 0;
 }
@@ -91,7 +92,7 @@ int IceAgent::start() {
 void IceAgent::stop() {
     if (!running_) return;
     running_ = false;
-
+    hlogi("IceAgent stop with %zu sessions", sessions_.size());
     for (auto& session : sessions_) {
         session->close();
     }
@@ -225,6 +226,10 @@ void IceAgent::onStunRetransmit(StunTransaction* txn) {
 
     // Check if maximum retransmissions exceeded (RFC 5389 Section 7.2.1)
     if (txn->retransmitCount >= StunTransaction::MAX_RETRANSMIT) {
+        char destStr[SOCKADDR_STRLEN] = {0};
+        SOCKADDR_STR((struct sockaddr*)&txn->destAddr, destStr);
+        hlogi("IceAgent onStunRetransmit: transaction to %s timed out after %d retries",
+              destStr, txn->retransmitCount);
         // Transaction timed out — notify callback with error
         if (txn->callback) {
             txn->callback(nullptr, -1); // code=-1 indicates timeout
@@ -237,6 +242,7 @@ void IceAgent::onStunRetransmit(StunTransaction* txn) {
     // Retransmit the STUN message
     send(txn->msg.data(), txn->msg.size(), &txn->destAddr.sa, txn->io);
     txn->retransmitCount++;
+    hlogd("IceAgent onStunRetransmit: retransmit #%d rto=%u", txn->retransmitCount, txn->rto);
 
     // Exponential backoff: RTO = min(RTO * 2, MAX_RTO)
     txn->rto = (std::min)(txn->rto * 2, StunTransaction::MAX_RTO);
@@ -258,9 +264,13 @@ void IceAgent::processStunMsg(const uint8_t* data, size_t len, const struct sock
     StunMessage msg;
     if (!StunMessage::decode(data, len, &msg)) return;
 
-    if (msg.cls() == STUN_CLASS_REQUEST || msg.cls() == STUN_CLASS_INDICATION) 
+    char addrStr[SOCKADDR_STRLEN] = {0};
+    SOCKADDR_STR(addr, addrStr);
+
+    if (msg.cls() == STUN_CLASS_REQUEST || msg.cls() == STUN_CLASS_INDICATION)
     { // stun 请求
         if (msg.getUsername().empty()) {
+            hlogw("IceAgent processStunMsg: request from %s has no USERNAME, drop", addrStr);
             return ;
         }
         std::string ufrag, username = msg.getUsername();
@@ -271,18 +281,26 @@ void IceAgent::processStunMsg(const uint8_t* data, size_t len, const struct sock
         if (!ufrag.empty()) {
             auto it = ufrag_map_.find(ufrag);
             if (it != ufrag_map_.end() && it->second) {
+                hlogd("IceAgent processStunMsg: request from %s -> session ufrag=%s",
+                      addrStr, ufrag.c_str());
                 it->second->onStunRequest(msg, addr, io);
+            } else {
+                hlogw("IceAgent processStunMsg: request from %s ufrag=%s not found",
+                      addrStr, ufrag.c_str());
             }
         }
     } else { // stun响应
         auto it = transactions_.find(msg.transactionId());
         if (it != transactions_.end()) {
+            hlogd("IceAgent processStunMsg: response from %s matched transaction", addrStr);
             StunTransaction* txn = it->second;
             if (txn->callback) {
                 txn->callback(&msg, 0);
             }
             transactions_.erase(it);
             delete txn; // ~StunTransaction() handles htimer_del
+        } else {
+            hlogw("IceAgent processStunMsg: response from %s no matching transaction", addrStr);
         }
     }
 }
@@ -296,6 +314,10 @@ void IceAgent::onRecvPdu(const uint8_t* data, size_t len, const sockaddr* addr, 
         auto it = pair_map_.find(*(sockaddr_u*)addr);
         if (it != pair_map_.end()) {
             it->second->onRecvData(data, len, addr);
+        } else {
+            char addrStr[SOCKADDR_STRLEN] = {0};
+            SOCKADDR_STR(addr, addrStr);
+            hlogw("IceAgent onRecvPdu: no session for data packet from %s len=%zu", addrStr, len);
         }
     }
 }
@@ -446,16 +468,21 @@ void IceAgent::handleTcpRecv(hio_t* io, const uint8_t* data, size_t len) {
 void IceAgent::identifyTcpConnection(hio_t* io, const uint8_t* data, size_t len) {
     PacketType ptype = classifyPacket(data, len);
     if (ptype != PacketType::STUN) {
+        hlogw("IceAgent identifyTcpConnection: first packet is not STUN, close io");
         hio_close(io);
         return;
     }
     if (len < 20) return;
 
     std::string local_ufrag = extractLocalUfrag(data, len);
-    if (local_ufrag.empty()) return;
+    if (local_ufrag.empty()) {
+        hlogw("IceAgent identifyTcpConnection: cannot extract ufrag, close io");
+        return;
+    }
 
     auto sit = ufrag_map_.find(local_ufrag);
     if (sit == ufrag_map_.end() || !sit->second) {
+        hlogw("IceAgent identifyTcpConnection: ufrag=%s not found, close io", local_ufrag.c_str());
         hio_close(io);
         return;
     }
@@ -466,6 +493,10 @@ void IceAgent::identifyTcpConnection(hio_t* io, const uint8_t* data, size_t len)
         it->second.session = sit->second;
         it->second.ufrag = local_ufrag;
         it->second.identified = true;
+        char peerStr[SOCKADDR_STRLEN] = {0};
+        SOCKADDR_STR(hio_peeraddr(io), peerStr);
+        hlogi("IceAgent identifyTcpConnection: io=%u peer=%s identified -> session ufrag=%s",
+              id, peerStr, local_ufrag.c_str());
     }
 }
 
@@ -484,13 +515,13 @@ void IceAgent::addHostCandidates(IceSession* session, int componentId) {
 
             for (auto ua = adapter->FirstUnicastAddress; ua; ua = ua->Next) {
                 struct sockaddr* sa = ua->Address.lpSockaddr;
-                if (sa->sa_family != AF_INET && sa->sa_family != AF_INET6) 
+                if (sa->sa_family != AF_INET && sa->sa_family != AF_INET6)
                     continue;
 
                 // Skip link-local IPv6
                 if (sa->sa_family == AF_INET6) {
                     struct sockaddr_in6* sin6 = (struct sockaddr_in6*)sa;
-                    if (IN6_IS_ADDR_LINKLOCAL(&sin6->sin6_addr)) 
+                    if (IN6_IS_ADDR_LINKLOCAL(&sin6->sin6_addr))
                         continue;
                 }
                 IceCandidate cand;
@@ -614,7 +645,7 @@ void IceAgent::createTurnPermission(const struct sockaddr* peerAddr) {
 
 void IceAgent::allocateTurn() {
     if (turn_client_) return; // Already created
-    
+
     if (config_.turnServers.empty()) return;
 
     for (const auto& server : config_.turnServers) {

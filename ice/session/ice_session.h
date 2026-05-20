@@ -51,7 +51,8 @@ public:
     IceRole role() const { return role_; }
     void setNomination(NominationMode mode) { nomination_ = mode; }
     void setTiebreaker(uint64_t tb) { tiebreaker_ = tb; }
-
+    const char* id() const { return local_ufrag_.c_str(); }
+    
     // Credentials
     std::string localUfrag() const { return local_ufrag_; }
     std::string localPwd() const { return local_pwd_; }

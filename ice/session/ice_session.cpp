@@ -3,9 +3,11 @@
 #include "../stun/stun_auth.h"
 #include "../turn/turn_client.h"
 #include "hloop.h"
+#include "hlog.h"
 
 #include <cstdlib>
 #include <ctime>
+#include <cinttypes>
 #include <memory>
 #include <sstream>
 #include <iomanip>
@@ -40,6 +42,7 @@ IceSession::IceSession(IceMode mode, IceAgent* agent, hv::EventLoopPtr loop)
     local_ufrag_ = randomString(8);
     local_pwd_ = randomString(24);
     tiebreaker_ = ((uint64_t)rand() << 32) | rand();
+    hlogi("IceSession %s created, local_pwd=%s, tiebreaker=%llu", id(), local_pwd_.c_str(), tiebreaker_);
 }
 
 IceSession::~IceSession() {
@@ -48,6 +51,8 @@ IceSession::~IceSession() {
 
 void IceSession::close() {
     if (state_ == IceState::Closed) return;
+    hlogi("IceSession %s closed", id());
+
     setState(IceState::Closed);
 
     // Kill timers (only if the loop is still valid)
@@ -79,6 +84,7 @@ void IceSession::close() {
 
 void IceSession::setState(IceState state) {
     if (state_ == state) return;
+    hlogi("IceSession %s state changed from %s to %s", id(), iceStateString(state_), iceStateString(state));
     state_ = state;
     if (onStateChange) {
         onStateChange(state);
@@ -86,11 +92,13 @@ void IceSession::setState(IceState state) {
 }
 
 void IceSession::setRemoteCredentials(const std::string& ufrag, const std::string& pwd) {
+    hlogi("IceSession %s setRemoteCredentials %s/%s", id(), ufrag.c_str(), pwd.c_str());
     remote_ufrag_ = ufrag;
     remote_pwd_ = pwd;
 }
 
 void IceSession::addLocalCandidate(const IceCandidate& candidate) {
+    hlogi("IceSession %s addLocalCandidate %s", id(), candidate.toSdp().c_str());
     local_candidates_.push_back(candidate);
     if (onLocalCandidate) {
         onLocalCandidate(candidate);
@@ -98,10 +106,12 @@ void IceSession::addLocalCandidate(const IceCandidate& candidate) {
 }
 
 void IceSession::addRemoteCandidate(const IceCandidate& candidate) {
+    hlogi("IceSession %s addRemoteCandidate %s", id(), candidate.toSdp().c_str());
     remote_candidates_.push_back(candidate);
 
     // If already checking, form new pairs with this candidate
     if (state_ == IceState::Checking || state_ == IceState::Connected) {
+        int newPairs = 0;
         for (const auto& local : local_candidates_) {
             // Only pair same protocol and same component
             if (local.protocol != candidate.protocol) continue;
@@ -114,16 +124,25 @@ void IceSession::addRemoteCandidate(const IceCandidate& candidate) {
             pair->computePriority(role_);
             pair->state = PairState::Waiting; // New pairs start as Waiting (trickle)
             checklist_.addPair(pair);
+            hlogi("IceSession %s addRemoteCandidate new pair %s",
+                  local_ufrag_.c_str(), pair->toString().c_str());
+            ++newPairs;
         }
         checklist_.sort();
+        if (newPairs > 0) {
+            hlogi("IceSession %s addRemoteCandidate formed %d new pairs (trickle)",
+                  local_ufrag_.c_str(), newPairs);
+        }
     }
 }
 
 void IceSession::setRemoteCandidatesDone() {
+    hlogi("IceSession %s setRemoteCandidatesDone", id());
     remote_candidates_done_ = true;
 }
 
 void IceSession::gatherCandidates() {
+    hlogi("IceSession %s gatherCandidates", id());
     if (state_ != IceState::New) return;
     if (!agent_) return;
     setState(IceState::Gathering);
@@ -174,6 +193,7 @@ void IceSession::gatherCandidates() {
 }
 
 void IceSession::onTurnStateChanged(TurnState state) {
+    hlogi("IceSession %s onTurnStateChanged %s", id(), turnStateToString(state));
     if (state_ != IceState::Gathering) return;
 
     if (state == TurnState::Allocated) {
@@ -195,6 +215,7 @@ void IceSession::onTurnStateChanged(TurnState state) {
 void IceSession::sendStunBindingRequest(const struct sockaddr* server, const std::string& serverStr) {
     StunMessage msg(STUN_METHOD_BINDING, STUN_CLASS_REQUEST);
     std::weak_ptr<IceSession> weak_self = shared_from_this();
+    hlogi("IceSession %s sendStunBindingRequest to %s", id(), serverStr.c_str());
     agent_->StunRequest(msg, server, agent_->udpIo(), [weak_self, serverStr](StunMessage* resp, int code) {
         if (auto self = weak_self.lock()) {
             if (resp) {
@@ -217,6 +238,7 @@ void IceSession::onGatheringResponse(const StunMessage& msg, const std::string& 
             return;
         }
     }
+    hlogi("IceSession %s onGatheringResponse from %s", id(), serverAddr.c_str());
 
     // Create srflx candidate
     IceCandidate cand;
@@ -254,6 +276,7 @@ void IceSession::onGatheringComplete() {
 
 void IceSession::formPairs() {
     checklist_ = IceCheckList(); // Reset
+    int pairCount = 0;
     for (const auto& local : local_candidates_) {
         for (const auto& remote : remote_candidates_) {
             // Only pair same protocol, component, and address family
@@ -266,10 +289,16 @@ void IceSession::formPairs() {
             pair->remote = remote;
             pair->computePriority(role_);
             checklist_.addPair(pair);
+            hlogi("IceSession %s formPairs [%d] %s priority=%" PRIu64,
+                  local_ufrag_.c_str(), pairCount, pair->toString().c_str(), pair->priority);
+            ++pairCount;
         }
     }
     checklist_.sort();
     checklist_.unfreezeAll();
+    hlogi("IceSession %s formPairs total=%d local_cands=%zu remote_cands=%zu",
+          local_ufrag_.c_str(), pairCount,
+          local_candidates_.size(), remote_candidates_.size());
 }
 
 void IceSession::startChecks() {
@@ -303,6 +332,7 @@ void IceSession::startChecks() {
             // Timeout: if not completed/connected, mark as failed
             if (self->state_ == IceState::Checking || self->state_ == IceState::Connected) {
                 if (!self->selected_pair_) {
+                    hlogi("IceSession %s onCheckTimer timeout", self->local_ufrag_.c_str());
                     self->setState(IceState::Failed);
                 }
             }
@@ -340,11 +370,13 @@ void IceSession::sendConnectivityCheck(CandidatePairPtr pair) {
     msg.addPriority(priority);
 
     // ICE-CONTROLLING or ICE-CONTROLLED
+    bool useCandidate = false;
     if (role_ == IceRole::Controlling) {
         msg.addIceControlling(tiebreaker_);
         // Nomination
         if (nomination_ == NominationMode::Aggressive || pair->nominated) {
             msg.addUseCandidate();
+            useCandidate = true;
         }
     } else {
         msg.addIceControlled(tiebreaker_);
@@ -367,10 +399,14 @@ void IceSession::sendConnectivityCheck(CandidatePairPtr pair) {
             if (agent_) {
                 agent_->connectTcp(&pair->remote.addr.sa, this);
             }
+            hlogi("IceSession %s sendConnectivityCheck %s: initiating TCP connection",
+                  local_ufrag_.c_str(), pair->toString().c_str());
             return; // Will retry after connection established
         } else {
             // active-active or unsupported TCP type: cannot establish connection
             pair->state = PairState::Failed;
+            hlogi("IceSession %s sendConnectivityCheck %s: unsupported TCP type, mark failed",
+                  local_ufrag_.c_str(), pair->toString().c_str());
             return;
         }
     }
@@ -379,6 +415,10 @@ void IceSession::sendConnectivityCheck(CandidatePairPtr pair) {
     pair->transactionId = msg.transactionId();
     pair->lastSendTime = hloop_now_ms(loop_->loop());
     pair->state = PairState::InProgress;
+
+    hlogi("IceSession %s sendConnectivityCheck %s role=%s useCandidate=%d nominated=%d",
+          local_ufrag_.c_str(), pair->toString().c_str(),
+          iceRoleString(role_), (int)useCandidate, (int)pair->nominated);
 
     std::weak_ptr<IceSession> weak_self = shared_from_this();
     agent_->StunRequest(msg, &pair->remote.addr.sa, io, [weak_self, this, pair](StunMessage* resp, int code) {
@@ -417,6 +457,11 @@ void IceSession::onRecvData(const uint8_t* data, size_t len, const struct sockad
 
 void IceSession::onStunRequest(StunMessage& msg, const struct sockaddr* from, hio_t* io) {
     if (msg.method() != STUN_METHOD_BINDING) return;
+
+    char fromStr[SOCKADDR_STRLEN] = {0};
+    SOCKADDR_STR(from, fromStr);
+    hlogi("IceSession %s onStunRequest from=%s useCandidate=%d",
+          local_ufrag_.c_str(), fromStr, (int)msg.hasUseCandidate());
 
     // Verify MESSAGE-INTEGRITY with local password
     if (!msg.verifyIntegrity(local_pwd_)) {
@@ -469,10 +514,15 @@ void IceSession::onStunRequest(StunMessage& msg, const struct sockaddr* from, hi
             // Already succeeded
             if (useCandidate && role_ == IceRole::Controlled) {
                 matchedPair->nominated = true;
+                hlogi("IceSession %s onStunRequest USE-CANDIDATE, select pair %s",
+                      local_ufrag_.c_str(), matchedPair->toString().c_str());
                 setSelectPair(matchedPair);
             }
         } else if (matchedPair->state != PairState::InProgress) {
             // Trigger check
+            hlogi("IceSession %s onStunRequest triggered check for pair %s state=%s",
+                  local_ufrag_.c_str(), matchedPair->toString().c_str(),
+                  pairStateString(matchedPair->state));
             checklist_.addTriggeredCheck(matchedPair);
         }
     } else {
@@ -488,6 +538,8 @@ void IceSession::onStunRequest(StunMessage& msg, const struct sockaddr* from, hi
         prflxCandidate.priority = msg.getPriority();
         prflxCandidate.foundation = generateFoundation(prflxCandidate.type, prflxCandidate.addr, prflxCandidate.protocol);
         remote_candidates_.push_back(prflxCandidate);
+        hlogi("IceSession %s onStunRequest discovered peer-reflexive candidate %s",
+              local_ufrag_.c_str(), prflxCandidate.addrString().c_str());
 
         // Create new pair — find the local candidate whose base address
         // matches the local address the request was received on
@@ -520,6 +572,8 @@ void IceSession::onStunRequest(StunMessage& msg, const struct sockaddr* from, hi
             newPair->state = PairState::Waiting;
             checklist_.addPair(newPair);
             checklist_.addTriggeredCheck(newPair);
+            hlogi("IceSession %s onStunRequest created prflx pair %s, triggered check",
+                  local_ufrag_.c_str(), newPair->toString().c_str());
         }
     }
 
@@ -535,6 +589,9 @@ void IceSession::onStunRequest(StunMessage& msg, const struct sockaddr* from, hi
 void IceSession::onCheckSuccess(CandidatePairPtr pair, const StunMessage& response) {
     pair->state = PairState::Succeeded;
     pair->valid = true;
+
+    hlogi("IceSession %s onCheckSuccess %s nominated=%d",
+          local_ufrag_.c_str(), pair->toString().c_str(), (int)pair->nominated);
 
     // Register the valid pair for data routing
     if (agent_) {
@@ -565,7 +622,10 @@ void IceSession::onCheckSuccess(CandidatePairPtr pair, const StunMessage& respon
 }
 
 void IceSession::setSelectPair(CandidatePairPtr pair) {
-    selected_pair_ = pair;
+    if (selected_pair_ != pair) {
+        selected_pair_ = pair;
+        hlogi("IceSession %s setSelectPair %s", id(), pair->toString().c_str());
+    }
     if (onSelectedPair) onSelectedPair(*selected_pair_);
     setState(IceState::Completed);
     startKeepalive();
@@ -579,6 +639,7 @@ void IceSession::setSelectPair(CandidatePairPtr pair) {
 
 void IceSession::onCheckFailure(CandidatePairPtr pair, uint16_t errorCode) {
     pair->state = PairState::Failed;
+    hlogi("IceSession %s onCheckFailure %s", id(), pair->toString().c_str());
 
     if (checklist_.allFailed()) {
         setState(IceState::Failed);
@@ -586,6 +647,7 @@ void IceSession::onCheckFailure(CandidatePairPtr pair, uint16_t errorCode) {
 }
 
 void IceSession::nominate(CandidatePairPtr pair) {
+    hlogi("IceSession %s nominate %s", id(), pair->toString().c_str());
     pair->nominated = true;
     // Send another connectivity check with USE-CANDIDATE
     pair->state = PairState::InProgress;
@@ -606,6 +668,7 @@ void IceSession::handleRoleConflict(bool switchToControlling) {
     } else {
         role_ = IceRole::Controlled;
     }
+    hlogi("IceSession %s handleRoleConflict %s", id(), iceRoleString(role_));
     // Recompute pair priorities
     for (auto& pair : checklist_.pairs()) {
         pair->computePriority(role_);
@@ -656,10 +719,15 @@ int IceSession::send(const void* data, size_t len) {
 void IceSession::onTcpConnected(hio_t* io) {
     // Associate TCP connection with the matching pair
     sockaddr_u* peeraddr = (sockaddr_u*)hio_peeraddr(io);
+    char peerStr[SOCKADDR_STRLEN] = {0};
+    SOCKADDR_STR((struct sockaddr*)peeraddr, peerStr);
+    hlogi("IceSession %s onTcpConnected peer=%s", id(), peerStr);
     for (auto& pair : checklist_.pairs()) {
         if (pair->local.protocol == TransportProtocol::TCP &&
             sockaddr_compare(&pair->remote.addr, peeraddr) == 0) {
             pair->io = io;
+            hlogi("IceSession %s onTcpConnected matched pair %s, sending check",
+                  local_ufrag_.c_str(), pair->toString().c_str());
             // Now send the connectivity check
             sendConnectivityCheck(pair);
             break;
@@ -671,6 +739,9 @@ void IceSession::onTcpDisconnected(hio_t* io) {
     // Mark associated pairs as failed
     for (auto& pair : checklist_.pairs()) {
         if (pair->io == io) {
+            hlogi("IceSession %s onTcpDisconnected pair=%s state=%s",
+                  local_ufrag_.c_str(), pair->toString().c_str(),
+                  pairStateString(pair->state));
             pair->io = nullptr;
             if (pair->state == PairState::InProgress) {
                 pair->state = PairState::Failed;
