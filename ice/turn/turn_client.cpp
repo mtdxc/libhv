@@ -1,5 +1,4 @@
 #include "turn_client.h"
-#include "../agent/ice_agent.h"
 #include "../stun/stun_auth.h"
 #include "hlog.h"
 #include "md5.h"
@@ -10,7 +9,7 @@
 
 namespace ice {
 
-const char* turnStateToString(TurnState state){
+const char* turnStateToString(TurnState state) {
     switch (state) {
         case TurnState::Idle: return "Idle";
         case TurnState::Allocating: return "Allocating";
@@ -21,9 +20,8 @@ const char* turnStateToString(TurnState state){
     }
 }
 
-TurnClient::TurnClient(hv::EventLoopPtr loop, IceAgent* transport)
-    : loop_(loop), agent_(transport) {
-    memset(&server_addr_, 0, sizeof(server_addr_));
+TurnClient::TurnClient(hv::EventLoopPtr loop, const TurnServerConfig& config)
+    : loop_(loop), config_(config) {
     memset(&relay_addr_, 0, sizeof(relay_addr_));
     memset(&srflx_addr_, 0, sizeof(srflx_addr_));
 }
@@ -37,10 +35,14 @@ TurnClient::~TurnClient() {
         htimer_del(permission_timer_);
         permission_timer_ = nullptr;
     }
-    if (io_!=agent_->udpIo()) {
+    if (io_) {
         hio_close(io_);
+        io_ = nullptr;
     }
-    agent_->unregisterPair(server_addr_);
+}
+
+const char* TurnClient::id() const {
+    return config_.addr.host.c_str();
 }
 
 // RFC 5766 Section 10.2: long-term credential HMAC key
@@ -52,112 +54,160 @@ std::string TurnClient::longTermKey() const {
     return std::string((char*)hex, sizeof(hex));
 }
 
-bool TurnClient::setConfig(const TurnServerConfig& config) {
-    config_ = config;
-    int ret = 0 == sockaddr_set_ipport(&server_addr_, config_.addr.host.c_str(), config_.addr.port);
-    if (ret) {
-        char addrStr[SOCKADDR_STRLEN] = {0};
-        SOCKADDR_STR((struct sockaddr*)&server_addr_, addrStr);
-        hlogi("TurnClient: configured server=%s user=%s proto=%s",
-              addrStr, config_.username.c_str(),
-              config_.protocol == TurnServerConfig::UDP ? "UDP" : "TCP");
-    } else {
-        hloge("TurnClient: failed to parse server address %s:%d",
-              config_.addr.host.c_str(), config_.addr.port);
-    }
-    return ret;
-}
-
 void TurnClient::setState(TurnState s, const char* reason) {
     if (state_ == s) return;
-    hlogi("TurnClient setState %s reason %s", turnStateToString(s), reason);
+    hlogi("TurnClient %s setState %s reason %s", id(), turnStateToString(s), reason);
     state_ = s;
     if (onStateChange) onStateChange(state_);
 }
 
+void TurnClient::onTcpRecv(const void* data, int len) {
+    tcp_buff_.append((const char*)data, len);
+    len = tcp_buff_.length();
+    auto p = (const uint8_t*)tcp_buff_.data();
+    while (len >= 4) {
+        int padding = 0;
+        int plen = TurnTcpLength(p, len, &padding);
+        if (plen + padding > len) {
+            break;
+        }
+        onRecvPdu(p, plen);
+        p = p + plen + padding;
+        len = len - plen - padding;
+    }
+    if (len != tcp_buff_.length()) {
+        if (len) {
+            memcpy(&tcp_buff_[0], p, len);
+        }
+        tcp_buff_.resize(len);
+    }
+}
+
+void TurnClient::onTcpConnected(hio_t* io) {
+    io_ = io;
+    hlogi("TurnClient %s TCP connected, sending AllocateRequest", id());
+    sendAllocateRequest();
+    hio_read(io);
+}
+
+void TurnClient::onTcpDisconnected(hio_t* io) {
+    if (io == io_) {
+        hlogi("TurnClient %s TCP disconnected", id());
+        io_ = nullptr;
+        tcp_buff_.clear();
+        // Reconnect on disconnect
+        if (state_ != TurnState::Idle && state_ != TurnState::Failed) {
+            hlogi("TurnClient %s reconnecting to TURN server", id());
+            connectTcp();
+        }
+    }
+}
+
+int TurnClient::connectTcp() {
+    hloop_t* loop = loop_->loop();
+    if (!loop) return -1;
+
+    hio_t* io = hio_create_socket(loop, config_.addr.host.c_str(), config_.addr.port, HIO_TYPE_TCP, HIO_CLIENT_SIDE);
+    if (!io) return -1;
+
+    hevent_set_userdata(io, this);
+    hio_setcb_connect(io, [](hio_t* io) { 
+      auto cli = (TurnClient*)hevent_userdata(io); 
+      if (cli) cli->onTcpConnected(io);
+    });
+    hio_setcb_read(io, [](hio_t* io, void* buf, int readbytes) {
+        auto cli = (TurnClient*)hevent_userdata(io);
+        if (cli) cli->onTcpRecv(buf, readbytes);
+    });
+    hio_setcb_close(io, [](hio_t* io) {
+        auto cli = (TurnClient*)hevent_userdata(io);
+        if (cli) cli->onTcpDisconnected(io);
+    });
+    hio_connect(io);
+
+    return hio_id(io);
+}
+
 void TurnClient::allocate() {
     if (state_ != TurnState::Idle && state_ != TurnState::Failed) {
-        hlogw("TurnClient: allocate called in invalid state %s", turnStateToString(state_));
+        hlogw("TurnClient %s allocate called in invalid state %s", id(), turnStateToString(state_));
         return;
     }
 
     setState(TurnState::Allocating, "allocate");
 
     if (config_.protocol == TurnServerConfig::UDP){
-        io_ = agent_->udpIo();
-        agent_->registerPair(server_addr_, this);
+        io_ = hio_create_socket(loop_->loop(), config_.addr.host.c_str(), config_.addr.port, HIO_TYPE_UDP, HIO_CLIENT_SIDE);
+        if (io_) {
+            hevent_set_userdata(io_, this);
+            hio_setcb_read(io_, [](hio_t* io, void* buf, int readbytes) {
+                auto cli = (TurnClient*)hevent_userdata(io);
+                if (cli) cli->onRecvPdu((const uint8_t*)buf, readbytes);
+            });
+            hio_read(io_);
+        }
         sendAllocateRequest();
     }
     else {
-        agent_->connectTcp(&server_addr_.sa, this);
-    }
-}
-
-void TurnClient::onTcpConnected(hio_t* io) {
-    io_ = io;
-    hlogi("TurnClient: TCP connected, sending AllocateRequest");
-    sendAllocateRequest();
-}
-
-void TurnClient::onTcpDisconnected(hio_t* io) {
-    if (io == io_) {
-        hlogi("TurnClient: TCP disconnected");
-        io_ = nullptr;
-        // Reconnect on disconnect
-        if (state_ != TurnState::Idle && state_ != TurnState::Failed) {
-            hlogi("TurnClient: reconnecting to TURN server");
-            agent_->connectTcp(&server_addr_.sa, this);
-        }
+        connectTcp();
     }
 }
 
 void TurnClient::sendAllocateRequest() {
-    if(!io_) {
-        hlogw("TurnClient: sendAllocateRequest called but no io_");
+    if (!io_) {
+        hlogw("TurnClient %s sendAllocateRequest without io_", id());
         return;
     }
-    hlogi("TurnClient: sending AllocateRequest (without auth)");
+    hlogi("TurnClient %s sending AllocateRequest (without auth)", id());
     StunMessage msg(TURN_METHOD_ALLOCATE, STUN_CLASS_REQUEST);
     msg.addRequestedTransport(17); // UDP = 17
     msg.addLifetime(lifetime_);
 
-    std::weak_ptr<TurnClient> weakSelf = shared_from_this();
-    agent_->StunRequest(msg, &server_addr_.sa, io_, [weakSelf](StunMessage* resp, int code) {
-        auto self = weakSelf.lock();
-        if (resp && self) {
-            if(resp->cls() == STUN_CLASS_SUCCESS_RESPONSE) {
-                self->handleAllocateResponse(*resp);
-            } else {
-                self->handleAllocateError(*resp);
-            }
-        }
-    });
+    auto buf = msg.encode(); // First request without auth
+    hio_write(io_, buf.data(), buf.size());
 }
 
 void TurnClient::sendAllocateRequestWithAuth() {
-    hlogi("TurnClient: sending AllocateRequest with auth user=%s realm=%s",
-          config_.username.c_str(), realm_.c_str());
+    hlogi("TurnClient %s sending AllocateRequest with auth user=%s realm=%s",
+          id(), config_.username.c_str(), realm_.c_str());
     StunMessage msg(TURN_METHOD_ALLOCATE, STUN_CLASS_REQUEST);
     msg.addRequestedTransport(17);
     msg.addLifetime(lifetime_);
     msg.addUsername(config_.username);
     msg.addRealm(realm_);
     msg.addNonce(nonce_);
-    msg.setAuth(longTermKey());
-    std::weak_ptr<TurnClient> weakSelf = shared_from_this();
-    agent_->StunRequest(msg, &server_addr_.sa, io_, [weakSelf](StunMessage* resp, int code) {
-        auto self = weakSelf.lock();
-        if (resp && self) {
-            if(resp->cls() == STUN_CLASS_SUCCESS_RESPONSE) {
-                self->handleAllocateResponse(*resp);
-            } else {
-                uint16_t code = 0;
-                std::string reason;
-                resp->getErrorCode(&code, &reason);
-                self->setState(TurnState::Failed, reason.c_str());
-            }
+
+    auto buf = msg.encodeWithAuth(longTermKey());
+    hio_write(io_, buf.data(), buf.size());
+}
+
+void TurnClient::refresh(uint32_t lifetime) {
+    if (state_ != TurnState::Allocated || !io_) return;
+
+    hlogi("TurnClient %s refreshing allocation lifetime=%u", id(), lifetime);
+    StunMessage msg(TURN_METHOD_REFRESH, STUN_CLASS_REQUEST);
+    msg.addLifetime(lifetime);
+    msg.addUsername(config_.username);
+    msg.addRealm(realm_);
+    msg.addNonce(nonce_);
+
+    auto buf = msg.encodeWithAuth(longTermKey());
+    hio_write(io_, buf.data(), buf.size());
+}
+
+void TurnClient::handleRefreshResponse(const StunMessage& msg){
+    if (msg.cls() == STUN_CLASS_SUCCESS_RESPONSE) {
+        uint32_t newLifetime = msg.getLifetime();
+        if (newLifetime > 0) {
+            lifetime_ = newLifetime;
         }
-    });
+        hlogi("TurnClient %s refresh success new lifetime=%u", id(), lifetime_);
+    } else {
+        uint16_t errCode = 0;
+        std::string reason;
+        msg.getErrorCode(&errCode, &reason);
+        hlogw("TurnClient %s refresh error code=%d reason=%s", id(), errCode, reason.c_str());
+    }
 }
 
 void TurnClient::deallocate() {
@@ -169,13 +219,35 @@ void TurnClient::deallocate() {
     }
 }
 
+void TurnClient::createPermission(const struct sockaddr* peerAddr) {
+    if (state_ != TurnState::Allocated || !io_) return;
+
+    char peerStr[SOCKADDR_STRLEN] = {0};
+    SOCKADDR_STR(peerAddr, peerStr);
+    hlogi("TurnClient %s createPermission peer=%s", id(), peerStr);
+
+    StunMessage msg(TURN_METHOD_CREATE_PERMISSION, STUN_CLASS_REQUEST);
+    msg.addXorPeerAddress(peerAddr);
+    msg.addUsername(config_.username);
+    msg.addRealm(realm_);
+    msg.addNonce(nonce_);
+
+    auto buf = msg.encodeWithAuth(longTermKey());
+    hio_write(io_, buf.data(), buf.size());
+
+    sockaddr_u peerAddrU;
+    memcpy(&peerAddrU, peerAddr, SOCKADDR_LEN(peerAddr));
+    // Add to permissions list
+    permissions_[peerAddrU] = hloop_now_ms(loop_->loop()) + 300000;
+}
+
 void TurnClient::channelBind(const struct sockaddr* peerAddr, uint16_t channelNumber) {
     if (state_ != TurnState::Allocated || !io_) return;
     if (channelNumber < 0x4000 || channelNumber > 0x7FFE) return;
 
     char peerStr[SOCKADDR_STRLEN] = {0};
     SOCKADDR_STR(peerAddr, peerStr);
-    hlogi("TurnClient: channelBind channel=0x%04x peer=%s", channelNumber, peerStr);
+    hlogi("TurnClient %s channelBind channel=0x%04x peer=%s", id(), channelNumber, peerStr);
 
     StunMessage msg(TURN_METHOD_CHANNEL_BIND, STUN_CLASS_REQUEST);
     msg.addChannelNumber(channelNumber);
@@ -183,29 +255,15 @@ void TurnClient::channelBind(const struct sockaddr* peerAddr, uint16_t channelNu
     msg.addUsername(config_.username);
     msg.addRealm(realm_);
     msg.addNonce(nonce_);
-    msg.setAuth(longTermKey());
+
+    auto buf = msg.encodeWithAuth(longTermKey());
+    hio_write(io_, buf.data(), buf.size());
 
     TurnChannelBinding binding;
     binding.channelNumber = channelNumber;
     memcpy(&binding.peerAddr, peerAddr, SOCKADDR_LEN(peerAddr));
-    binding.expireTime = hloop_now_ms(loop_->loop()) + 600000;
-    // 10 min
-    std::weak_ptr<TurnClient> weakSelf = shared_from_this();
-    agent_->StunRequest(msg, &server_addr_.sa, io_, [=](StunMessage* resp, int code) {
-        auto self = weakSelf.lock();
-        if (resp && self) {
-            if (resp->cls() == STUN_CLASS_SUCCESS_RESPONSE) {
-                self->channels_[channelNumber] = binding;
-                hlogi("TurnClient: channelBind success channel=0x%04x", channelNumber);
-            } else if (resp->cls() == STUN_CLASS_ERROR_RESPONSE) {
-                uint16_t errCode = 0;
-                std::string reason;
-                resp->getErrorCode(&errCode, &reason);
-                hlogw("TurnClient: channelBind failed channel=0x%04x code=%d reason=%s",
-                      channelNumber, errCode, reason.c_str());
-            }
-        }
-    });
+    binding.expireTime = hloop_now_ms(loop_->loop()) + 600000; // 10 min
+    channels_[channelNumber] = binding;
 }
 
 int TurnClient::sendData(const void* data, size_t len, const struct sockaddr* peerAddr) {
@@ -224,7 +282,7 @@ int TurnClient::sendData(const void* data, size_t len, const struct sockaddr* pe
     msg.addData(data, len);
 
     auto buf = msg.encode(); // Indications don't need auth
-    return agent_->send(buf.data(), buf.size(), &server_addr_.sa, io_);
+    return hio_write(io_, buf.data(), buf.size());
 }
 
 int TurnClient::sendChannelData(const void* data, size_t len, uint16_t channelNumber) {
@@ -242,7 +300,37 @@ int TurnClient::sendChannelData(const void* data, size_t len, uint16_t channelNu
     size_t padded = (buf.size() + 3) & ~3;
     buf.resize(padded, 0);
 
-    return agent_->send(buf.data(), buf.size(), &server_addr_.sa, io_); // Changed from sendTo to send
+    return hio_write(io_, buf.data(), buf.size());
+}
+
+void TurnClient::onStunMessage(StunMessage& msg) {
+    uint16_t method = msg.method();
+    uint16_t cls = msg.cls();
+
+    if (cls == STUN_CLASS_SUCCESS_RESPONSE) {
+        switch (method) {
+        case TURN_METHOD_ALLOCATE:
+            handleAllocateResponse(msg);
+            break;
+        case TURN_METHOD_REFRESH:
+            handleRefreshResponse(msg);
+            break;
+        case TURN_METHOD_CREATE_PERMISSION:
+            handleCreatePermissionResponse(msg);
+            break;
+        case TURN_METHOD_CHANNEL_BIND:
+            handleChannelBindResponse(msg);
+            break;
+        }
+    } else if (cls == STUN_CLASS_ERROR_RESPONSE) {
+        if (method == TURN_METHOD_ALLOCATE) {
+            handleAllocateError(msg);
+        }
+    } else if (cls == STUN_CLASS_INDICATION) {
+        if (method == TURN_METHOD_DATA) {
+            handleDataIndication(msg);
+        }
+    }
 }
 
 void TurnClient::handleAllocateResponse(const StunMessage& msg) {
@@ -269,7 +357,7 @@ void TurnClient::handleAllocateResponse(const StunMessage& msg) {
     char srflxStr[SOCKADDR_STRLEN] = {0};
     SOCKADDR_STR((struct sockaddr*)&srflx_addr_, srflxStr);
 
-    hlogi("TurnClient: allocation succeeded relay=%s srflx=%s lifetime=%us",
+    hlogi("TurnClient %s allocation succeeded relay=%s srflx=%s lifetime=%us", id(),
           relayStr, srflxStr, lifetime_);
 
     startRefreshTimer();
@@ -280,31 +368,32 @@ void TurnClient::handleAllocateError(const StunMessage& msg) {
     std::string reason;
     msg.getErrorCode(&code, &reason);
 
-    hlogw("TurnClient: allocate error code=%d reason=%s", code, reason.c_str());
+    hlogw("TurnClient %s allocate error code=%d reason=%s", id(), code, reason.c_str());
 
     if (code == STUN_ERROR_UNAUTHORIZED) {
         // Get realm and nonce for authentication
         realm_ = msg.getRealm();
         nonce_ = msg.getNonce();
         if (!realm_.empty() && !nonce_.empty()) {
-            hlogi("TurnClient: retrying AllocateRequest with auth realm=%s", realm_.c_str());
+            hlogi("TurnClient %s retrying AllocateRequest with auth realm=%s", id(), realm_.c_str());
             // Retry with authentication
             sendAllocateRequestWithAuth();
             return;
         } else {
-            hlogw("TurnClient: 401 received but realm/nonce missing, cannot auth");
+            hlogw("TurnClient %s 401 received but realm/nonce missing, cannot auth", id());
         }
     }
 
     setState(TurnState::Failed, reason.c_str());
 }
 
-void TurnClient::onStunRequest(StunMessage& msg, const sockaddr* addr, hio_t* io) {
-    uint16_t method = msg.method();
-    uint16_t cls = msg.cls();
-    if (cls == STUN_CLASS_INDICATION || method == TURN_METHOD_DATA) {
-        handleDataIndication(msg);
-    }
+
+void TurnClient::handleCreatePermissionResponse(const StunMessage& msg) {
+    // Permission created successfully - no additional action needed
+}
+
+void TurnClient::handleChannelBindResponse(const StunMessage& msg) {
+    // Channel bound successfully - no additional action needed
 }
 
 void TurnClient::handleDataIndication(const StunMessage& msg) {
@@ -321,14 +410,22 @@ void TurnClient::handleDataIndication(const StunMessage& msg) {
     }
 }
 
-void TurnClient::onRecvData(const uint8_t* data, size_t len, const struct sockaddr* addr) {
+void TurnClient::onRecvPdu(const uint8_t* data, size_t len) {
     PacketType ptype = classifyPacket(data, len);
     switch (ptype) {
     case PacketType::TURN_CHANNEL:
         onChannelData(data, len);
         break;
+    case PacketType::STUN:
+    {
+        StunMessage msg;
+        if (StunMessage::decode(data, len, &msg)) {
+            onStunMessage(msg);
+        }
+        break;
+    }
     default:
-        hlogd("TurnClient: ignoring %zu bytes of non-channel data", len);
+        hlogd("TurnClient %s ignoring %zu bytes of non-channel data", id(), len);
         break;
     }
 }
@@ -343,46 +440,14 @@ void TurnClient::onChannelData(const uint8_t* data, size_t len) {
     // Find peer address from channel binding
     auto it = channels_.find(channel);
     if (it == channels_.end()) {
-        hlogw("TurnClient: onChannelData unknown channel=0x%04x", channel);
+        hlogw("TurnClient %s onChannelData unknown channel=0x%04x", id(), channel);
         return;
     }
 
-    hlogd("TurnClient: onChannelData channel=0x%04x len=%u", channel, dataLen);
+    hlogd("TurnClient %s onChannelData channel=0x%04x len=%u", id(), channel, dataLen);
     if (onData) {
         onData(data + 4, dataLen, &it->second.peerAddr.sa);
     }
-}
-
-
-void TurnClient::refresh(uint32_t lifetime) {
-    if (state_ != TurnState::Allocated || !io_) return;
-
-    hlogi("TurnClient: refreshing allocation lifetime=%u", lifetime);
-    StunMessage msg(TURN_METHOD_REFRESH, STUN_CLASS_REQUEST);
-    msg.addLifetime(lifetime);
-    msg.addUsername(config_.username);
-    msg.addRealm(realm_);
-    msg.addNonce(nonce_);
-    msg.setAuth(longTermKey());
-
-    std::weak_ptr<TurnClient> weakSelf = shared_from_this();
-    agent_->StunRequest(msg, &server_addr_.sa, io_, [weakSelf](StunMessage* resp, int code) {
-        auto self = weakSelf.lock();
-        if (resp && self) {
-            if (resp->cls() == STUN_CLASS_SUCCESS_RESPONSE) {
-                uint32_t newLifetime = resp->getLifetime();
-                if (newLifetime > 0) {
-                    self->lifetime_ = newLifetime;
-                }
-                hlogi("TurnClient: refresh success new lifetime=%u", self->lifetime_);
-            } else {
-                uint16_t errCode = 0;
-                std::string reason;
-                resp->getErrorCode(&errCode, &reason);
-                hlogw("TurnClient: refresh error code=%d reason=%s", errCode, reason.c_str());
-            }
-        }
-    });
 }
 
 void TurnClient::startRefreshTimer() {
@@ -413,36 +478,4 @@ void TurnClient::startPermissionRefreshTimer() {
     hevent_set_userdata(permission_timer_, this);
 }
 
-void TurnClient::createPermission(const struct sockaddr* peerAddr) {
-    if (state_ != TurnState::Allocated || !io_) return;
-
-    char peerStr[SOCKADDR_STRLEN] = {0};
-    SOCKADDR_STR(peerAddr, peerStr);
-    hlogi("TurnClient: createPermission peer=%s", peerStr);
-
-    StunMessage msg(TURN_METHOD_CREATE_PERMISSION, STUN_CLASS_REQUEST);
-    msg.addXorPeerAddress(peerAddr);
-    msg.addUsername(config_.username);
-    msg.addRealm(realm_);
-    msg.addNonce(nonce_);
-    msg.setAuth(longTermKey());
-
-    std::weak_ptr<TurnClient> weakSelf = shared_from_this();
-    sockaddr_u peerAddrU;
-    memcpy(&peerAddrU, peerAddr, SOCKADDR_LEN(peerAddr));
-    agent_->StunRequest(msg, &server_addr_.sa, io_, [weakSelf, peerAddrU](StunMessage* resp, int code) {
-        auto self = weakSelf.lock();
-        if (resp && self) {
-            if (resp->cls() == STUN_CLASS_SUCCESS_RESPONSE) {
-                self->permissions_[peerAddrU] = hloop_now_ms(self->loop_->loop()) + 300000;
-                hlogi("TurnClient: createPermission success");
-            } else {
-                uint16_t errCode = 0;
-                std::string reason;
-                resp->getErrorCode(&errCode, &reason);
-                hlogw("TurnClient: createPermission error code=%d reason=%s", errCode, reason.c_str());
-            }
-        }
-    });
-}
 } // namespace ice

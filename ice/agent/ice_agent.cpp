@@ -19,6 +19,27 @@
 #endif
 
 namespace ice {
+static constexpr int MAX_RETRANSMIT = 7;  // RFC 5389 Section 7.2.1
+static constexpr uint32_t MAX_RTO = 1600; // Cap RTO at 1.6s
+struct StunTransaction {
+    IceAgent* agent = nullptr; // owning agent, also used as htimer userdata
+    TransactionId id;
+    std::vector<uint8_t> msg; // encoded STUN message for retransmission
+    sockaddr_u destAddr;      // destination address for retransmission
+    hio_t* io = nullptr;      // IO handle for retransmission
+    uint64_t sentTime = 0;    // ms
+    int retransmitCount = 0;
+    uint32_t rto = 100;                       // Initial RTO ms (RFC 5389)
+    htimer_t* timer = nullptr;                // Retransmit timer (userdata = this StunTransaction*)
+    StunCallback callback;                    // Callback on response or timeout
+
+    ~StunTransaction() {
+        if (timer) {
+            htimer_del(timer);
+            timer = nullptr;
+        }
+    }
+};
 
 IceAgent::IceAgent(hv::EventLoopPtr loop) {
     if (loop) {
@@ -195,14 +216,14 @@ void IceAgent::StunRequest(const StunMessage& req, const struct sockaddr* server
     send(encoded.data(), encoded.size(), server, io);
     if (callback) {
         auto* txn = new StunTransaction();
-        txn->agent = this;
         txn->id = req.transactionId();
         txn->msg = std::move(encoded);
+        txn->callback = callback;
+        txn->agent = this;
         memcpy(&txn->destAddr, server, SOCKADDR_LEN(server));
         txn->io = io;
         txn->sentTime = hloop_now_ms(loop_->loop());
         txn->rto = 100; // RFC 5389 initial RTO
-        txn->callback = callback;
 
         // Start retransmission timer (one-shot, rescheduled on each retransmit)
         // StunTransaction* itself is the htimer userdata
@@ -225,7 +246,7 @@ void IceAgent::onStunRetransmit(StunTransaction* txn) {
     if (it == transactions_.end() || it->second != txn) return;
 
     // Check if maximum retransmissions exceeded (RFC 5389 Section 7.2.1)
-    if (txn->retransmitCount >= StunTransaction::MAX_RETRANSMIT) {
+    if (txn->retransmitCount >= MAX_RETRANSMIT) {
         char destStr[SOCKADDR_STRLEN] = {0};
         SOCKADDR_STR((struct sockaddr*)&txn->destAddr, destStr);
         hlogi("IceAgent onStunRetransmit: transaction to %s timed out after %d retries",
@@ -245,7 +266,7 @@ void IceAgent::onStunRetransmit(StunTransaction* txn) {
     hlogd("IceAgent onStunRetransmit: retransmit #%d rto=%u", txn->retransmitCount, txn->rto);
 
     // Exponential backoff: RTO = min(RTO * 2, MAX_RTO)
-    txn->rto = (std::min)(txn->rto * 2, StunTransaction::MAX_RTO);
+    txn->rto = (std::min)(txn->rto * 2, MAX_RTO);
 
     // Delete old timer and schedule a new one-shot timer
     if (txn->timer) {
@@ -613,11 +634,9 @@ void IceAgent::addHostCandidates(IceSession* session, int componentId) {
 void IceAgent::addTurnCandidates(IceSession* session, int componentId) {
     if (!turn_client_) return;
 
-    auto addr = turn_client_->serverAddr();
-    char serverAddr[SOCKADDR_STRLEN] = {0};
-    SOCKADDR_STR(&addr, serverAddr);
+    auto serverAddr = turn_client_->serverAddr();
 
-    addr = turn_client_->serverReflexiveAddr();
+    auto addr = turn_client_->serverReflexiveAddr();
     if (sockaddr_port(&addr)) {
         IceCandidate cand;
         cand.type = CandidateType::ServerReflexive;
@@ -669,8 +688,7 @@ void IceAgent::allocateTurn() {
         sockaddr_u addr;
         if (!server.addr.toSockaddr(&addr)) continue;
 
-        turn_client_ = std::make_shared<TurnClient>(loop_, this);
-        turn_client_->setConfig(server);
+        turn_client_ = std::make_shared<TurnClient>(loop_, server);
 
         // Route peer data received via TURN to the appropriate session
         turn_client_->onData = [this](const void* data, size_t len, const struct sockaddr* peerAddr) {
