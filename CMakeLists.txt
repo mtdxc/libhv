@@ -30,6 +30,8 @@ option(WITH_MBEDTLS "with mbedtls library" OFF)
 
 option(WITH_KCP "compile event/kcp" OFF)
 option(WITH_ICE "compile ice" OFF)
+# Tests - only built when BUILD_ICE_TESTS is ON
+option(BUILD_ICE_TESTS "Build ICE unit tests" OFF)
 
 if(CMAKE_SYSTEM_NAME MATCHES "Linux")
     option(WITH_IO_URING "with io_uring" OFF)
@@ -257,9 +259,12 @@ if(WITH_ICE)
         message(FATAL_ERROR "WITH_ICE requires WITH_EVPP=ON")
     endif()
     add_definitions(-DWITH_ICE)
-    set(LIBHV_SRCDIRS ${LIBHV_SRCDIRS} ice/stun ice/turn ice/transport ice/candidate ice/session ice/agent ice/sdp)
+    set(LIBHV_SRCDIRS ${LIBHV_SRCDIRS} ice/stun ice/turn ice/transport ice/session ice/agent ice/sdp)
     if(WIN32 OR MINGW)
         set(LIBS ${LIBS} iphlpapi)
+    endif()
+   if(BUILD_ICE_TESTS AND BUILD_UNITTEST)
+        add_subdirectory(ice/tests)
     endif()
 endif()
 

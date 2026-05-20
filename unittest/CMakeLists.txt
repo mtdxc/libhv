@@ -51,7 +51,7 @@ target_include_directories(hpath_test PRIVATE .. ../base ../cpputil)
 add_executable(hurl_test hurl_test.cpp ../cpputil/hurl.cpp ../base/hbase.c)
 target_include_directories(hurl_test PRIVATE .. ../base ../cpputil)
 
-add_executable(ls listdir_test.cpp ../cpputil/hdir.cpp)
+add_executable(ls listdir_test.cpp ../cpputil/hdir.cpp ../cpputil/hstring.cpp)
 target_include_directories(ls PRIVATE .. ../base ../cpputil)
 
 add_executable(ifconfig ifconfig_test.cpp ../cpputil/ifconfig.cpp)
