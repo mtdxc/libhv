@@ -13,7 +13,7 @@ int main(int argc, char** argv) {
     printf("%s =>\n%s\n", strURL.c_str(), dumpURL.c_str());
     assert(strURL == dumpURL);
 
-    const char* str = "中 文";
+    const char* str = "\xE4\xB8\xAD \xE6\x96\x87";
     std::string escaped = HUrl::escape(str);
     std::string unescaped = HUrl::unescape(escaped.c_str());
     printf("%s => %s\n", str, escaped.c_str());
