@@ -164,7 +164,13 @@ bool IceCandidate::fromSdp(const std::string& line) {
     if (tokens.size() < 8) return false;
 
     // Basic fields
-    this->foundation = tokens[0];
+    auto pos = tokens[0].find(':');
+    if (pos == std::string::npos){
+        this->foundation = tokens[0];
+    }
+    else { // remove a=candidate: prefix
+        this->foundation = tokens[0].substr(pos+1);
+    }
     this->componentId = (uint32_t)atoi(tokens[1].c_str());
 
     std::string transport = hv::tolower(tokens[2]);

@@ -18,11 +18,26 @@ enum class PairState {
     Failed        // Check failed
 };
 
+inline const char* pairStateString(PairState state) {
+    switch (state) {
+    case PairState::Frozen:     return "frozen";
+    case PairState::Waiting:    return "waiting";
+    case PairState::InProgress: return "in-progress";
+    case PairState::Succeeded:  return "succeeded";
+    case PairState::Failed:     return "failed";
+    }
+    return "unknown";
+}
+
 // ICE Role
 enum class IceRole {
     Controlling,
     Controlled
 };
+
+inline const char* iceRoleString(IceRole role) {
+    return role == IceRole::Controlling ? "controlling" : "controlled";
+}
 
 // Candidate Pair (RFC 8445 Section 6.1.2)
 struct CandidatePair {
@@ -40,7 +55,10 @@ struct CandidatePair {
     TransactionId transactionId;
     int retransmitCount = 0;
     uint64_t lastSendTime = 0; // ms
-
+    std::string toString() const {
+        return IceCandidate::typeString(local.type) + local.addrString()
+        + "->" + IceCandidate::typeString(remote.type) + remote.addrString();
+    }
     // Compute pair priority (RFC 8445 Section 6.1.2.3)
     static uint64_t computePairPriority(uint32_t controllingPriority,
                                          uint32_t controlledPriority,

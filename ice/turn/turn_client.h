@@ -26,6 +26,7 @@ enum class TurnState {
     Failed
 };
 
+const char* turnStateToString(TurnState state);
 
 // TURN channel binding
 struct TurnChannelBinding {

@@ -240,6 +240,7 @@ void TurnServer::onRelayRecv(const uint8_t* data, size_t len,
 
 void TurnServer::handleBinding(const StunMessage& req,
                                const struct sockaddr* from, hio_t* io) {
+    hlogd("TurnServer: handleBinding from %s", sockaddrToKey(from).c_str());
     StunMessage resp(STUN_METHOD_BINDING, STUN_CLASS_SUCCESS_RESPONSE);
     resp.setTransactionId(req.transactionId());
     resp.addXorMappedAddress(from);
@@ -280,6 +281,9 @@ bool TurnServer::authenticate(const StunMessage& msg,
         uint64_t expiry = hloop_now_ms(loop_->loop()) + 600000; // 10 min
         nonces_[freshNonce] = expiry;
 
+        hlogd("TurnServer: auth challenge 401 for client %s (no credentials)",
+              sockaddrToKey(from).c_str());
+
         StunMessage err(msg.method(), STUN_CLASS_ERROR_RESPONSE);
         err.setTransactionId(msg.transactionId());
         err.addErrorCode(STUN_ERROR_UNAUTHORIZED, "Unauthorized");
@@ -293,6 +297,8 @@ bool TurnServer::authenticate(const StunMessage& msg,
 
     // Realm mismatch
     if (realm != opts_.realm) {
+        hlogw("TurnServer: auth failed realm mismatch from %s got=%s expected=%s",
+              sockaddrToKey(from).c_str(), realm.c_str(), opts_.realm.c_str());
         sendError(msg, STUN_ERROR_UNAUTHORIZED, "Wrong realm", from, io);
         return false;
     }
@@ -307,6 +313,8 @@ bool TurnServer::authenticate(const StunMessage& msg,
         // Remove stale
         if (nit != nonces_.end()) nonces_.erase(nit);
 
+        hlogw("TurnServer: auth stale nonce from %s", sockaddrToKey(from).c_str());
+
         StunMessage err(msg.method(), STUN_CLASS_ERROR_RESPONSE);
         err.setTransactionId(msg.transactionId());
         err.addErrorCode(STUN_ERROR_STALE_NONCE, "Stale Nonce");
@@ -320,6 +328,8 @@ bool TurnServer::authenticate(const StunMessage& msg,
     // Lookup password
     auto uit = opts_.users.find(username);
     if (uit == opts_.users.end()) {
+        hlogw("TurnServer: auth failed unknown user=%s from %s",
+              username.c_str(), sockaddrToKey(from).c_str());
         sendError(msg, STUN_ERROR_UNAUTHORIZED, "Unknown user", from, io);
         return false;
     }
@@ -329,12 +339,16 @@ bool TurnServer::authenticate(const StunMessage& msg,
     char hex[33] = {0};
     hv_md5_hex((unsigned char*)raw.data(), (unsigned int)raw.size(), hex, sizeof(hex));
     if (!msg.verifyIntegrity(std::string(hex, 32))) {
+        hlogw("TurnServer: auth failed bad credentials user=%s from %s",
+              username.c_str(), sockaddrToKey(from).c_str());
         sendError(msg, STUN_ERROR_UNAUTHORIZED, "Bad credentials", from, io);
         return false;
     }
 
     // Consume nonce (one-time use to prevent replay)
     nonces_.erase(nit);
+
+    hlogd("TurnServer: auth success user=%s client=%s", username.c_str(), sockaddrToKey(from).c_str());
 
     if (outUsername) *outUsername = username;
     return true;
@@ -364,6 +378,7 @@ void TurnServer::handleAllocate(const StunMessage& req,
     // Check for existing allocation (refresh-like behaviour)
     if (allocations_.count(key)) {
         TurnAllocation& existing = allocations_[key];
+        hlogi("TurnServer: allocate refresh for existing client %s", key.c_str());
         // Return success with existing relay address
         StunMessage resp(TURN_METHOD_ALLOCATE, STUN_CLASS_SUCCESS_RESPONSE);
         resp.setTransactionId(req.transactionId());
@@ -379,6 +394,7 @@ void TurnServer::handleAllocate(const StunMessage& req,
     // Bind a new relay UDP socket
     hio_t* relayIo = bindRelaySocket();
     if (!relayIo) {
+        hloge("TurnServer: bindRelaySocket failed for client %s", key.c_str());
         sendError(req, STUN_ERROR_INSUFFICIENT_CAPACITY, "No relay port available", from, io);
         return;
     }
@@ -583,9 +599,12 @@ void TurnServer::handleSendIndication(const StunMessage& req,
     uint64_t now = hloop_now_ms(loop_->loop());
     auto pit = alloc->permissions.find(permKey);
     if (pit == alloc->permissions.end() || pit->second < now) {
-        hlogd("TurnServer: Send indication dropped – no permission for peer");
+        hlogd("TurnServer: Send indication dropped – no permission for peer, client=%s", key.c_str());
         return;
     }
+
+    hlogd("TurnServer: Send indication forwarding %zu bytes to peer, client=%s",
+          payloadLen, key.c_str());
 
     // Forward to peer through relay socket
     if (alloc->relayIo) {
@@ -619,7 +638,13 @@ void TurnServer::handleChannelData(const uint8_t* data, size_t len,
     else if (permKey.sa.sa_family == AF_INET6)  permKey.sin6.sin6_port = 0;
     uint64_t now = hloop_now_ms(loop_->loop());
     auto pit = alloc->permissions.find(permKey);
-    if (pit == alloc->permissions.end() || pit->second < now) return;
+    if (pit == alloc->permissions.end() || pit->second < now) {
+        hlogd("TurnServer: ChannelData dropped – no permission, client=%s channel=0x%04x", key.c_str(), channel);
+        return;
+    }
+
+    hlogd("TurnServer: ChannelData forwarding %u bytes channel=0x%04x, client=%s",
+          dataLen, channel, key.c_str());
 
     // Forward to peer through relay socket
     if (alloc->relayIo) {
@@ -782,6 +807,10 @@ void TurnServer::closeRelaySocket(hio_t* io) {
     auto* self = static_cast<TurnServer*>(hevent_userdata(hio_get_upstream(io)));
     if (!self) return;
 
+    char peerStr[SOCKADDR_STRLEN] = {0};
+    SOCKADDR_STR(hio_peeraddr(io), peerStr);
+    hlogi("TurnServer: TCP connection accepted from %s", peerStr);
+
     hio_setcb_read(io, onTcpRecv);
     hio_setcb_close(io, onTcpClose);
     hio_set_context(io, self);
@@ -818,6 +847,7 @@ void TurnServer::closeRelaySocket(hio_t* io) {
     auto* self = static_cast<TurnServer*>(hio_context(io));
     if (!self) return;
     AllocKey key = self->makeKey(hio_peeraddr(io), io);
+    hlogi("TurnServer: TCP connection closed, removing allocation client=%s", key.c_str());
     self->removeAllocation(key);
 }
 
