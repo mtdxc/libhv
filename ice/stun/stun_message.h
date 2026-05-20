@@ -28,10 +28,10 @@ enum StunMethod : uint16_t {
 };
 
 enum StunClass : uint16_t {
-    STUN_CLASS_REQUEST           = 0x0000,
-    STUN_CLASS_INDICATION        = 0x0010,
-    STUN_CLASS_SUCCESS_RESPONSE  = 0x0100,
-    STUN_CLASS_ERROR_RESPONSE    = 0x0110,
+    STUN_CLASS_REQUEST           = 0x00,  // C1=0, C0=0
+    STUN_CLASS_INDICATION        = 0x01,  // C1=0, C0=1
+    STUN_CLASS_SUCCESS_RESPONSE  = 0x02,  // C1=1, C0=0
+    STUN_CLASS_ERROR_RESPONSE    = 0x03,  // C1=1, C0=1
 };
 
 // Encode method + class into message type (RFC 5389 Section 6)

@@ -12,7 +12,20 @@ int main() {
     
     IceConfig config;
     config.udpPort = 0; // ephemeral
-    config.gatherTcp = false;
+    config.gatherTcp = true;
+    // stun server
+    config.gatherSrflx = true;
+    config.stunServers.push_back({"120.26.218.183", 3478});
+
+    // turn server
+    config.gatherRelay = true;
+    TurnServerConfig turn;
+    turn.addr.host = "127.0.0.1";
+    turn.addr.port = 3478;
+    turn.username = "ling";
+    turn.password = "ling1234";
+    turn.protocol = TurnServerConfig::TCP;
+    config.turnServers.push_back(turn);
 
     IceAgent agent;
     agent.setConfig(config);
@@ -21,23 +34,17 @@ int main() {
     if (ret != 0) {
         return -1;
     }
-    printf("  UDP port: %d\n", agent.udpPort());
 
     // Create two sessions sharing the same port
-    auto session1 = agent.createSession(IceMode::Full);
-    auto session2 = agent.createSession(IceMode::Full);
-    session1->gatherCandidates();
-    printf("  Session1 ufrag: %s\n", session1->localUfrag().c_str());
-    printf("  Session2 ufrag: %s\n", session2->localUfrag().c_str());
-    printf("  Sessions share same UDP port: YES (port=%d)\n", agent.udpPort());
+    auto session = agent.createSession(IceMode::Full);
+    session->gatherCandidates();
     printf("press q to quit loop\n");
     char line[256];
     while (fgets(line, sizeof(line), stdin)) {
         if (!strcasecmp(line, "q") || strcasecmp(line, "quit"))
             break;
     }
-    agent.destroySession(session1);
-    agent.destroySession(session2);
+    agent.destroySession(session);
     agent.stop();
     printf("  Agent stopped cleanly\n");
     return 0;

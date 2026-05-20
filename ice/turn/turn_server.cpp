@@ -334,19 +334,20 @@ bool TurnServer::authenticate(const StunMessage& msg,
         return false;
     }
 
-    // Verify MESSAGE-INTEGRITY using long-term key: MD5(username:realm:password)
+    // Verify MESSAGE-INTEGRITY using long-term key: MD5(username:realm:password) as 16-byte binary
     std::string raw = username + ":" + realm + ":" + uit->second;
-    char hex[33] = {0};
-    hv_md5_hex((unsigned char*)raw.data(), (unsigned int)raw.size(), hex, sizeof(hex));
-    if (!msg.verifyIntegrity(std::string(hex, 32))) {
+    uint8_t digest[16] = {0};
+    hv_md5((unsigned char*)raw.data(), (unsigned int)raw.size(), digest);
+    if (!msg.verifyIntegrity(std::string((char*)digest, 16))) {
         hlogw("TurnServer: auth failed bad credentials user=%s from %s",
               username.c_str(), sockaddrToKey(from).c_str());
         sendError(msg, STUN_ERROR_UNAUTHORIZED, "Bad credentials", from, io);
         return false;
     }
 
-    // Consume nonce (one-time use to prevent replay)
-    nonces_.erase(nit);
+    // Do NOT consume nonce here – nonce is valid until it expires (time-based).
+    // Consuming it one-time would break Refresh/CreatePermission/ChannelBind
+    // which reuse the same nonce obtained from the initial 401 challenge.
 
     hlogd("TurnServer: auth success user=%s client=%s", username.c_str(), sockaddrToKey(from).c_str());
 
@@ -359,9 +360,9 @@ bool TurnServer::verifyLongTermAuth(const StunMessage& msg,
                                     const std::string& realm,
                                     const std::string& password) const {
     std::string raw = username + ":" + realm + ":" + password;
-    char hex[33] = {0};
-    hv_md5_hex((unsigned char*)raw.data(), (unsigned int)raw.size(), hex, sizeof(hex));
-    return msg.verifyIntegrity(std::string(hex, 32));
+    uint8_t hex[16] = {0};
+    hv_md5((unsigned char*)raw.data(), (unsigned int)raw.size(), hex);
+    return msg.verifyIntegrity(std::string((char*)hex, sizeof(hex)));
 }
 
 // ────────────────────────────────────────────────────────────
