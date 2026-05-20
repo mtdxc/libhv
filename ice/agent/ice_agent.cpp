@@ -267,8 +267,8 @@ void IceAgent::processStunMsg(const uint8_t* data, size_t len, const struct sock
     char addrStr[SOCKADDR_STRLEN] = {0};
     SOCKADDR_STR(addr, addrStr);
 
-    if (msg.cls() == STUN_CLASS_REQUEST || msg.cls() == STUN_CLASS_INDICATION)
-    { // stun 请求
+    if (msg.cls() == STUN_CLASS_REQUEST)
+    { // stun 请求 —— 必须有 USERNAME
         if (msg.getUsername().empty()) {
             hlogw("IceAgent processStunMsg: request from %s has no USERNAME, drop", addrStr);
             return ;
@@ -288,6 +288,23 @@ void IceAgent::processStunMsg(const uint8_t* data, size_t len, const struct sock
                 hlogw("IceAgent processStunMsg: request from %s ufrag=%s not found",
                       addrStr, ufrag.c_str());
             }
+        }
+    } else if (msg.cls() == STUN_CLASS_INDICATION) {
+        // INDICATION (e.g. TURN DATA indication) —— 路由到 TCP session 或 pair_map_
+        if (io && hio_type(io) == HIO_TYPE_TCP) {
+            uint32_t id = hio_id(io);
+            auto cit = tcp_connections_.find(id);
+            if (cit != tcp_connections_.end() && cit->second.session) {
+                cit->second.session->onStunRequest(msg, addr, io);
+                return;
+            }
+        }
+        // UDP: route via pair_map_
+        auto pit = pair_map_.find(*(sockaddr_u*)addr);
+        if (pit != pair_map_.end() && pit->second) {
+            pit->second->onStunRequest(msg, addr, io);
+        } else {
+            hlogd("IceAgent processStunMsg: indication from %s no handler", addrStr);
         }
     } else { // stun响应
         auto it = transactions_.find(msg.transactionId());
@@ -366,7 +383,7 @@ int IceAgent::connectTcp(const struct sockaddr* addr, IDataRecv* session) {
         inet_ntop(AF_INET6, &addr6->sin6_addr, host, sizeof(host));
         port = ntohs(addr6->sin6_port);
     }
-
+    hlogi("IceAgent connectTcp %s:%d with %p", host, port, session);
     hio_t* io = hio_create_socket(loop, host, port, HIO_TYPE_TCP, HIO_CLIENT_SIDE);
     if (!io) return -1;
 
@@ -649,8 +666,6 @@ void IceAgent::allocateTurn() {
     if (config_.turnServers.empty()) return;
 
     for (const auto& server : config_.turnServers) {
-        if (server.protocol != TurnServerConfig::UDP) continue;
-
         sockaddr_u addr;
         if (!server.addr.toSockaddr(&addr)) continue;
 

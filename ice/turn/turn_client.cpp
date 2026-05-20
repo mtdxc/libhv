@@ -44,12 +44,12 @@ TurnClient::~TurnClient() {
 }
 
 // RFC 5766 Section 10.2: long-term credential HMAC key
-// key = MD5(username ":" realm ":" password) as 32-char lowercase hex string
+// key = MD5(username ":" realm ":" password) as 16-byte binary digest
 std::string TurnClient::longTermKey() const {
     std::string raw = config_.username + ":" + realm_ + ":" + config_.password;
-    char hex[33] = {0};
-    hv_md5_hex((unsigned char*)raw.data(), (unsigned int)raw.size(), hex, sizeof(hex));
-    return std::string(hex, 32);
+    uint8_t hex[16] = {0};
+    hv_md5((unsigned char*)raw.data(), (unsigned int)raw.size(), hex);
+    return std::string((char*)hex, sizeof(hex));
 }
 
 bool TurnClient::setConfig(const TurnServerConfig& config) {
@@ -68,23 +68,27 @@ bool TurnClient::setConfig(const TurnServerConfig& config) {
     return ret;
 }
 
+void TurnClient::setState(TurnState s, const char* reason) {
+    if (state_ == s) return;
+    hlogi("TurnClient setState %s reason %s", turnStateToString(s), reason);
+    state_ = s;
+    if (onStateChange) onStateChange(state_);
+}
+
 void TurnClient::allocate() {
     if (state_ != TurnState::Idle && state_ != TurnState::Failed) {
         hlogw("TurnClient: allocate called in invalid state %s", turnStateToString(state_));
         return;
     }
-    hlogi("TurnClient: allocate state->Allocating");
-    state_ = TurnState::Allocating;
-    if (onStateChange) onStateChange(state_);
+
+    setState(TurnState::Allocating, "allocate");
+
     if (config_.protocol == TurnServerConfig::UDP){
         io_ = agent_->udpIo();
         agent_->registerPair(server_addr_, this);
         sendAllocateRequest();
     }
     else {
-        char addrStr[SOCKADDR_STRLEN] = {0};
-        SOCKADDR_STR(&server_addr_.sa, addrStr);
-        hlogi("TurnClient: initiating TCP connection to %s", addrStr);
         agent_->connectTcp(&server_addr_.sa, this);
     }
 }
@@ -147,7 +151,10 @@ void TurnClient::sendAllocateRequestWithAuth() {
             if(resp->cls() == STUN_CLASS_SUCCESS_RESPONSE) {
                 self->handleAllocateResponse(*resp);
             } else {
-                self->handleAllocateError(*resp);
+                uint16_t code = 0;
+                std::string reason;
+                resp->getErrorCode(&code, &reason);
+                self->setState(TurnState::Failed, reason.c_str());
             }
         }
     });
@@ -255,7 +262,7 @@ void TurnClient::handleAllocateResponse(const StunMessage& msg) {
     lifetime_ = msg.getLifetime();
     if (lifetime_ == 0) lifetime_ = 600;
 
-    state_ = TurnState::Allocated;
+    setState(TurnState::Allocated, "alloc ok");
 
     char relayStr[SOCKADDR_STRLEN] = {0};
     SOCKADDR_STR((struct sockaddr*)&relay_addr_, relayStr);
@@ -264,8 +271,6 @@ void TurnClient::handleAllocateResponse(const StunMessage& msg) {
 
     hlogi("TurnClient: allocation succeeded relay=%s srflx=%s lifetime=%us",
           relayStr, srflxStr, lifetime_);
-
-    if (onStateChange) onStateChange(state_);
 
     startRefreshTimer();
 }
@@ -291,8 +296,7 @@ void TurnClient::handleAllocateError(const StunMessage& msg) {
         }
     }
 
-    state_ = TurnState::Failed;
-    if (onStateChange) onStateChange(state_);
+    setState(TurnState::Failed, reason.c_str());
 }
 
 void TurnClient::onStunRequest(StunMessage& msg, const sockaddr* addr, hio_t* io) {
@@ -365,7 +369,7 @@ void TurnClient::refresh(uint32_t lifetime) {
     agent_->StunRequest(msg, &server_addr_.sa, io_, [weakSelf](StunMessage* resp, int code) {
         auto self = weakSelf.lock();
         if (resp && self) {
-            if (resp->cls() == STUN_CLASS_SUCCESS_RESPONSE){
+            if (resp->cls() == STUN_CLASS_SUCCESS_RESPONSE) {
                 uint32_t newLifetime = resp->getLifetime();
                 if (newLifetime > 0) {
                     self->lifetime_ = newLifetime;

@@ -82,6 +82,7 @@ public:
     std::function<void(const void*, size_t, const struct sockaddr*)> onData; // Data from peer via TURN
 
 private:
+    void setState(TurnState s, const char* reason);
     void sendAllocateRequest();
     void sendAllocateRequestWithAuth();
     void handleAllocateResponse(const StunMessage& msg);
