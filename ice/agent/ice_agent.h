@@ -15,28 +15,13 @@
 namespace ice {
 class IceSession;
 class TurnClient;
-class IceAgent;
+class StunTransaction;
+
 // ICE Mode
 enum class IceMode {
     Full,
     Lite
 };
-
-// Packet type classification
-enum class PacketType {
-    STUN,           // STUN message (first byte 0x00 or 0x01)
-    TURN_CHANNEL,   // TURN ChannelData (first byte 0x40-0x7F)
-    DATA            // Application data (other)
-};
-
-// Classify incoming packet
-inline PacketType classifyPacket(const uint8_t* data, size_t len) {
-    if (len < 1) return PacketType::DATA;
-    uint8_t first = data[0];
-    if ((first & 0xC0) == 0x00) return PacketType::STUN;      // 0x00-0x3F
-    if (first >= 0x40 && first <= 0x7F) return PacketType::TURN_CHANNEL;
-    return PacketType::DATA;
-}
 
 class IDataRecv {
 public:
@@ -44,13 +29,6 @@ public:
     virtual void onStunRequest(StunMessage& req, const sockaddr* addr, hio_t* io) = 0;
     virtual void onTcpConnected(hio_t* io) {}
     virtual void onTcpDisconnected(hio_t* io) {}
-};
-
-// Compare sockaddr for use as map key
-struct SockaddrCompare {
-    bool operator()(const sockaddr_u& a, const sockaddr_u& b) const {
-        return sockaddr_compare(&a, &b) < 0;
-    }
 };
 
 // TCP connection state for ICE
@@ -63,28 +41,6 @@ struct TcpIceConnection {
 
 // STUN Transaction for tracking requests
 using StunCallback = std::function<void(StunMessage* resp, int code)>;
-
-struct StunTransaction {
-    IceAgent* agent = nullptr;          // owning agent, also used as htimer userdata
-    TransactionId id;
-    std::vector<uint8_t> msg;           // encoded STUN message for retransmission
-    sockaddr_u destAddr;                 // destination address for retransmission
-    hio_t* io = nullptr;                 // IO handle for retransmission
-    uint64_t sentTime = 0;               // ms
-    int retransmitCount = 0;
-    uint32_t rto = 100;                  // Initial RTO ms (RFC 5389)
-    static constexpr int MAX_RETRANSMIT = 7; // RFC 5389 Section 7.2.1
-    static constexpr uint32_t MAX_RTO = 1600; // Cap RTO at 1.6s
-    htimer_t* timer = nullptr;           // Retransmit timer (userdata = this StunTransaction*)
-    StunCallback callback;               // Callback on response or timeout
-
-    ~StunTransaction() {
-        if (timer) {
-            htimer_del(timer);
-            timer = nullptr;
-        }
-    }
-};
 
 // IceAgent: Top-level API managing all ICE sessions and transport
 class IceAgent {

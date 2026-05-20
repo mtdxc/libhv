@@ -24,8 +24,6 @@ struct TurnServerOptions {
     std::string bindHost = "0.0.0.0";
     int  udpPort         = 3478;
     int  tcpPort         = 3478;
-    bool enableUdp       = true;
-    bool enableTcp       = false;
 
     // Authentication: long-term credential mechanism (RFC 5389 §10.2)
     std::string realm; // e.g. "example.com"
@@ -98,7 +96,7 @@ public:
 
 private:
     // ---- Incoming packet dispatch ----
-    void onUdpRecv(const uint8_t* data, size_t len,
+    void onRecvPdu(const uint8_t* data, size_t len,
                    const struct sockaddr* from, hio_t* io);
     void onRelayRecv(const uint8_t* data, size_t len,
                      const struct sockaddr* from, hio_t* relay_io);
@@ -186,7 +184,6 @@ private:
     // value = expiry time ms
     std::unordered_map<std::string, uint64_t> nonces_;
 
-    unpack_setting_t tcp_unpack_setting_{};
 };
 
 } // namespace ice

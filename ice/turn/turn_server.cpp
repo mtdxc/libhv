@@ -45,16 +45,6 @@ TurnServer::TurnServer(hv::EventLoopPtr loop) {
         loop_thread_.reset(new hv::EventLoopThread());
         loop_ = loop_thread_->loop();
     }
-
-    // RFC 4571 framing for TCP (same as ICE agent)
-    memset(&tcp_unpack_setting_, 0, sizeof(unpack_setting_t));
-    tcp_unpack_setting_.mode               = UNPACK_BY_LENGTH_FIELD;
-    tcp_unpack_setting_.package_max_length = DEFAULT_PACKAGE_MAX_LENGTH;
-    tcp_unpack_setting_.body_offset        = 2;
-    tcp_unpack_setting_.length_field_offset = 0;
-    tcp_unpack_setting_.length_field_bytes  = 2;
-    tcp_unpack_setting_.length_field_coding = ENCODE_BY_BIG_ENDIAN;
-    tcp_unpack_setting_.length_adjustment   = 0;
 }
 
 TurnServer::~TurnServer() {
@@ -75,7 +65,7 @@ int TurnServer::start() {
     hloop_t* loop = loop_->loop();
     if (!loop) return -1;
 
-    if (opts_.enableUdp) {
+    if (opts_.udpPort > 0) {
         udp_io_ = hloop_create_udp_server(loop, opts_.bindHost.c_str(), opts_.udpPort);
         if (!udp_io_) {
             hloge("TurnServer: failed to bind UDP %s:%d", opts_.bindHost.c_str(), opts_.udpPort);
@@ -86,7 +76,7 @@ int TurnServer::start() {
         hio_setcb_read(udp_io_, [](hio_t* io, void* buf, int readbytes) {
             auto* self = static_cast<TurnServer*>(hio_context(io));
             if (self) {
-                self->onUdpRecv(static_cast<const uint8_t*>(buf),
+                self->onRecvPdu(static_cast<const uint8_t*>(buf),
                                 static_cast<size_t>(readbytes),
                                 hio_peeraddr(io), io);
             }
@@ -96,7 +86,7 @@ int TurnServer::start() {
         hlogi("TurnServer: listening UDP %s:%d", opts_.bindHost.c_str(), udp_port_);
     }
 
-    if (opts_.enableTcp) {
+    if (opts_.tcpPort > 0) {
         tcp_listen_io_ = hloop_create_tcp_server(loop, opts_.bindHost.c_str(), opts_.tcpPort, onTcpAccept);
         if (!tcp_listen_io_) {
             hloge("TurnServer: failed to bind TCP %s:%d", opts_.bindHost.c_str(), opts_.tcpPort);
@@ -128,16 +118,22 @@ void TurnServer::stop() {
 
     // Close all relay sockets
     for (auto& kv : allocations_) {
-        if (kv.second.relayIo) {
-            hio_del(kv.second.relayIo, HV_READ);
-            hio_close(kv.second.relayIo);
+        if (auto io = kv.second.relayIo) {
+            hio_del(io, HV_READ);
+            hio_close(io);
         }
     }
     allocations_.clear();
     relay_io_map_.clear();
 
-    if (tcp_listen_io_) { hio_close(tcp_listen_io_); tcp_listen_io_ = nullptr; }
-    if (udp_io_)        { hio_close(udp_io_);         udp_io_        = nullptr; }
+    if (tcp_listen_io_) { 
+        hio_close(tcp_listen_io_); 
+        tcp_listen_io_ = nullptr; 
+    }
+    if (udp_io_) { 
+        hio_close(udp_io_);
+        udp_io_ = nullptr; 
+    }
 
     if (loop_thread_) {
         loop_thread_->stop(true);
@@ -148,7 +144,7 @@ void TurnServer::stop() {
 // Incoming UDP dispatch
 // ────────────────────────────────────────────────────────────
 
-void TurnServer::onUdpRecv(const uint8_t* data, size_t len,
+void TurnServer::onRecvPdu(const uint8_t* data, size_t len,
                            const struct sockaddr* from, hio_t* io) {
     if (len < 4) return;
 
@@ -198,8 +194,7 @@ void TurnServer::onRelayRecv(const uint8_t* data, size_t len,
     // We store full address, so strip port for lookup
     sockaddr_u permKey;
     memcpy(&permKey, from, SOCKADDR_LEN(from));
-    if (permKey.sa.sa_family == AF_INET)        permKey.sin.sin_port = 0;
-    else if (permKey.sa.sa_family == AF_INET6)  permKey.sin6.sin6_port = 0;
+    sockaddr_set_port(&permKey, 0);
 
     uint64_t now = hloop_now_ms(loop_->loop());
     auto pit = alloc->permissions.find(permKey);
@@ -215,8 +210,10 @@ void TurnServer::onRelayRecv(const uint8_t* data, size_t len,
         uint16_t ch = cit->second;
         size_t   frameLen = 4 + len;
         std::vector<uint8_t> buf(frameLen);
+        // channel
         buf[0] = (uint8_t)(ch >> 8);
         buf[1] = (uint8_t)(ch & 0xFF);
+        // len
         buf[2] = (uint8_t)(len >> 8);
         buf[3] = (uint8_t)(len & 0xFF);
         memcpy(buf.data() + 4, data, len);
@@ -255,11 +252,13 @@ void TurnServer::handleBinding(const StunMessage& req,
 
 /*static*/ std::string TurnServer::generateNonce() {
     // Simple random hex nonce
-    uint8_t rand_bytes[16];
-    for (auto& b : rand_bytes) b = (uint8_t)(rand() & 0xFF);
-    std::ostringstream oss;
-    for (auto b : rand_bytes) oss << std::hex << std::setw(2) << std::setfill('0') << (int)b;
-    return oss.str();
+    std::string ret;
+    char rand_bytes[3];
+    for (int i =0 ; i<16; i++) {
+        snprintf(rand_bytes, 3, "%02X", (uint8_t)(rand() & 0xFF));
+        ret += rand_bytes;
+    }
+    return ret;
 }
 
 bool TurnServer::authenticate(const StunMessage& msg,
@@ -335,10 +334,7 @@ bool TurnServer::authenticate(const StunMessage& msg,
     }
 
     // Verify MESSAGE-INTEGRITY using long-term key: MD5(username:realm:password) as 16-byte binary
-    std::string raw = username + ":" + realm + ":" + uit->second;
-    uint8_t digest[16] = {0};
-    hv_md5((unsigned char*)raw.data(), (unsigned int)raw.size(), digest);
-    if (!msg.verifyIntegrity(std::string((char*)digest, 16))) {
+    if (!verifyLongTermAuth(msg, username, realm, uit->second)) {
         hlogw("TurnServer: auth failed bad credentials user=%s from %s",
               username.c_str(), sockaddrToKey(from).c_str());
         sendError(msg, STUN_ERROR_UNAUTHORIZED, "Bad credentials", from, io);
@@ -633,11 +629,10 @@ void TurnServer::handleChannelData(const uint8_t* data, size_t len,
 
     const struct sockaddr* peerAddr = &cit->second.peerAddr.sa;
 
+    uint64_t now = hloop_now_ms(loop_->loop());
     // Check permission
     sockaddr_u permKey = cit->second.peerAddr;
-    if (permKey.sa.sa_family == AF_INET)       permKey.sin.sin_port = 0;
-    else if (permKey.sa.sa_family == AF_INET6)  permKey.sin6.sin6_port = 0;
-    uint64_t now = hloop_now_ms(loop_->loop());
+    sockaddr_set_port(&permKey, 0);
     auto pit = alloc->permissions.find(permKey);
     if (pit == alloc->permissions.end() || pit->second < now) {
         hlogd("TurnServer: ChannelData dropped – no permission, client=%s channel=0x%04x", key.c_str(), channel);
@@ -686,14 +681,6 @@ void TurnServer::sendError(const StunMessage& req, uint16_t code,
 int TurnServer::sendTo(const void* data, size_t len,
                        const struct sockaddr* to, hio_t* io) {
     if (!io) return -1;
-    if (hio_type(io) == HIO_TYPE_TCP) {
-        // RFC 4571: 2-byte length prefix
-        uint8_t header[2];
-        header[0] = (uint8_t)((len >> 8) & 0xFF);
-        header[1] = (uint8_t)(len & 0xFF);
-        hio_write(io, header, 2);
-        return hio_write(io, data, (int)len);
-    }
     return hio_sendto(io, data, (int)len, (struct sockaddr*)to);
 }
 
@@ -805,7 +792,7 @@ void TurnServer::closeRelaySocket(hio_t* io) {
 // ────────────────────────────────────────────────────────────
 
 /*static*/ void TurnServer::onTcpAccept(hio_t* io) {
-    auto* self = static_cast<TurnServer*>(hevent_userdata(hio_get_upstream(io)));
+    auto* self = static_cast<TurnServer*>(hevent_userdata(io));
     if (!self) return;
 
     char peerStr[SOCKADDR_STRLEN] = {0};
@@ -815,36 +802,46 @@ void TurnServer::closeRelaySocket(hio_t* io) {
     hio_setcb_read(io, onTcpRecv);
     hio_setcb_close(io, onTcpClose);
     hio_set_context(io, self);
-    hio_set_unpack(io, &self->tcp_unpack_setting_);
+    // for segment tcp message
+    hevent_set_userdata(io, new std::string());
     hio_read(io);
 }
 
 /*static*/ void TurnServer::onTcpRecv(hio_t* io, void* buf, int readbytes) {
     auto* self = static_cast<TurnServer*>(hio_context(io));
     if (!self) return;
-
-    const uint8_t* data = static_cast<const uint8_t*>(buf);
-    size_t         len  = static_cast<size_t>(readbytes);
+    auto str = (std::string*)hevent_userdata(io);
+    if (!str) {
+        return;
+    }
     auto* peerAddr = hio_peeraddr(io);
-
-    PacketType ptype = classifyPacket(data, len);
-    if (ptype == PacketType::STUN) {
-        StunMessage msg;
-        if (!StunMessage::decode(data, len, &msg)) return;
-        uint16_t method = msg.method();
-        uint16_t cls    = msg.cls();
-        if      (method == STUN_METHOD_BINDING          && cls == STUN_CLASS_REQUEST)    self->handleBinding(msg, peerAddr, io);
-        else if (method == TURN_METHOD_ALLOCATE          && cls == STUN_CLASS_REQUEST)    self->handleAllocate(msg, peerAddr, io);
-        else if (method == TURN_METHOD_REFRESH           && cls == STUN_CLASS_REQUEST)    self->handleRefresh(msg, peerAddr, io);
-        else if (method == TURN_METHOD_CREATE_PERMISSION && cls == STUN_CLASS_REQUEST)    self->handleCreatePermission(msg, peerAddr, io);
-        else if (method == TURN_METHOD_CHANNEL_BIND      && cls == STUN_CLASS_REQUEST)    self->handleChannelBind(msg, peerAddr, io);
-        else if (method == TURN_METHOD_SEND              && cls == STUN_CLASS_INDICATION) self->handleSendIndication(msg, peerAddr, io);
-    } else if (ptype == PacketType::TURN_CHANNEL) {
-        self->handleChannelData(data, len, peerAddr, io);
+    str->append((const char*)buf, readbytes);
+    int len = str->length();
+    auto p = (const uint8_t*)str->data();
+    while (len >= 4) {
+        int padding = 0;
+        int plen = TurnTcpLength(p, len, &padding);
+        if (plen + padding > len) {
+            break;
+        }
+        self->onRecvPdu(p, plen, peerAddr, io);
+        p = p + plen + padding;
+        len = len - plen - padding;
+    }
+    if (len != str->length()) {
+        if (len) {
+            memcpy((void*)str->data(), p, len);
+        }
+        str->resize(len);
     }
 }
 
 /*static*/ void TurnServer::onTcpClose(hio_t* io) {
+    auto str = (std::string*)hevent_userdata(io);
+    if (str) {
+        hevent_set_userdata(io, nullptr);
+        delete str;
+    }
     auto* self = static_cast<TurnServer*>(hio_context(io));
     if (!self) return;
     AllocKey key = self->makeKey(hio_peeraddr(io), io);

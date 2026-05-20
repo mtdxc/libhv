@@ -51,6 +51,53 @@ inline uint16_t stun_get_class(uint16_t type) {
     return ((type & 0x0100) >> 7) | ((type & 0x0010) >> 4);
 }
 
+// Packet type classification
+enum class PacketType {
+    STUN,           // STUN message (first byte 0x00 or 0x01)
+    TURN_CHANNEL,   // TURN ChannelData (first byte 0x40-0x7F)
+    DATA            // Application data (other)
+};
+
+// Classify incoming packet
+inline PacketType classifyPacket(const uint8_t* data, size_t len) {
+    if (len < 1) return PacketType::DATA;
+    uint8_t first = data[0];
+    if ((first & 0xC0) == 0x00) return PacketType::STUN;      // 0x00-0x3F
+    if (first >= 0x40 && first <= 0x7F) return PacketType::TURN_CHANNEL;
+    return PacketType::DATA;
+}
+
+inline size_t TurnTcpLength(const uint8_t* view, size_t len, int* pad_bytes) {
+    *pad_bytes = 0;
+    uint16_t pkt_len = view[2] << 8 | view[3];
+    size_t expected_pkt_len;
+    if ((view[0] & 0xC0) == 0x00) {
+        // STUN message.
+        expected_pkt_len = 20 + pkt_len;
+    }
+    else {
+        // TURN ChannelData message.
+        expected_pkt_len = 4 + pkt_len;
+        // From RFC 5766 section 11.5
+        // Over TCP and TLS-over-TCP, the ChannelData message MUST be padded to
+        // a multiple of four bytes in order to ensure the alignment of
+        // subsequent messages.  The padding is not reflected in the length
+        // field of the ChannelData message, so the actual size of a ChannelData
+        // message (including padding) is (4 + Length) rounded up to the nearest
+        // multiple of 4.  Over UDP, the padding is not required but MAY be
+        // included.
+        if (expected_pkt_len % 4) *pad_bytes = 4 - (expected_pkt_len % 4);
+    }
+    return expected_pkt_len;
+}
+
+// Compare sockaddr for use as map key
+struct SockaddrCompare {
+    bool operator()(const sockaddr_u& a, const sockaddr_u& b) const {
+        return sockaddr_compare(&a, &b) < 0;
+    }
+};
+
 // STUN Attribute Types (RFC 5389 + RFC 5245 + RFC 5766)
 enum StunAttrType : uint16_t {
     // Comprehension-required (0x0000 - 0x7FFF)
