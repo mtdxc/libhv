@@ -191,16 +191,12 @@ if(WITH_MQTT)
 endif()
 
 if(WITH_ICE)
-    include_directories(../ice ../ice/stun ../ice/turn ../ice/transport ../ice/candidate ../ice/session ../ice/agent ../ice/sdp)
-
     add_executable(ice_test ice_test.cpp)
-    target_compile_definitions(ice_test PRIVATE HV_STATICLIB)
-    target_link_libraries(ice_test hv_static ${LIBS})
+    target_link_libraries(ice_test ice)
     list(APPEND EXAMPLES ice_test)
 
     add_executable(turn_server_test turn_server_test.cpp)
-    target_compile_definitions(turn_server_test PRIVATE HV_STATICLIB)
-    target_link_libraries(turn_server_test hv_static ${LIBS})
+    target_link_libraries(turn_server_test ice)
     list(APPEND EXAMPLES turn_server)
 endif()
 

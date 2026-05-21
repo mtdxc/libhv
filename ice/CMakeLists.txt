@@ -24,10 +24,21 @@ set(ICE_HEADERS
     sdp/ice_sdp.h
 )
 
-# Prepend directory path
-list(TRANSFORM ICE_SRCS PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
-list(TRANSFORM ICE_HEADERS PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
+add_library(ice ${ICE_SRCS} ${ICE_HEADERS})
+set(LIBS "hv_static")
+if(WIN32 OR MINGW)
+    set(LIBS ${LIBS} iphlpapi)
+endif()
 
-# Export to parent scope
-set(ICE_SRCS ${ICE_SRCS} PARENT_SCOPE)
-set(ICE_HEADERS ${ICE_HEADERS} PARENT_SCOPE)
+target_link_libraries(ice PUBLIC ${LIBS})
+
+target_include_directories(ice PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/event
+    ${CMAKE_SOURCE_DIR}/evpp
+    ${CMAKE_SOURCE_DIR}/cpputil
+    ${CMAKE_SOURCE_DIR}/base
+    ${CMAKE_SOURCE_DIR}/ssl
+    ${CMAKE_SOURCE_DIR}/util
+)
