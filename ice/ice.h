@@ -12,5 +12,6 @@
 #include "sdp/ice_sdp.h"
 #include "stun/stun_message.h"
 #include "turn/turn_client.h"
+#include "turn/turn_server.h"
 
 #endif // ICE_H_

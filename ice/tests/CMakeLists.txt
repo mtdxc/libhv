@@ -15,27 +15,11 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(googletest)
 
 # ICE test executable
-add_executable(ice_unitest
-    ice_unitest.cpp
-    ${ICE_SRCS}
-)
-
-target_include_directories(ice_unitest PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/..
-    ${CMAKE_CURRENT_SOURCE_DIR}/../..
-    ${CMAKE_SOURCE_DIR}
-    ${CMAKE_SOURCE_DIR}/event
-    ${CMAKE_SOURCE_DIR}/evpp
-    ${CMAKE_SOURCE_DIR}/cpputil
-    ${CMAKE_SOURCE_DIR}/base
-    ${CMAKE_SOURCE_DIR}/ssl
-    ${CMAKE_SOURCE_DIR}/util
-)
+add_executable(ice_unitest ice_unitest.cpp)
 
 target_link_libraries(ice_unitest PRIVATE
     gtest_main
-    hv_static
-    ${ICE_LINK_LIBS}
+    ice
 )
 
 if(WIN32)
