@@ -154,15 +154,17 @@ void IceSession::gatherCandidates() {
     agent_->addHostCandidates(this);
 
     auto config = agent_->config();
-    sockaddr_u addr;
     // Send STUN binding requests to configured servers
-    for (const auto& server : config.stunServers) {
-        if(server.toSockaddr(&addr)) {
-            sendStunBindingRequest(&addr.sa, server.toString());
-        }
+    if (config.gatherSrflx && config.stunServers.size() > 0) {
+        for (const auto& server : config.stunServers) {
+            sockaddr_u addr;
+            if (0 == sockaddr_set_ipport(&addr, server.host.c_str(), server.port)) {
+                sendStunBindingRequest(&addr.sa, server.toString());
+            }
+        }        
     }
 
-    if (config.turnServers.size() > 0) {
+    if (config.gatherRelay && config.turnServers.size() > 0) {
         // Delegate TURN allocation to IceAgent
         if (!agent_->isTurnAllocated() && !agent_->isTurnAllocating()) {
             agent_->allocateTurn();

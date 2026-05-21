@@ -15,13 +15,8 @@
 namespace ice {
 class IceSession;
 class TurnClient;
-class StunTransaction;
-
-// ICE Mode
-enum class IceMode {
-    Full,
-    Lite
-};
+struct StunTransaction;
+struct TcpIceConnection;
 
 class IDataRecv {
 public:
@@ -29,14 +24,6 @@ public:
     virtual void onStunRequest(StunMessage& req, const sockaddr* addr, hio_t* io) = 0;
     virtual void onTcpConnected(hio_t* io) {}
     virtual void onTcpDisconnected(hio_t* io) {}
-};
-
-// TCP connection state for ICE
-struct TcpIceConnection {
-    hio_t* io = nullptr;
-    IDataRecv* session = nullptr;
-    std::string ufrag;      // associated ufrag once identified
-    bool identified = false; // true after first STUN exchange
 };
 
 // STUN Transaction for tracking requests
@@ -48,7 +35,7 @@ class IceAgent {
     std::map<TransactionId, StunTransaction*> transactions_;
 public:
     // 当hio为nullptr，数据通过relay方式转发，否则通过hio指定的tcp或udp方式转发
-    void StunRequest(const StunMessage& msg, const struct sockaddr* server, hio_t* io, StunCallback callback);
+    void StunRequest(const StunMessage& msg, const struct sockaddr* addr, hio_t* io, StunCallback callback);
 
     // Create agent with optional external event loop
     // If loop is null, creates its own EventLoopThread

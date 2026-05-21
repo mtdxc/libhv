@@ -67,29 +67,41 @@ inline PacketType classifyPacket(const uint8_t* data, size_t len) {
     return PacketType::DATA;
 }
 
-inline size_t TurnTcpLength(const uint8_t* view, size_t len, int* pad_bytes) {
-    *pad_bytes = 0;
-    uint16_t pkt_len = view[2] << 8 | view[3];
-    size_t expected_pkt_len;
-    if ((view[0] & 0xC0) == 0x00) {
-        // STUN message.
-        expected_pkt_len = 20 + pkt_len;
-    }
-    else {
-        // TURN ChannelData message.
-        expected_pkt_len = 4 + pkt_len;
-        // From RFC 5766 section 11.5
-        // Over TCP and TLS-over-TCP, the ChannelData message MUST be padded to
-        // a multiple of four bytes in order to ensure the alignment of
-        // subsequent messages.  The padding is not reflected in the length
-        // field of the ChannelData message, so the actual size of a ChannelData
-        // message (including padding) is (4 + Length) rounded up to the nearest
-        // multiple of 4.  Over UDP, the padding is not required but MAY be
-        // included.
-        if (expected_pkt_len % 4) *pad_bytes = 4 - (expected_pkt_len % 4);
-    }
-    return expected_pkt_len;
+// Helper: write big-endian
+inline uint8_t* write_be16(uint8_t* p, uint16_t v) {
+    p[0] = (uint8_t)(v >> 8);
+    p[1] = (uint8_t)(v & 0xFF);
+    return p + 2;
 }
+
+inline uint8_t* write_be32(uint8_t* p, uint32_t v) {
+    p[0] = (uint8_t)(v >> 24);
+    p[1] = (uint8_t)(v >> 16);
+    p[2] = (uint8_t)(v >> 8);
+    p[3] = (uint8_t)(v & 0xFF);
+    return p + 4;
+}
+
+inline uint8_t* write_be64(uint8_t* p, uint64_t v) {
+    write_be32(p, (uint32_t)(v >> 32));
+    write_be32(p + 4, (uint32_t)(v & 0xFFFFFFFF));
+    return p + 8;
+}
+
+inline uint16_t read_be16(const uint8_t* p) {
+    return ((uint16_t)p[0] << 8) | p[1];
+}
+
+inline uint32_t read_be32(const uint8_t* p) {
+    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3];
+}
+
+inline uint64_t read_be64(const uint8_t* p) {
+    return ((uint64_t)read_be32(p) << 32) | read_be32(p + 4);
+}
+
+static constexpr uint32_t TURN_CHANNLE_HEAD_LEN = 4;
+size_t TurnTcpLength(const uint8_t* view, size_t len, int* pad_bytes);
 
 // Compare sockaddr for use as map key
 struct SockaddrCompare {

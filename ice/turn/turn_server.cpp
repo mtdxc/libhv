@@ -8,7 +8,6 @@
 
 #include "hloop.h"
 #include "hbase.h"
-#include "md5.h"
 #include "htime.h"
 #include "hlog.h"
 #include "../stun/stun_auth.h"
@@ -208,7 +207,7 @@ void TurnServer::onRelayRecv(const uint8_t* data, size_t len,
     if (cit != alloc->peerToChannel.end()) {
         // Send ChannelData to client
         uint16_t ch = cit->second;
-        size_t   frameLen = 4 + len;
+        size_t frameLen = TURN_CHANNLE_HEAD_LEN + len;
         std::vector<uint8_t> buf(frameLen);
         // channel
         buf[0] = (uint8_t)(ch >> 8);
@@ -355,10 +354,7 @@ bool TurnServer::verifyLongTermAuth(const StunMessage& msg,
                                     const std::string& username,
                                     const std::string& realm,
                                     const std::string& password) const {
-    std::string raw = username + ":" + realm + ":" + password;
-    uint8_t hex[16] = {0};
-    hv_md5((unsigned char*)raw.data(), (unsigned int)raw.size(), hex);
-    return msg.verifyIntegrity(std::string((char*)hex, sizeof(hex)));
+    return msg.verifyIntegrity(long_turn_auth_key(username, realm, password));
 }
 
 // ────────────────────────────────────────────────────────────
@@ -615,10 +611,10 @@ void TurnServer::handleSendIndication(const StunMessage& req,
 
 void TurnServer::handleChannelData(const uint8_t* data, size_t len,
                                    const struct sockaddr* from, hio_t* io) {
-    if (len < 4) return;
-    uint16_t channel  = ((uint16_t)data[0] << 8) | data[1];
-    uint16_t dataLen  = ((uint16_t)data[2] << 8) | data[3];
-    if (4 + dataLen > len) return;
+    if (len < TURN_CHANNLE_HEAD_LEN) return;
+    uint16_t channel  = read_be16(data);
+    uint16_t dataLen  = read_be16(data + 2);
+    if (TURN_CHANNLE_HEAD_LEN + dataLen > len) return;
 
     AllocKey key = makeKey(from, io);
     TurnAllocation* alloc = findAllocation(key);

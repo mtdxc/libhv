@@ -56,8 +56,9 @@ struct CandidatePair {
     int retransmitCount = 0;
     uint64_t lastSendTime = 0; // ms
     std::string toString() const {
-        return IceCandidate::typeString(local.type) + local.addrString()
-        + "->" + IceCandidate::typeString(remote.type) + remote.addrString();
+        static const std::string split = " ";
+        return IceCandidate::typeString(local.type) + split + local.addrString()
+        + "->" + IceCandidate::typeString(remote.type) + split + remote.addrString();
     }
     // Compute pair priority (RFC 8445 Section 6.1.2.3)
     static uint64_t computePairPriority(uint32_t controllingPriority,

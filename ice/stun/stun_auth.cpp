@@ -1,6 +1,6 @@
 #include "stun_auth.h"
 #include <cstring>
-
+#include "md5.h"
 // We use libhv's sha1 implementation
 extern "C" {
 #include "sha1.h"
@@ -51,6 +51,15 @@ void stun_hmac_sha1(const std::string& key, const uint8_t* data, size_t len, uin
     HV_SHA1Update(&ctx, k_opad, BLOCK_SIZE);
     HV_SHA1Update(&ctx, inner_hash, HASH_SIZE);
     HV_SHA1Final(out, &ctx);
+}
+
+// RFC 5766 Section 10.2: long-term credential HMAC key
+// key = MD5(username ":" realm ":" password) as 16-byte binary digest
+std::string long_turn_auth_key(const std::string& username, const std::string& realm, const std::string& password) {
+    std::string raw = username + ":" + realm + ":" + password;
+    uint8_t hex[16] = {0};
+    hv_md5((unsigned char*)raw.data(), (unsigned int)raw.size(), hex);
+    return std::string((char*)hex, 16);
 }
 
 // CRC32 lookup table (standard polynomial 0xEDB88320)
