@@ -19,6 +19,14 @@
 #endif
 
 namespace ice {
+// TCP connection state for ICE
+struct TcpIceConnection {
+    hio_t* io = nullptr;
+    IDataRecv* session = nullptr;
+    std::string ufrag;       // associated ufrag once identified
+    bool identified = false; // true after first STUN exchange
+};
+
 static constexpr int MAX_RETRANSMIT = 7;  // RFC 5389 Section 7.2.1
 static constexpr uint32_t MAX_RTO = 1600; // Cap RTO at 1.6s
 struct StunTransaction {
@@ -685,8 +693,6 @@ void IceAgent::allocateTurn() {
     if (config_.turnServers.empty()) return;
 
     for (const auto& server : config_.turnServers) {
-        sockaddr_u addr;
-        if (!server.addr.toSockaddr(&addr)) continue;
 
         turn_client_ = std::make_shared<TurnClient>(loop_, server);
 

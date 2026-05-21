@@ -1,7 +1,6 @@
 #include "turn_client.h"
 #include "../stun/stun_auth.h"
 #include "hlog.h"
-#include "md5.h"
 
 #include <sstream>
 #include <iomanip>
@@ -43,15 +42,6 @@ TurnClient::~TurnClient() {
 
 const char* TurnClient::id() const {
     return config_.addr.host.c_str();
-}
-
-// RFC 5766 Section 10.2: long-term credential HMAC key
-// key = MD5(username ":" realm ":" password) as 16-byte binary digest
-std::string TurnClient::longTermKey() const {
-    std::string raw = config_.username + ":" + realm_ + ":" + config_.password;
-    uint8_t hex[16] = {0};
-    hv_md5((unsigned char*)raw.data(), (unsigned int)raw.size(), hex);
-    return std::string((char*)hex, sizeof(hex));
 }
 
 void TurnClient::setState(TurnState s, const char* reason) {
@@ -177,7 +167,7 @@ void TurnClient::sendAllocateRequestWithAuth() {
     msg.addRealm(realm_);
     msg.addNonce(nonce_);
 
-    auto buf = msg.encodeWithAuth(longTermKey());
+    auto buf = msg.encodeWithAuth(config_.authKey(realm_));
     hio_write(io_, buf.data(), buf.size());
 }
 
@@ -191,7 +181,7 @@ void TurnClient::refresh(uint32_t lifetime) {
     msg.addRealm(realm_);
     msg.addNonce(nonce_);
 
-    auto buf = msg.encodeWithAuth(longTermKey());
+    auto buf = msg.encodeWithAuth(config_.authKey(realm_));
     hio_write(io_, buf.data(), buf.size());
 }
 
@@ -232,7 +222,7 @@ void TurnClient::createPermission(const struct sockaddr* peerAddr) {
     msg.addRealm(realm_);
     msg.addNonce(nonce_);
 
-    auto buf = msg.encodeWithAuth(longTermKey());
+    auto buf = msg.encodeWithAuth(config_.authKey(realm_));
     hio_write(io_, buf.data(), buf.size());
 
     sockaddr_u peerAddrU;
@@ -256,7 +246,7 @@ void TurnClient::channelBind(const struct sockaddr* peerAddr, uint16_t channelNu
     msg.addRealm(realm_);
     msg.addNonce(nonce_);
 
-    auto buf = msg.encodeWithAuth(longTermKey());
+    auto buf = msg.encodeWithAuth(config_.authKey(realm_));
     hio_write(io_, buf.data(), buf.size());
 
     TurnChannelBinding binding;
@@ -289,12 +279,11 @@ int TurnClient::sendChannelData(const void* data, size_t len, uint16_t channelNu
     if (state_ != TurnState::Allocated || !io_) return -1;
 
     // ChannelData format: 2-byte channel number + 2-byte length + data
-    std::vector<uint8_t> buf(4 + len);
-    buf[0] = (uint8_t)(channelNumber >> 8);
-    buf[1] = (uint8_t)(channelNumber & 0xFF);
-    buf[2] = (uint8_t)(len >> 8);
-    buf[3] = (uint8_t)(len & 0xFF);
-    memcpy(buf.data() + 4, data, len);
+    std::vector<uint8_t> buf(TURN_CHANNLE_HEAD_LEN + len);
+    uint8_t* p = buf.data();
+    write_be16(p, channelNumber);
+    write_be16(p + 2, len);
+    memcpy(buf.data() + TURN_CHANNLE_HEAD_LEN, data, len);
 
     // Pad to 4 bytes
     size_t padded = (buf.size() + 3) & ~3;
@@ -432,10 +421,10 @@ void TurnClient::onRecvPdu(const uint8_t* data, size_t len) {
 
 void TurnClient::onChannelData(const uint8_t* data, size_t len) {
     // ChannelData: 2-byte channel + 2-byte length + payload
-    if (len < 4) return;
-    uint16_t channel = ((uint16_t)data[0] << 8) | data[1];
-    uint16_t dataLen = ((uint16_t)data[2] << 8) | data[3];
-    if (4 + dataLen > len) return;
+    if (len < TURN_CHANNLE_HEAD_LEN) return;
+    uint16_t channel = read_be16(data);
+    uint16_t dataLen = read_be16(data + 2);
+    if (TURN_CHANNLE_HEAD_LEN + dataLen > len) return;
 
     // Find peer address from channel binding
     auto it = channels_.find(channel);

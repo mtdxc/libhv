@@ -3,12 +3,13 @@
 
 #include <string>
 #include <vector>
-#include "hsocket.h"
-
+#include "stun/stun_auth.h"
 namespace ice {
+// ICE Mode
+enum class IceMode { Full, Lite };
 
-enum class IceMode;
-enum class NominationMode;
+// Nomination mode
+enum class NominationMode { Regular, Aggressive };
 
 // Network address
 struct NetAddr {
@@ -20,9 +21,6 @@ struct NetAddr {
     std::string toString() const {
         return host + ":" + std::to_string(port);
     }
-    bool toSockaddr(sockaddr_u* addr) const {
-        return sockaddr_set_ipport(addr, host.c_str(), port) == 0;
-    }
 };
 
 // TURN server configuration
@@ -30,6 +28,7 @@ struct TurnServerConfig {
     NetAddr addr;
     std::string username;
     std::string password;
+    std::string authKey(const std::string& realm) const { return long_turn_auth_key(username, realm, password); }
     enum Proto { UDP = 0, TCP = 1, TLS = 2 } protocol = UDP;
 };
 

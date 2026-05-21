@@ -13,6 +13,8 @@ namespace ice {
 // out: 20-byte HMAC result
 void stun_hmac_sha1(const std::string& key, const uint8_t* data, size_t len, uint8_t out[20]);
 
+std::string long_turn_auth_key(const std::string& username, const std::string& realm, const std::string& password);
+
 // Compute CRC32 for STUN FINGERPRINT
 // Note: FINGERPRINT value = CRC32 XOR 0x5354554E
 uint32_t stun_crc32(const uint8_t* data, size_t len);

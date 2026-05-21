@@ -31,12 +31,6 @@ enum class IceState {
     Closed
 };
 
-// Nomination mode
-enum class NominationMode {
-    Regular,
-    Aggressive
-};
-
 const char* iceStateString(IceState state);
 
 
@@ -111,7 +105,6 @@ private:
     void onCheckSuccess(CandidatePairPtr pair, const StunMessage& response);
     void setSelectPair(ice::CandidatePairPtr pair);
     void onCheckFailure(CandidatePairPtr pair, uint16_t errorCode);
-    void scheduleNextCheck();
     void onCheckTimer();
 
     // Nomination
@@ -119,7 +112,6 @@ private:
     void checkNominationComplete();
 
     // Gathering helpers
-    void gatherHostCandidates();
     void sendStunBindingRequest(const struct sockaddr* server, const std::string& serverStr);
     void onGatheringResponse(const StunMessage& msg, const std::string& serverAddr);
     void onGatheringComplete();
