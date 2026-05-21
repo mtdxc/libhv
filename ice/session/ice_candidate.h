@@ -31,7 +31,14 @@ enum class TransportProtocol {
     TCP
 };
 
-// ICE Candidate (RFC 8445 Section 5.1)
+inline const char* TransportProtocolStr(TransportProtocol p) {
+    switch (p) {  
+    case TransportProtocol::UDP: return "udp";
+    case TransportProtocol::TCP: return "tcp";
+    default: return "";
+    }
+}
+    // ICE Candidate (RFC 8445 Section 5.1)
 struct IceCandidate {
     // Required fields
     std::string foundation;      // Unique identifier for candidate pair pruning
@@ -54,7 +61,7 @@ struct IceCandidate {
         memset(&baseAddr, 0, sizeof(baseAddr));
     }
     void update(const std::string& serverAddr="");
-    std::string toSdp() const;
+    std::string toSdp(bool prefix = false) const;
     bool fromSdp(const std::string& sdp);
     
     // Get address as string "ip:port"
