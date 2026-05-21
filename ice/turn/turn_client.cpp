@@ -231,9 +231,19 @@ void TurnClient::createPermission(const struct sockaddr* peerAddr) {
     permissions_[peerAddrU] = hloop_now_ms(loop_->loop()) + 300000;
 }
 
+uint16_t TurnClient::nextChannelNumber() {
+    while (channels_.find(next_channel_) != channels_.end()) {
+        next_channel_++;
+        if (next_channel_ > 0x7FFE) next_channel_ = 0x4000;
+    }
+    return next_channel_;
+}
+
 void TurnClient::channelBind(const struct sockaddr* peerAddr, uint16_t channelNumber) {
     if (state_ != TurnState::Allocated || !io_) return;
-    if (channelNumber < 0x4000 || channelNumber > 0x7FFE) return;
+    if (channelNumber < 0x4000 || channelNumber > 0x7FFE) {
+        channelNumber = nextChannelNumber();
+    }
 
     char peerStr[SOCKADDR_STRLEN] = {0};
     SOCKADDR_STR(peerAddr, peerStr);
@@ -258,6 +268,9 @@ void TurnClient::channelBind(const struct sockaddr* peerAddr, uint16_t channelNu
 
 int TurnClient::sendData(const void* data, size_t len, const struct sockaddr* peerAddr) {
     if (state_ != TurnState::Allocated || !io_) return -1;
+    if (permissions_.find(*(const sockaddr_u*)peerAddr) == permissions_.end()) {
+        createPermission(peerAddr);
+    }
 
     // Check if we have a channel binding for this peer
     for (auto& kv : channels_) {

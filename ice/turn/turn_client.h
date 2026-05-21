@@ -52,8 +52,8 @@ public:
     void createPermission(const struct sockaddr* peerAddr);
 
     // Channel binding
-    void channelBind(const struct sockaddr* peerAddr, uint16_t channelNumber);
-
+    void channelBind(const struct sockaddr* peerAddr, uint16_t channelNumber = 0 /* auto generatte with next_channel_ */);
+    uint16_t nextChannelNumber();
     // Send data via TURN
     int sendData(const void* data, size_t len, const struct sockaddr* peerAddr);
     int sendChannelData(const void* data, size_t len, uint16_t channelNumber);
