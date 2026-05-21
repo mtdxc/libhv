@@ -652,6 +652,11 @@ void IceSession::setSelectPair(CandidatePairPtr pair) {
     if (selected_pair_ != pair) {
         selected_pair_ = pair;
         hlogi("IceSession %s setSelectPair %s", id(), pair->toString().c_str());
+        if (pair->local.type == CandidateType::Relay && agent_->turnClient()) {
+            // If selected pair is relay, we may want to tear down direct sockets to save resources
+            // (optional optimization, not implemented here)
+            agent_->turnClient()->channelBind(&pair->remote.addr.sa, 0);
+        }
     }
     if (onSelectedPair) onSelectedPair(*selected_pair_);
     setState(IceState::Completed);
