@@ -7,15 +7,20 @@
 #include "hstring.h"
 using namespace ice;
 
-int main() {
+int main(int argc, char* argv[]) {
     logger_enable_color(hlog, true);
     hlog_set_handler(stdout_logger);
-    
+    bool testTcp = false;
+    for (int i =0; i < argc; ++i) {
+        if (strcmp(argv[i], "--tcp") == 0) {
+            testTcp = true;
+        }
+    }
     IceConfig config;
     config.udpPort = 0; // ephemeral
-    // config.gatherTcp = true;
+    config.gatherTcp = true;
     // stun server
-    config.gatherSrflx = false;
+    config.gatherSrflx = true;
     config.stunServers.push_back({"120.26.218.183", 3478});
 
     // turn server
@@ -51,12 +56,16 @@ int main() {
     session2->onData = [](const void* data, size_t len) {
         printf("  Session2 recv data: %s\n", (const char*)data);
     };
-    session1->onLocalCandidate = [session2](const IceCandidate& candidate) {
+    session1->onLocalCandidate = [session2, testTcp](const IceCandidate& candidate) {
         printf("  Session1 local candidate: %s\n", candidate.toSdp().c_str());
+        if (testTcp && candidate.protocol != TransportProtocol::TCP) 
+            return;
         session2->addRemoteCandidate(candidate);
     };
-    session2->onLocalCandidate = [session1](const IceCandidate& candidate) {
+    session2->onLocalCandidate = [session1, testTcp](const IceCandidate& candidate) {
         printf("  Session2 local candidate: %s\n", candidate.toSdp().c_str());
+        if (testTcp && candidate.protocol != TransportProtocol::TCP) 
+            return;
         session1->addRemoteCandidate(candidate);
     };
     session1->onSelectedPair = [](const CandidatePair& pair) {

@@ -540,9 +540,14 @@ void IceSession::onStunRequest(StunMessage& msg, const struct sockaddr* from, hi
         IceCandidate prflxCandidate;
         prflxCandidate.type = CandidateType::PeerReflexive;
         // Determine protocol from the transport the request arrived on
-        prflxCandidate.protocol = (io && hio_type(io) == HIO_TYPE_TCP)
-                                  ? TransportProtocol::TCP
-                                  : TransportProtocol::UDP;
+        bool tcp = io && hio_type(io) == HIO_TYPE_TCP;
+        if (tcp) {
+            prflxCandidate.protocol = TransportProtocol::TCP;
+            prflxCandidate.tcpType = TcpType::Active;
+        }
+        else {
+            prflxCandidate.protocol = TransportProtocol::UDP;
+        }
         prflxCandidate.componentId = 1;
         memcpy(&prflxCandidate.addr, from, SOCKADDR_LEN(from));
         prflxCandidate.priority = msg.getPriority();
@@ -578,6 +583,9 @@ void IceSession::onStunRequest(StunMessage& msg, const struct sockaddr* from, hi
             CandidatePairPtr newPair = std::make_shared<CandidatePair>();
             newPair->local = *bestLocal;
             newPair->remote = prflxCandidate;
+            if (tcp) {
+                newPair->io = io;
+            }
             newPair->computePriority(role_);
             newPair->state = PairState::Waiting;
             checklist_.addPair(newPair);
