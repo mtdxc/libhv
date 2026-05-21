@@ -27,8 +27,8 @@ struct TcpIceConnection {
     bool identified = false; // true after first STUN exchange
 };
 
-static constexpr int MAX_RETRANSMIT = 7;  // RFC 5389 Section 7.2.1
-static constexpr uint32_t MAX_RTO = 1600; // Cap RTO at 1.6s
+static constexpr int MAX_RETRANSMIT = 4;  // ICE check: 4 retransmits (~1.5s max)
+static constexpr uint32_t MAX_RTO = 800; // Cap RTO at 800ms
 struct StunTransaction {
     IceAgent* agent = nullptr; // owning agent, also used as htimer userdata
     TransactionId id;
@@ -37,7 +37,7 @@ struct StunTransaction {
     hio_t* io = nullptr;      // IO handle for retransmission
     uint64_t sentTime = 0;    // ms
     int retransmitCount = 0;
-    uint32_t rto = 100;                       // Initial RTO ms (RFC 5389)
+    uint32_t rto = 50;                        // Initial RTO ms (50ms for ICE checks)
     htimer_t* timer = nullptr;                // Retransmit timer (userdata = this StunTransaction*)
     StunCallback callback;                    // Callback on response or timeout
 
@@ -231,7 +231,7 @@ void IceAgent::StunRequest(const StunMessage& req, const struct sockaddr* server
         memcpy(&txn->destAddr, server, SOCKADDR_LEN(server));
         txn->io = io;
         txn->sentTime = hloop_now_ms(loop_->loop());
-        txn->rto = 100; // RFC 5389 initial RTO
+        txn->rto = 50; // RFC 5389 initial RTO (50ms for ICE checks)
 
         // Start retransmission timer (one-shot, rescheduled on each retransmit)
         // StunTransaction* itself is the htimer userdata

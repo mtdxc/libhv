@@ -161,7 +161,7 @@ private:
     htimer_t* keepalive_timer_ = nullptr;
     htimer_t* gathering_timer_ = nullptr;
     htimer_t* connectivity_timer_ = nullptr;
-    int check_interval_ms_ = 50; // Ta
+    int check_interval_ms_ = 20; // Ta: RFC 5245 recommended 20ms
 
 
     // Gathering state

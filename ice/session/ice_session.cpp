@@ -348,13 +348,14 @@ void IceSession::onCheckTimer() {
     if (pair) {
         sendConnectivityCheck(pair);
     } else if (checklist_.isComplete()) {
-        // All checks done
+        // All pairs reached terminal state (Succeeded/Failed), stop timer
         if (check_timer_) {
             htimer_del(check_timer_);
             check_timer_ = nullptr;
         }
         checkNominationComplete();
     }
+    // else: some pairs still InProgress, waiting for response/timeout
 }
 
 void IceSession::sendConnectivityCheck(CandidatePairPtr pair) {
@@ -416,7 +417,10 @@ void IceSession::sendConnectivityCheck(CandidatePairPtr pair) {
     // Track transaction
     pair->transactionId = msg.transactionId();
     pair->lastSendTime = hloop_now_ms(loop_->loop());
-    pair->state = PairState::InProgress;
+    // Only change state to InProgress if not already Succeeded (e.g. nomination re-check)
+    if (pair->state != PairState::Succeeded) {
+        pair->state = PairState::InProgress;
+    }
 
     hlogi("IceSession %s sendConnectivityCheck %s role=%s useCandidate=%d nominated=%d",
           local_ufrag_.c_str(), pair->toString().c_str(),
@@ -459,6 +463,7 @@ void IceSession::onRecvData(const uint8_t* data, size_t len, const struct sockad
 
 void IceSession::onStunRequest(StunMessage& msg, const struct sockaddr* from, hio_t* io) {
     if (msg.method() != STUN_METHOD_BINDING) return;
+    if (msg.cls() != STUN_CLASS_REQUEST) return;
 
     char fromStr[SOCKADDR_STRLEN] = {0};
     SOCKADDR_STR(from, fromStr);
@@ -521,6 +526,9 @@ void IceSession::onStunRequest(StunMessage& msg, const struct sockaddr* from, hi
                 setSelectPair(matchedPair);
             }
         } else if (matchedPair->state != PairState::InProgress) {
+            if (useCandidate && role_ == IceRole::Controlled) {
+                matchedPair->nominated = true;
+            }
             // Trigger check
             hlogi("IceSession %s onStunRequest triggered check for pair %s state=%s",
                   local_ufrag_.c_str(), matchedPair->toString().c_str(),
@@ -605,18 +613,26 @@ void IceSession::onCheckSuccess(CandidatePairPtr pair, const StunMessage& respon
         setState(IceState::Connected);
     }
 
+    // If already selected, nothing more to do
+    if (selected_pair_) return;
+
     // Handle nomination
     if (role_ == IceRole::Controlling) {
         if (nomination_ == NominationMode::Aggressive) {
-            // Already sent USE-CANDIDATE
+            // Already sent USE-CANDIDATE in the check
             pair->nominated = true;
             setSelectPair(pair);
-        } else if (nomination_ == NominationMode::Regular && !selected_pair_) {
-            // Nominate the first successful pair
-            nominate(pair);
+        } else if (nomination_ == NominationMode::Regular) {
+            if (pair->nominated) {
+                // This is the nomination check response (with USE-CANDIDATE)
+                setSelectPair(pair);
+            } else {
+                // First success: nominate this pair
+                nominate(pair);
+            }
         }
     } else {
-        // Controlled: wait for USE-CANDIDATE from request
+        // Controlled: wait for USE-CANDIDATE from peer's request
         if (pair->nominated) {
             setSelectPair(pair);
         }
@@ -651,8 +667,9 @@ void IceSession::onCheckFailure(CandidatePairPtr pair, uint16_t errorCode) {
 void IceSession::nominate(CandidatePairPtr pair) {
     hlogi("IceSession %s nominate %s", id(), pair->toString().c_str());
     pair->nominated = true;
-    // Send another connectivity check with USE-CANDIDATE
-    pair->state = PairState::InProgress;
+    // Send a new connectivity check with USE-CANDIDATE
+    // Keep pair->state as Succeeded so isComplete() is not blocked
+    // The nomination check shares the same pair but is a new transaction
     sendConnectivityCheck(pair);
 }
 

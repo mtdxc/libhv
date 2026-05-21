@@ -40,19 +40,26 @@ public:
     // Returns nullptr if no pairs available for checking
     CandidatePairPtr getNextPair() {
         // Triggered checks first
-        if (!triggered_queue_.empty()) {
-            // Move triggered to in-progress in main list
+        while (!triggered_queue_.empty()) {
             CandidatePairPtr tp = triggered_queue_.front();
+            triggered_queue_.pop_front();
+            // Find the canonical pair in pairs_ by address (not foundation)
             for (auto& p : pairs_) {
-                if (p->local.foundation == tp->local.foundation &&
-                    p->remote.foundation == tp->remote.foundation &&
-                    p->state != PairState::InProgress) {
+                if (sockaddr_compare(&p->local.addr, &tp->local.addr) == 0 &&
+                    sockaddr_compare(&p->remote.addr, &tp->remote.addr) == 0) {
+                    if (p->state == PairState::InProgress) {
+                        // Already in flight, skip – response will come
+                        break;
+                    }
                     p->state = PairState::InProgress;
-                    triggered_queue_.pop_front();
                     return p;
                 }
             }
-            triggered_queue_.pop_front();
+            // tp not found in pairs_ (e.g. new prflx pair added directly)
+            if (tp->state != PairState::InProgress) {
+                tp->state = PairState::InProgress;
+                return tp;
+            }
         }
 
         // Ordinary checks: find highest priority Waiting pair
@@ -63,7 +70,7 @@ public:
             }
         }
 
-        // If no Waiting, unfreeze Frozen pairs
+        // If no Waiting, unfreeze Frozen pairs one at a time
         for (auto& p : pairs_) {
             if (p->state == PairState::Frozen) {
                 p->state = PairState::InProgress;
@@ -107,14 +114,19 @@ public:
         return nullptr;
     }
 
-    // Check if all pairs are in terminal states
+    // Check if all pairs are in terminal states (no more work to do)
+    // InProgress pairs are still waiting for response, not complete yet
     bool isComplete() const {
+        if (pairs_.empty()) return false;
+        if (!triggered_queue_.empty()) return false;
         for (const auto& p : pairs_) {
-            if (p->state != PairState::Succeeded && p->state != PairState::Failed) {
+            if (p->state == PairState::Waiting ||
+                p->state == PairState::Frozen ||
+                p->state == PairState::InProgress) {
                 return false;
             }
         }
-        return !pairs_.empty();
+        return true;
     }
 
     // Check if all pairs failed
