@@ -48,9 +48,9 @@ struct IceConfig {
     std::string bindHost = "0.0.0.0";
 
     // Timing parameters
-    int checkIntervalMs = 50;       // Ta: connectivity check pacing (ms)
+    int checkIntervalMs = 20;       // Ta: connectivity check pacing (ms), RFC 5245 recommended
     int gatheringTimeoutMs = 10000; // Max time for gathering
-    int connectivityTimeoutMs = 30000; // Max time for connectivity checks
+    int connectivityTimeoutMs = 10000; // Max time for connectivity checks
 
     // ICE features
     bool gatherTcp = false;         // Gather TCP candidates
