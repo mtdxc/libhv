@@ -119,7 +119,7 @@ void IceCandidate::update(const std::string& serverAddr) {
     foundation = generateFoundation(type, baseAddr, protocol, serverAddr);
 }
 
-std::string IceCandidate::toSdp() const{
+std::string IceCandidate::toSdp(bool prefix) const{
     // Format: a=candidate:<foundation> <component> <transport> <priority> <addr> <port> typ <type>
     //         [raddr <addr> rport <port>] [tcptype <type>]
     std::ostringstream oss;
@@ -132,7 +132,7 @@ std::string IceCandidate::toSdp() const{
 
     std::string transport = (this->protocol == TransportProtocol::UDP) ? "udp" : "tcp";
 
-    oss << foundation
+    oss << (prefix ? "a=candidate:" : "") << foundation
         << " " << componentId
         << " " << transport
         << " " << priority

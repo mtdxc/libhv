@@ -3,8 +3,8 @@
 
 #include <vector>
 #include <deque>
+
 #include <algorithm>
-#include <functional>
 
 #include "candidate_pair.h"
 
@@ -29,7 +29,23 @@ public:
     }
 
     // Prune redundant pairs (same foundation pair)
-    void prune();
+    void prune() {
+        std::vector<CandidatePairPtr> pruned;
+        pruned.reserve(pairs_.size());
+        for (const auto& pair : pairs_) {
+            auto it = std::find_if(pruned.begin(), pruned.end(), [&pair](const CandidatePairPtr& kept) {
+                return isSameFoundationPair(*kept, *pair);
+            });
+            if (it == pruned.end()) {
+                pruned.push_back(pair);
+                continue;
+            }
+            if ((*it)->priority < pair->priority) {
+                *it = pair;
+            }
+        }
+        pairs_.swap(pruned);
+    }
 
     // Add triggered check (higher priority than ordinary checks)
     void addTriggeredCheck(CandidatePairPtr pair) {
@@ -39,77 +55,70 @@ public:
     // Get next pair to check
     // Returns nullptr if no pairs available for checking
     CandidatePairPtr getNextPair() {
-        // Triggered checks first
         while (!triggered_queue_.empty()) {
-            CandidatePairPtr tp = triggered_queue_.front();
+            CandidatePairPtr queued = triggered_queue_.front();
             triggered_queue_.pop_front();
-            // Find the canonical pair in pairs_ by address (not foundation)
-            for (auto& p : pairs_) {
-                if (sockaddr_compare(&p->local.addr, &tp->local.addr) == 0 &&
-                    sockaddr_compare(&p->remote.addr, &tp->remote.addr) == 0) {
-                    if (p->state == PairState::InProgress) {
-                        // Already in flight, skip – response will come
-                        break;
-                    }
-                    p->state = PairState::InProgress;
-                    return p;
-                }
+
+            CandidatePairPtr pair = findCanonicalPair(queued);
+            if (!pair) {
+                pair = queued;
             }
-            // tp not found in pairs_ (e.g. new prflx pair added directly)
-            if (tp->state != PairState::InProgress) {
-                tp->state = PairState::InProgress;
-                return tp;
+            if (pair->state == PairState::InProgress) {
+                continue;
             }
+            pair->state = PairState::InProgress;
+            return pair;
         }
 
-        // Ordinary checks: find highest priority Waiting pair
-        for (auto& p : pairs_) {
-            if (p->state == PairState::Waiting) {
-                p->state = PairState::InProgress;
-                return p;
-            }
+        if (auto pair = claimNextPair(PairState::Waiting)) {
+            return pair;
         }
-
-        // If no Waiting, unfreeze Frozen pairs one at a time
-        for (auto& p : pairs_) {
-            if (p->state == PairState::Frozen) {
-                p->state = PairState::InProgress;
-                return p;
-            }
+        if (auto pair = claimNextPair(PairState::Frozen)) {
+            return pair;
         }
-
         return nullptr;
     }
 
     // Find pair by transaction ID
     CandidatePairPtr findByTransaction(const TransactionId& tid) {
-        for (auto& p : pairs_) {
-            if (p->transactionId == tid && p->state == PairState::InProgress) {
-                return p;
-            }
+        auto it = std::find_if(pairs_.begin(), pairs_.end(), [&tid](const CandidatePairPtr& pair) {
+            return pair->transactionId == tid && pair->state == PairState::InProgress;
+        });
+        if (it != pairs_.end()) {
+            return *it;
         }
         return nullptr;
     }
 
     // Find pair by local and remote candidate addresses
-    CandidatePairPtr findByAddresses(const sockaddr_u& localAddr, const sockaddr_u& remoteAddr);
+    CandidatePairPtr findByAddresses(const sockaddr_u& localAddr, const sockaddr_u& remoteAddr) {
+        auto it = std::find_if(pairs_.begin(), pairs_.end(), [&localAddr, &remoteAddr](const CandidatePairPtr& pair) {
+            return hasMatchingAddresses(*pair, localAddr, remoteAddr);
+        });
+        if (it != pairs_.end()) {
+            return *it;
+        }
+        return nullptr;
+    }
 
     // Get the nominated pair (selected pair)
     CandidatePairPtr getNominatedPair() {
-        for (auto& p : pairs_) {
-            if (p->nominated && p->state == PairState::Succeeded) {
-                return p;
-            }
+        auto it = std::find_if(pairs_.begin(), pairs_.end(), [](const CandidatePairPtr& pair) {
+            return pair->nominated && pair->state == PairState::Succeeded;
+        });
+        if (it != pairs_.end()) {
+            return *it;
         }
         return nullptr;
     }
 
     // Get best valid pair
     CandidatePairPtr getBestValidPair() {
-        for (auto& p : pairs_) {
-            if (p->valid && p->state == PairState::Succeeded) {
-                return p;
-            }
+        auto it = std::find_if(pairs_.begin(), pairs_.end(), [](const CandidatePairPtr& pair) {
+            return pair->valid && pair->state == PairState::Succeeded;
+        });
+        if (it != pairs_.end()) {
+            return *it;
         }
         return nullptr;
     }
@@ -119,30 +128,23 @@ public:
     bool isComplete() const {
         if (pairs_.empty()) return false;
         if (!triggered_queue_.empty()) return false;
-        for (const auto& p : pairs_) {
-            if (p->state == PairState::Waiting ||
-                p->state == PairState::Frozen ||
-                p->state == PairState::InProgress) {
-                return false;
-            }
-        }
-        return true;
+        return std::none_of(pairs_.begin(), pairs_.end(), [](const CandidatePairPtr& pair) {
+            return isPendingState(pair->state);
+        });
     }
 
     // Check if all pairs failed
     bool allFailed() const {
-        for (const auto& p : pairs_) {
-            if (p->state != PairState::Failed) return false;
-        }
-        return !pairs_.empty();
+        return !pairs_.empty() && std::all_of(pairs_.begin(), pairs_.end(), [](const CandidatePairPtr& pair) {
+            return pair->state == PairState::Failed;
+        });
     }
 
     // Has any succeeded pair
     bool hasSucceeded() const {
-        for (const auto& p : pairs_) {
-            if (p->state == PairState::Succeeded) return true;
-        }
-        return false;
+        return std::any_of(pairs_.begin(), pairs_.end(), [](const CandidatePairPtr& pair) {
+            return pair->state == PairState::Succeeded;
+        });
     }
 
     // Access pairs
@@ -153,14 +155,53 @@ public:
 
     // Set all Frozen to Waiting (initial unfreeze)
     void unfreezeAll() {
-        for (auto p : pairs_) {
-            if (p->state == PairState::Frozen) {
-                p->state = PairState::Waiting;
+        for (const auto& pair : pairs_) {
+            if (pair->state == PairState::Frozen) {
+                pair->state = PairState::Waiting;
             }
         }
     }
 
 private:
+    static bool isPendingState(PairState state) {
+        return state == PairState::Waiting ||
+               state == PairState::Frozen ||
+               state == PairState::InProgress;
+    }
+
+    static bool hasMatchingAddresses(const CandidatePair& pair,
+                                     const sockaddr_u& localAddr,
+                                     const sockaddr_u& remoteAddr) {
+        return sockaddr_compare(&pair.local.addr, &localAddr) == 0 &&
+               sockaddr_compare(&pair.remote.addr, &remoteAddr) == 0;
+    }
+
+    static bool isSameFoundationPair(const CandidatePair& lhs, const CandidatePair& rhs) {
+        return lhs.local.foundation == rhs.local.foundation &&
+               lhs.remote.foundation == rhs.remote.foundation;
+    }
+
+    CandidatePairPtr claimNextPair(PairState state) {
+        auto it = std::find_if(pairs_.begin(), pairs_.end(), [state](const CandidatePairPtr& pair) {
+            return pair->state == state;
+        });
+        if (it == pairs_.end()) {
+            return nullptr;
+        }
+        (*it)->state = PairState::InProgress;
+        return *it;
+    }
+
+    CandidatePairPtr findCanonicalPair(const CandidatePairPtr& pair) {
+        auto it = std::find_if(pairs_.begin(), pairs_.end(), [&pair](const CandidatePairPtr& current) {
+            return hasMatchingAddresses(*current, pair->local.addr, pair->remote.addr);
+        });
+        if (it != pairs_.end()) {
+            return *it;
+        }
+        return nullptr;
+    }
+
     std::vector<CandidatePairPtr> pairs_;
     std::deque<CandidatePairPtr> triggered_queue_;
 };

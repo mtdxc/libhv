@@ -262,6 +262,113 @@ TEST(IceCheckList, TriggeredChecks) {
     EXPECT_EQ(next->priority, 100u);
 }
 
+TEST(IceCheckList, TriggeredCheckCanonicalizesByAddress) {
+    IceCheckList cl;
+
+    auto canonical = std::make_shared<CandidatePair>();
+    canonical->priority = 777;
+    canonical->state = PairState::Waiting;
+    sockaddr_set_ipport(&canonical->local.addr, "192.168.1.11", 5001);
+    sockaddr_set_ipport(&canonical->remote.addr, "192.168.1.21", 6001);
+    cl.addPair(canonical);
+
+    // Different shared_ptr but same 5-tuple address pair.
+    auto shadow = std::make_shared<CandidatePair>();
+    shadow->priority = 1;
+    shadow->state = PairState::Waiting;
+    sockaddr_set_ipport(&shadow->local.addr, "192.168.1.11", 5001);
+    sockaddr_set_ipport(&shadow->remote.addr, "192.168.1.21", 6001);
+    cl.addTriggeredCheck(shadow);
+
+    auto next = cl.getNextPair();
+    ASSERT_TRUE(next != nullptr);
+    EXPECT_EQ(next, canonical);
+    EXPECT_EQ(canonical->state, PairState::InProgress);
+}
+
+TEST(IceCheckList, TriggeredCheckSkipsAlreadyInProgressCanonicalPair) {
+    IceCheckList cl;
+
+    auto canonical = std::make_shared<CandidatePair>();
+    canonical->state = PairState::InProgress;
+    sockaddr_set_ipport(&canonical->local.addr, "192.168.1.12", 5002);
+    sockaddr_set_ipport(&canonical->remote.addr, "192.168.1.22", 6002);
+    cl.addPair(canonical);
+
+    auto shadow = std::make_shared<CandidatePair>();
+    shadow->state = PairState::Waiting;
+    sockaddr_set_ipport(&shadow->local.addr, "192.168.1.12", 5002);
+    sockaddr_set_ipport(&shadow->remote.addr, "192.168.1.22", 6002);
+    cl.addTriggeredCheck(shadow);
+
+    auto next = cl.getNextPair();
+    EXPECT_EQ(next, nullptr);
+}
+
+TEST(IceCheckList, IsCompleteFalseWhenTriggeredQueueNotEmpty) {
+    IceCheckList cl;
+
+    auto pair = std::make_shared<CandidatePair>();
+    pair->state = PairState::Succeeded;
+    sockaddr_set_ipport(&pair->local.addr, "192.168.1.13", 5003);
+    sockaddr_set_ipport(&pair->remote.addr, "192.168.1.23", 6003);
+    cl.addPair(pair);
+
+    auto shadow = std::make_shared<CandidatePair>();
+    shadow->state = PairState::Waiting;
+    sockaddr_set_ipport(&shadow->local.addr, "192.168.1.13", 5003);
+    sockaddr_set_ipport(&shadow->remote.addr, "192.168.1.23", 6003);
+    cl.addTriggeredCheck(shadow);
+
+    EXPECT_FALSE(cl.isComplete());
+}
+
+TEST(IceCheckList, FindByAddresses) {
+    IceCheckList cl;
+
+    auto pair = std::make_shared<CandidatePair>();
+    sockaddr_set_ipport(&pair->local.addr, "192.168.1.10", 5000);
+    sockaddr_set_ipport(&pair->remote.addr, "192.168.1.20", 6000);
+    cl.addPair(pair);
+
+    sockaddr_u localAddr;
+    sockaddr_u remoteAddr;
+    sockaddr_set_ipport(&localAddr, "192.168.1.10", 5000);
+    sockaddr_set_ipport(&remoteAddr, "192.168.1.20", 6000);
+
+    auto found = cl.findByAddresses(localAddr, remoteAddr);
+    ASSERT_TRUE(found != nullptr);
+    EXPECT_EQ(found, pair);
+}
+
+TEST(IceCheckList, PruneKeepsHighestPriorityFoundationPair) {
+    IceCheckList cl;
+
+    auto low = std::make_shared<CandidatePair>();
+    low->local.foundation = "local-a";
+    low->remote.foundation = "remote-a";
+    low->priority = 100;
+    cl.addPair(low);
+
+    auto high = std::make_shared<CandidatePair>();
+    high->local.foundation = "local-a";
+    high->remote.foundation = "remote-a";
+    high->priority = 300;
+    cl.addPair(high);
+
+    auto unique = std::make_shared<CandidatePair>();
+    unique->local.foundation = "local-b";
+    unique->remote.foundation = "remote-b";
+    unique->priority = 200;
+    cl.addPair(unique);
+
+    cl.prune();
+
+    ASSERT_EQ(cl.size(), 2u);
+    EXPECT_TRUE(std::find(cl.pairs().begin(), cl.pairs().end(), high) != cl.pairs().end());
+    EXPECT_TRUE(std::find(cl.pairs().begin(), cl.pairs().end(), unique) != cl.pairs().end());
+}
+
 TEST(IceCheckList, AllFailed) {
     IceCheckList cl;
 

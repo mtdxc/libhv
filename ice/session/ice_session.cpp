@@ -37,6 +37,33 @@ static std::string randomString(int len) {
     return result;
 }
 
+static bool canPairCandidates(const IceCandidate& local, const IceCandidate& remote) {
+    return local.protocol == remote.protocol &&
+           local.componentId == remote.componentId &&
+           local.addr.sa.sa_family == remote.addr.sa.sa_family;
+}
+
+static const IceCandidate* findBestLocalForPrflx(
+    const std::vector<IceCandidate>& localCandidates,
+    hio_t* io, TransportProtocol protocol) {
+    if (io) {
+        const sockaddr* localAddr = hio_localaddr(io);
+        for (const auto& local : localCandidates) {
+            if (local.protocol != protocol) continue;
+            if (sockaddr_compare(&local.baseAddr, (const sockaddr_u*)localAddr) == 0) {
+                return &local;
+            }
+        }
+    }
+
+    for (const auto& local : localCandidates) {
+        if (local.protocol == protocol) {
+            return &local;
+        }
+    }
+    return nullptr;
+}
+
 IceSession::IceSession(IceMode mode, IceAgent* agent, hv::EventLoopPtr loop)
     : mode_(mode), agent_(agent), loop_(loop) {
     local_ufrag_ = randomString(8);
@@ -113,10 +140,7 @@ void IceSession::addRemoteCandidate(const IceCandidate& candidate) {
     if (state_ == IceState::Checking || state_ == IceState::Connected) {
         int newPairs = 0;
         for (const auto& local : local_candidates_) {
-            // Only pair same protocol and same component
-            if (local.protocol != candidate.protocol) continue;
-            if (local.componentId != candidate.componentId) continue;
-            if (local.addr.sa.sa_family != candidate.addr.sa.sa_family) continue;
+            if (!canPairCandidates(local, candidate)) continue;
 
             CandidatePairPtr pair = std::make_shared<CandidatePair>();
             pair->local = local;
@@ -281,10 +305,7 @@ void IceSession::formPairs() {
     int pairCount = 0;
     for (const auto& local : local_candidates_) {
         for (const auto& remote : remote_candidates_) {
-            // Only pair same protocol, component, and address family
-            if (local.protocol != remote.protocol) continue;
-            if (local.componentId != remote.componentId) continue;
-            if (local.addr.sa.sa_family != remote.addr.sa.sa_family) continue;
+            if (!canPairCandidates(local, remote)) continue;
 
             CandidatePairPtr pair = std::make_shared<CandidatePair>();
             pair->local = local;
@@ -556,28 +577,8 @@ void IceSession::onStunRequest(StunMessage& msg, const struct sockaddr* from, hi
         hlogi("IceSession %s onStunRequest discovered peer-reflexive candidate %s",
               local_ufrag_.c_str(), prflxCandidate.addrString().c_str());
 
-        // Create new pair — find the local candidate whose base address
-        // matches the local address the request was received on
-        const IceCandidate* bestLocal = nullptr;
-        if (io) {
-            const sockaddr* localAddr = hio_localaddr(io);
-            for (const auto& lc : local_candidates_) {
-                if (lc.protocol != prflxCandidate.protocol) continue;
-                if (sockaddr_compare(&lc.baseAddr, (const sockaddr_u*)localAddr) == 0) {
-                    bestLocal = &lc;
-                    break;
-                }
-            }
-        }
-        if (!bestLocal && !local_candidates_.empty()) {
-            // Fallback: use first candidate of matching protocol
-            for (const auto& lc : local_candidates_) {
-                if (lc.protocol == prflxCandidate.protocol) {
-                    bestLocal = &lc;
-                    break;
-                }
-            }
-        }
+        // Create new pair from the best local candidate for this inbound request.
+        const IceCandidate* bestLocal = findBestLocalForPrflx(local_candidates_, io, prflxCandidate.protocol);
 
         if (bestLocal) {
             CandidatePairPtr newPair = std::make_shared<CandidatePair>();
