@@ -606,9 +606,9 @@ TEST(PacketClassification, DataPacket) {
 // ────────────────────────────────────────────────────────────
 
 TEST(TurnState, ToString) {
-    EXPECT_STREQ(turnStateToString(TurnState::Idle), "Idle");
-    EXPECT_STREQ(turnStateToString(TurnState::Allocating), "Allocating");
-    EXPECT_STREQ(turnStateToString(TurnState::Allocated), "Allocated");
-    EXPECT_STREQ(turnStateToString(TurnState::Refreshing), "Refreshing");
-    EXPECT_STREQ(turnStateToString(TurnState::Failed), "Failed");
+    EXPECT_STREQ(turnStateString(TurnState::Idle), "Idle");
+    EXPECT_STREQ(turnStateString(TurnState::Allocating), "Allocating");
+    EXPECT_STREQ(turnStateString(TurnState::Allocated), "Allocated");
+    EXPECT_STREQ(turnStateString(TurnState::Refreshing), "Refreshing");
+    EXPECT_STREQ(turnStateString(TurnState::Failed), "Failed");
 }

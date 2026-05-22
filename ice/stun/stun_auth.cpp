@@ -1,10 +1,7 @@
 #include "stun_auth.h"
 #include <cstring>
 #include "md5.h"
-// We use libhv's sha1 implementation
-extern "C" {
 #include "sha1.h"
-}
 
 namespace ice {
 
