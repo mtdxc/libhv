@@ -29,16 +29,18 @@ struct TcpIceConnection {
 static constexpr int MAX_RETRANSMIT = 4;  // ICE check: 4 retransmits (~1.5s max)
 static constexpr uint32_t MAX_RTO = 800; // Cap RTO at 800ms
 struct StunTransaction {
-    IceAgent* agent = nullptr; // owning agent, also used as htimer userdata
     TransactionId id;
-    std::vector<uint8_t> msg; // encoded STUN message for retransmission
+    StunCallback callback;    // Callback on response or timeout
+    // retransmission
+    std::vector<uint8_t> msg;  // encoded STUN message for retransmission
     sockaddr_u destAddr;      // destination address for retransmission
     hio_t* io = nullptr;      // IO handle for retransmission
+    IceAgent* agent = nullptr;
+
     uint64_t sentTime = 0;    // ms
     int retransmitCount = 0;
     uint32_t rto = 50;                        // Initial RTO ms (50ms for ICE checks)
     htimer_t* timer = nullptr;                // Retransmit timer (userdata = this StunTransaction*)
-    StunCallback callback;                    // Callback on response or timeout
 
     ~StunTransaction() {
         if (timer) {
@@ -158,7 +160,6 @@ void IceAgent::stop() {
     if (loop_thread_) {
         loop_thread_->stop(true);
     }
-
 }
 
 IceSessionPtr IceAgent::createSession(IceMode mode) {
@@ -251,13 +252,13 @@ void IceAgent::onStunRetransmit(StunTransaction* txn) {
     // Defensive: verify txn is still in map
     auto it = transactions_.find(txn->id);
     if (it == transactions_.end() || it->second != txn) return;
-
+    auto id = TransactionIdStr(txn->id);
     // Check if maximum retransmissions exceeded (RFC 5389 Section 7.2.1)
     if (txn->retransmitCount >= MAX_RETRANSMIT) {
         char destStr[SOCKADDR_STRLEN] = {0};
         SOCKADDR_STR((struct sockaddr*)&txn->destAddr, destStr);
-        hlogi("IceAgent onStunRetransmit: transaction to %s timed out after %d retries",
-              destStr, txn->retransmitCount);
+        hlogi("IceAgent onStunRetransmit %s: to %s timed out after %d retries", 
+          id.c_str(), destStr, txn->retransmitCount);
         // Transaction timed out — notify callback with error
         if (txn->callback) {
             txn->callback(nullptr, -1); // code=-1 indicates timeout
@@ -270,7 +271,7 @@ void IceAgent::onStunRetransmit(StunTransaction* txn) {
     // Retransmit the STUN message
     send(txn->msg.data(), txn->msg.size(), &txn->destAddr.sa, txn->io);
     txn->retransmitCount++;
-    hlogd("IceAgent onStunRetransmit: retransmit #%d rto=%u", txn->retransmitCount, txn->rto);
+    hlogd("IceAgent onStunRetransmit %s: retransmit #%d rto=%u", id.c_str(), txn->retransmitCount, txn->rto);
 
     // Exponential backoff: RTO = min(RTO * 2, MAX_RTO)
     txn->rto = (std::min)(txn->rto * 2, MAX_RTO);
@@ -345,7 +346,8 @@ void IceAgent::processStunMsg(const uint8_t* data, size_t len, const struct sock
             transactions_.erase(it);
             delete txn; // ~StunTransaction() handles htimer_del
         } else {
-            hlogw("IceAgent processStunMsg: response from %s no matching transaction", addrStr);
+            hlogw("IceAgent processStunMsg: response from %s no matching transaction %s", 
+              addrStr, TransactionIdStr(msg.transactionId()));
         }
     }
 }

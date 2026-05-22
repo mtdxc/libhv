@@ -27,6 +27,16 @@ TransactionId stun_generate_transaction_id() {
     return id;
 }
 
+std::string TransactionIdStr(const TransactionId& id) {
+    std::string ret;
+    char hex[3];
+    for (auto& b : id) {
+        snprintf(hex, 3, "%02X", b);
+        ret += hex;
+    }
+    return ret;
+}
+
 size_t TurnTcpLength(const uint8_t* view, size_t len, int* pad_bytes) {
     *pad_bytes = 0;
     uint16_t pkt_len = read_be16(view + 2);

@@ -159,6 +159,7 @@ using TransactionId = std::array<uint8_t, 12>;
 
 // Generate random transaction ID
 TransactionId stun_generate_transaction_id();
+std::string TransactionIdStr(const TransactionId& id);
 
 // STUN Header: 20 bytes
 struct StunHeader {
@@ -192,14 +193,15 @@ public:
     uint16_t type() const { return header_.type; }
     uint16_t method() const { return stun_get_method(header_.type); }
     uint16_t cls() const { return stun_get_class(header_.type); }
+
     const TransactionId& transactionId() const { return header_.transaction_id; }
     void setTransactionId(const TransactionId& id) { header_.transaction_id = id; }
 
     // Attributes
+    const std::vector<StunAttribute>& attributes() const { return attrs_; }
+    const StunAttribute* getAttribute(uint16_t type) const;
     void addAttribute(uint16_t type, const void* data, size_t len);
     void addAttribute(const StunAttribute& attr);
-    const StunAttribute* getAttribute(uint16_t type) const;
-    const std::vector<StunAttribute>& attributes() const { return attrs_; }
 
     // Convenient attribute setters
     void addUsername(const std::string& username);

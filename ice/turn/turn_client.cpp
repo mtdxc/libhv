@@ -8,7 +8,7 @@
 
 namespace ice {
 
-const char* turnStateToString(TurnState state) {
+const char* turnStateString(TurnState state) {
     switch (state) {
         case TurnState::Idle: return "Idle";
         case TurnState::Allocating: return "Allocating";
@@ -46,7 +46,7 @@ const char* TurnClient::id() const {
 
 void TurnClient::setState(TurnState s, const char* reason) {
     if (state_ == s) return;
-    hlogi("TurnClient %s setState %s reason %s", id(), turnStateToString(s), reason);
+    hlogi("TurnClient %s setState %s reason %s", id(), turnStateString(s), reason);
     state_ = s;
     if (onStateChange) onStateChange(state_);
 }
@@ -120,7 +120,7 @@ int TurnClient::connectTcp() {
 
 void TurnClient::allocate() {
     if (state_ != TurnState::Idle && state_ != TurnState::Failed) {
-        hlogw("TurnClient %s allocate called in invalid state %s", id(), turnStateToString(state_));
+        hlogw("TurnClient %s allocate called in invalid state %s", id(), turnStateString(state_));
         return;
     }
 
