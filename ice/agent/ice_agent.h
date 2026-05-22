@@ -10,6 +10,7 @@
 #include <functional>
 
 #include "EventLoopThread.h"
+#include "EventLoopThreadPool.h"
 #include "ice_config.h"
 #include "../stun/stun_message.h"
 namespace ice {
@@ -26,11 +27,13 @@ class IceAgent {
     // Transactions
     std::map<TransactionId, StunTransaction*> transactions_;
 public:
-    // 当hio为nullptr，数据通过relay方式转发，否则通过hio指定的tcp或udp方式转发
-    void StunRequest(const StunMessage& msg, const struct sockaddr* addr, hio_t* io, StunCallback callback);
+    // StunRequest: send a STUN request and track the transaction.
+    // callback_loop: if non-null, the callback is dispatched to that loop (for cross-thread safety)
+    void StunRequest(const StunMessage& msg, const struct sockaddr* addr, hio_t* io,
+                     StunCallback callback, hv::EventLoopPtr callback_loop = nullptr);
 
     // Create agent with optional external event loop
-    // If loop is null, creates its own EventLoopThread
+    // If loop is null, creates its own EventLoopThread as acceptor loop
     explicit IceAgent(hv::EventLoopPtr loop = nullptr);
     ~IceAgent();
 
@@ -58,8 +61,8 @@ public:
     // Get local address
     struct sockaddr* udpLocalAddr() { return (struct sockaddr*)&udp_local_addr_; }
 
-    // Get event loop
-    hv::EventLoopPtr loop() const { return loop_; }
+    // Get event loop (returns acceptor loop)
+    hv::EventLoopPtr loop() const { return acceptor_loop_; }
 
     // Check if running
     bool isRunning() const { return running_; }
@@ -103,21 +106,36 @@ private:
     // STUN transaction retransmission
     void onStunRetransmit(StunTransaction* txn);
 
-    // TCP callbacks (static trampolines)
+    // TCP callbacks (static trampolines) — acceptor loop phase (unidentified)
     static void onTcpAccept(hio_t* io);
     static void onTcpConnect(hio_t* io);
     static void onTcpRecv(hio_t* io, void* buf, int readbytes);
     static void onTcpClose(hio_t* io);
 
+    // TCP callbacks — worker loop phase (after TCP io migrated to session loop)
+    static void onSessionTcpRecv(hio_t* io, void* buf, int readbytes);
+    static void onSessionTcpClose(hio_t* io);
+    static void onSessionTcpConnect(hio_t* io);
+
     void handleTcpRecv(hio_t* io, const uint8_t* data, size_t len);
     void identifyTcpConnection(hio_t* io, const uint8_t* data, size_t len);
+    // Migrate a TCP io from acceptor loop to session's worker loop.
+    // on_attached(io) is called inside the worker loop after hio_attach completes.
+    void migrateTcpToSession(hio_t* io, IceSession* session,
+                             std::function<void(hio_t*)> on_attached = nullptr);
+
+    // Get a worker loop for a new session (round-robin from pool, or acceptor loop)
+    hv::EventLoopPtr getWorkerLoop();
 
     // Extract local ufrag from STUN USERNAME attribute
     static std::string extractLocalUfrag(const uint8_t* data, size_t len);
 
     IceConfig config_;
-    hv::EventLoopPtr loop_;
-    std::unique_ptr<hv::EventLoopThread> loop_thread_; // owned if no external loop
+    // Acceptor loop: owns UDP/TCP server io, ufrag_map_, pair_map_, transactions_
+    hv::EventLoopPtr acceptor_loop_;
+    std::unique_ptr<hv::EventLoopThread> acceptor_loop_thread_; // owned if no external loop
+    // Worker pool: each session is bound to one worker loop from this pool
+    std::unique_ptr<hv::EventLoopThreadPool> worker_pool_;
 
     std::vector<std::shared_ptr<IceSession>> sessions_;
     bool running_ = false;

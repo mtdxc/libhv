@@ -48,6 +48,12 @@ public:
     void setTiebreaker(uint64_t tb) { tiebreaker_ = tb; }
 
     const char* id() const { return local_ufrag_.c_str(); }
+
+    // Get the event loop this session is bound to (worker loop)
+    hv::EventLoopPtr loop() const { return loop_; }
+
+    // Get the owning agent
+    IceAgent* agent() const { return agent_; }
     
     // Credentials
     std::string localUfrag() const { return local_ufrag_; }

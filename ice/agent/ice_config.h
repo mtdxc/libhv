@@ -63,6 +63,11 @@ struct IceConfig {
 
     // Software string (for STUN SOFTWARE attribute)
     std::string software = "libhv-ice/1.0";
+
+    // Worker thread pool size for ICE sessions.
+    // Each session is bound to one worker loop from the pool.
+    // 0 = disabled (all sessions share the acceptor loop, single-thread mode)
+    int workerThreadNum = 4;
 };
 
 } // namespace ice

@@ -252,7 +252,7 @@ void IceSession::sendStunBindingRequest(const struct sockaddr* server, const std
                 self->onGatheringComplete();
             }
         }
-    });
+    }, loop_);
     pending_gathering_requests_++;
 }
 
@@ -473,7 +473,7 @@ void IceSession::sendConnectivityCheck(CandidatePairPtr pair) {
         } else {
             onCheckFailure(pair, code);
         }
-    });
+    }, loop_);
 }
 
 void IceSession::onRecvData(const uint8_t* data, size_t len, const struct sockaddr* from) {
