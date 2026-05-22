@@ -14,7 +14,8 @@
 #include "ice_checklist.h"
 #include "../stun/stun_message.h"
 #include "../agent/ice_config.h"
-
+#include "../stun/stun_request_manager.h"
+#include <set>
 namespace ice {
 class IceAgent;
 // TURN allocation state (forward declaration from turn_client.h)
@@ -82,10 +83,12 @@ public:
     // TURN state notification (called by IceAgent)
     void onTurnStateChanged(TurnState state);
 
+    hv::EventLoopPtr loop() const { return loop_; }
     // Packet handlers (called by transport layer)
-    void onRecvData(const uint8_t* data, size_t len, const struct sockaddr* from);
+    void onRecvData(const uint8_t* data, size_t len, const struct sockaddr* from, hio_t* io);
     // STUN request handling
     void onStunRequest(StunMessage& req, const sockaddr* addr, hio_t* io);
+    bool onTcpAccepted(hio_t* io);
     void onTcpConnected(hio_t* io);
     void onTcpDisconnected(hio_t* io);
 
@@ -97,6 +100,8 @@ public:
 
     // Close session
     void close();
+    // 当hio为nullptr，数据通过relay方式转发，否则通过hio指定的tcp或udp方式转发
+    void StunRequest(const StunMessage& msg, const struct sockaddr* addr, hio_t* io, StunCallback callback);
 
 private:
     // State management
@@ -165,9 +170,10 @@ private:
     htimer_t* connectivity_timer_ = nullptr;
     int check_interval_ms_ = 20; // Ta: RFC 5245 recommended 20ms
 
-
+    std::set<hio_t*> ios_;
     // Gathering state
     int pending_gathering_requests_ = 0;
+    std::unique_ptr<StunRequestManager> stun_mgr_;
 };
 
 using IceSessionPtr = std::shared_ptr<IceSession>;

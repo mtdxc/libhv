@@ -18,12 +18,6 @@
 #endif
 
 namespace ice {
-// TCP connection state for ICE
-struct TcpIceConnection {
-    hio_t* io = nullptr;
-    IceSession* session = nullptr;
-    bool identified = false; // true after first STUN exchange
-};
 
 IceAgent::IceAgent(hv::EventLoopPtr loop) {
     if (loop) {
@@ -41,8 +35,6 @@ IceAgent::IceAgent(hv::EventLoopPtr loop) {
     tcp_unpack_setting_.length_field_bytes = 2;
     tcp_unpack_setting_.length_field_coding = ENCODE_BY_BIG_ENDIAN;
     tcp_unpack_setting_.length_adjustment = 0;
-
-    stun_request_manager_.reset(new StunRequestManager(loop_));
 }
 
 IceAgent::~IceAgent() {
@@ -112,7 +104,7 @@ void IceAgent::stop() {
 
     // Close TCP connections
     for (auto& kv : tcp_connections_) {
-        if (kv.second.io) hio_close(kv.second.io);
+        if (kv.second) hio_close(kv.second);
     }
     tcp_connections_.clear();
 
@@ -127,10 +119,6 @@ void IceAgent::stop() {
     }
     ufrag_map_.clear();
     pair_map_.clear();
-
-    if (stun_request_manager_) {
-        stun_request_manager_->clear();
-    }
 
     if (loop_thread_) {
         loop_thread_->stop(true);
@@ -193,82 +181,33 @@ void IceAgent::unregisterPair(const sockaddr_u& addr) {
     });
 }
 
-void IceAgent::StunRequest(const StunMessage& req, const struct sockaddr* server, hio_t* io,
-    std::function<void(StunMessage* resp, int code)> callback) {
-    if (stun_request_manager_) {
-        sockaddr_u destAddr;
-        memcpy(&destAddr.sa, server, SOCKADDR_LEN(server));
-        stun_request_manager_->request(req, [destAddr, io, this](const void* data, size_t len) {
-            return send(data, len, &destAddr.sa, io);
-        }, std::move(callback));
-    }
-}
-
-void IceAgent::processStunMsg(const uint8_t* data, size_t len, const struct sockaddr* addr, hio_t* io) {
-    StunMessage msg;
-    if (!StunMessage::decode(data, len, &msg)) return;
-
-    char addrStr[SOCKADDR_STRLEN] = {0};
-    SOCKADDR_STR(addr, addrStr);
-
-    if (msg.cls() == STUN_CLASS_REQUEST)
-    { // stun 请求 —— 必须有 USERNAME
-        if (msg.getUsername().empty()) {
-            hlogw("IceAgent processStunMsg: request from %s has no USERNAME, drop", addrStr);
-            return ;
-        }
-        std::string ufrag, username = msg.getUsername();
-        size_t colon = username.find(':');
-        if (colon != std::string::npos) {
-            ufrag = username.substr(0, colon);
-        }
-        if (!ufrag.empty()) {
-            auto it = ufrag_map_.find(ufrag);
-            if (it != ufrag_map_.end() && it->second) {
-                hlogd("IceAgent processStunMsg: request from %s -> session ufrag=%s",
-                      addrStr, ufrag.c_str());
-                it->second->onStunRequest(msg, addr, io);
-            } else {
-                hlogw("IceAgent processStunMsg: request from %s ufrag=%s not found",
-                      addrStr, ufrag.c_str());
+void dispatchData(IceSession* session, const uint8_t* data, size_t len, const struct sockaddr* addr, hio_t* io) {
+    if (!session) return;
+    if (session->loop()->isInLoopThread()) {
+        session->onRecvData(data, len, addr, io);
+    } else {
+        std::string temp((const char*)data, len);
+        sockaddr_u peerAddr;
+        memcpy(&peerAddr.sa, addr, SOCKADDR_LEN(addr));
+        std::weak_ptr<IceSession> weak_self = session->shared_from_this();
+        session->loop()->runInLoop([weak_self, temp, peerAddr, io]() {
+            if (auto session = weak_self.lock()) {
+                session->onRecvData((const uint8_t*)temp.data(), temp.size(), &peerAddr.sa, io);
             }
-        }
-    } else if (msg.cls() == STUN_CLASS_INDICATION) {
-        // INDICATION (e.g. TURN DATA indication) —— 路由到 TCP session 或 pair_map_
-        if (io && hio_type(io) == HIO_TYPE_TCP) {
-            uint32_t id = hio_id(io);
-            auto cit = tcp_connections_.find(id);
-            if (cit != tcp_connections_.end() && cit->second.session) {
-                cit->second.session->onStunRequest(msg, addr, io);
-                return;
-            }
-        }
-        // UDP: route via pair_map_
-        auto pit = pair_map_.find(*(sockaddr_u*)addr);
-        if (pit != pair_map_.end() && pit->second) {
-            pit->second->onStunRequest(msg, addr, io);
-        } else {
-            hlogd("IceAgent processStunMsg: indication from %s no handler", addrStr);
-        }
-    } else { // stun响应
-        if (stun_request_manager_ && stun_request_manager_->handleResponse(msg, 0)) {
-            hlogd("IceAgent processStunMsg: response from %s matched transaction", addrStr);
-        } else {
-            hlogw("IceAgent processStunMsg: response from %s no matching transaction %s", 
-              addrStr, TransactionIdStr(msg.transactionId()));
-        }
+        });
     }
 }
 
 void IceAgent::onRecvPdu(const uint8_t* data, size_t len, const sockaddr* addr, hio_t* io) {
     PacketType ptype = classifyPacket(data, len);
-    if (ptype == PacketType::STUN) {
-        processStunMsg(data, len, addr, io);
-    }
-    else{
-        auto it = pair_map_.find(*(sockaddr_u*)addr);
-        if (it != pair_map_.end()) {
-            it->second->onRecvData(data, len, addr);
+    auto it = pair_map_.find(*(sockaddr_u*)addr);
+    if (it != pair_map_.end()) {
+        auto session = it->second;
+        dispatchData(session, data, len, addr, io);
+    } else {
+        auto session = findSession(data, len);
+        if (session) {
+            dispatchData(session, data, len, addr, io);
         } else {
             char addrStr[SOCKADDR_STRLEN] = {0};
             SOCKADDR_STR(addr, addrStr);
@@ -279,7 +218,7 @@ void IceAgent::onRecvPdu(const uint8_t* data, size_t len, const sockaddr* addr, 
 
 std::string IceAgent::extractLocalUfrag(const uint8_t* data, size_t len) {
     if (len < 20) return "";
-
+    if (data[0] & 0xC0) return ""; // not STUN
     size_t offset = 20; // skip header
     uint16_t msg_len = ((uint16_t)data[2] << 8) | data[3];
     size_t end = 20 + msg_len;
@@ -325,14 +264,11 @@ int IceAgent::connectTcp(const struct sockaddr* addr, IceSession* session) {
     hio_t* io = hio_create_socket(loop, host, port, HIO_TYPE_TCP, HIO_CLIENT_SIDE);
     if (!io) return -1;
 
-    TcpIceConnection conn;
-    conn.io = io;
-    conn.session = session;
-    conn.identified = true;
     uint32_t id = hio_id(io);
-    tcp_connections_[id] = conn;
+    tcp_connections_[id] = io;
 
     hevent_set_userdata(io, this);
+    hio_set_context(io, session);
     hio_setcb_connect(io, onTcpConnect);
     hio_setcb_read(io, onTcpRecv);
     hio_setcb_close(io, onTcpClose);
@@ -353,14 +289,11 @@ void IceAgent::onTcpAccept(hio_t* io) {
         return;
     }
 
-    TcpIceConnection conn;
-    conn.io = io;
-    conn.session = nullptr;
-    conn.identified = false;
     uint32_t id = hio_id(io);
-    self->tcp_connections_[id] = conn;
+    self->tcp_connections_[id] = io;
 
     hevent_set_userdata(io, self);
+    hio_set_context(io, nullptr);
     hio_setcb_read(io, onTcpRecv);
     hio_setcb_close(io, onTcpClose);
     hio_set_unpack(io, &self->tcp_unpack_setting_);
@@ -368,55 +301,35 @@ void IceAgent::onTcpAccept(hio_t* io) {
 }
 
 void IceAgent::onTcpConnect(hio_t* io) {
-    IceAgent* self = (IceAgent*)hevent_userdata(io);
-    if (!self) return;
-
-    hio_read(io);
-
-    uint32_t id = hio_id(io);
-    auto it = self->tcp_connections_.find(id);
-    if (it != self->tcp_connections_.end() && it->second.session) {
-        it->second.session->onTcpConnected(io);
+    IceSession* session = (IceSession*)hio_context(io);
+    if (session) {
+        session->onTcpConnected(io);
     }
+    hio_read(io);
 }
 
 void IceAgent::onTcpClose(hio_t* io) {
     IceAgent* self = (IceAgent*)hevent_userdata(io);
-    if (!self) return;
+    if (self) {
+        self->tcp_connections_.erase(hio_id(io));
+    }
 
-    uint32_t id = hio_id(io);
-    auto it = self->tcp_connections_.find(id);
-    if (it != self->tcp_connections_.end()) {
-        if (it->second.session) {
-            it->second.session->onTcpDisconnected(io);
-        }
-        self->tcp_connections_.erase(it);
+    IceSession* session = (IceSession*)hio_context(io);
+    if (session) {
+        session->onTcpDisconnected(io);
     }
 }
 
 void IceAgent::onTcpRecv(hio_t* io, void* buf, int readbytes) {
-    IceAgent* self = (IceAgent*)hevent_userdata(io);
-    if (!self) return;
     if (readbytes <= 2) return;
-    self->handleTcpRecv(io, (const uint8_t*)buf + 2, readbytes - 2);
-}
-
-void IceAgent::handleTcpRecv(hio_t* io, const uint8_t* data, size_t len) {
-    uint32_t id = hio_id(io);
-    auto it = tcp_connections_.find(id);
-    if (it == tcp_connections_.end()) return;
-
-    if (!it->second.identified) {
-        identifyTcpConnection(io, data, len);
+    IceSession* session = (IceSession*)hio_context(io);
+    if (session) {
+        session->onRecvData((const uint8_t*)buf + 2, readbytes - 2, hio_peeraddr(io), io);
+        return;
     }
-
-    if (it->second.session) {
-        PacketType ptype = classifyPacket(data, len);
-        if (ptype == PacketType::STUN) {
-            processStunMsg(data, len, hio_peeraddr(io), io);
-        } else {
-            it->second.session->onRecvData(data, len, hio_peeraddr(io));
-        }
+    IceAgent* self = (IceAgent*)hevent_userdata(io);
+    if (self) {
+        self->identifyTcpConnection(io, (const uint8_t*)buf + 2, readbytes - 2);
     }
 }
 
@@ -429,29 +342,45 @@ void IceAgent::identifyTcpConnection(hio_t* io, const uint8_t* data, size_t len)
     }
     if (len < 20) return;
 
-    std::string local_ufrag = extractLocalUfrag(data, len);
-    if (local_ufrag.empty()) {
-        hlogw("IceAgent identifyTcpConnection: cannot extract ufrag, close io");
-        return;
-    }
-
-    auto sit = ufrag_map_.find(local_ufrag);
-    if (sit == ufrag_map_.end() || !sit->second) {
-        hlogw("IceAgent identifyTcpConnection: ufrag=%s not found, close io", local_ufrag.c_str());
+    auto session = findSession(data, len);
+    if (!session) {
+        hlogw("IceAgent identifyTcpConnection: session not found, close io");
         hio_close(io);
         return;
     }
 
-    uint32_t id = hio_id(io);
-    auto it = tcp_connections_.find(id);
-    if (it != tcp_connections_.end()) {
-        it->second.session = sit->second;
-        it->second.identified = true;
-        char peerStr[SOCKADDR_STRLEN] = {0};
-        SOCKADDR_STR(hio_peeraddr(io), peerStr);
-        hlogi("IceAgent identifyTcpConnection: io=%u peer=%s identified -> session ufrag=%s",
-              id, peerStr, local_ufrag.c_str());
+    char peerStr[SOCKADDR_STRLEN] = {0};
+    SOCKADDR_STR(hio_peeraddr(io), peerStr);
+    hlogi("IceAgent identifyTcpConnection: peer=%s identified -> session %s", peerStr, session->id());
+    if (session->loop()->isInLoopThread()) {
+        if (!session->onTcpAccepted(io)) return;
+        hio_set_context(io, session);
+        session->onRecvData(data, len, hio_peeraddr(io), io);
+    } else {
+        std::string temp((const char*)data, len);
+        sockaddr_u peerAddr;
+        memcpy(&peerAddr.sa, hio_peeraddr(io), SOCKADDR_LEN(hio_peeraddr(io)));
+        hio_detach(io); // detach io from current thread, will be used in session's loop
+        std::weak_ptr<IceSession> weak_self = session->shared_from_this();
+        session->loop()->runInLoop([weak_self, temp, peerAddr, io]() {
+            if (auto session = weak_self.lock()) {
+                if (!session->onTcpAccepted(io)) return;
+                hio_attach(hv::tlsEventLoop()->loop(), io);
+                hio_set_context(io, session.get());
+                session->onRecvData((const uint8_t*)temp.data(), temp.size(), &peerAddr.sa, io);
+            }
+        });
     }
+}
+
+IceSession* IceAgent::findSession(const uint8_t* data, size_t len){
+    std::string local_ufrag = extractLocalUfrag(data, len);
+    if (local_ufrag.empty()) return nullptr;
+    auto it = ufrag_map_.find(local_ufrag);
+    if (it != ufrag_map_.end()) {
+        return it->second;
+    }
+    return nullptr;
 }
 
 // addLoacalIceCandidate helper api

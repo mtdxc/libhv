@@ -11,7 +11,6 @@
 
 #include "EventLoopThread.h"
 #include "ice_config.h"
-#include "../stun/stun_request_manager.h"
 #include "../stun/stun_message.h"
 namespace ice {
 class IceSession;
@@ -21,8 +20,6 @@ struct TcpIceConnection;
 // IceAgent: Top-level API managing all ICE sessions and transport
 class IceAgent {
 public:
-    // 当hio为nullptr，数据通过relay方式转发，否则通过hio指定的tcp或udp方式转发
-    void StunRequest(const StunMessage& msg, const struct sockaddr* addr, hio_t* io, StunCallback callback);
 
     // Create agent with optional external event loop
     // If loop is null, creates its own EventLoopThread
@@ -71,6 +68,7 @@ public:
     // Session registration (by ufrag)
     void registerSession(const std::string& ufrag, IceSession* session);
     void unregisterSession(const std::string& ufrag);
+    IceSession* findSession(const uint8_t* data, size_t len);
 
     // Register established pair mapping (by address, UDP only)
     void registerPair(const sockaddr_u& addr, IceSession* session);
@@ -93,7 +91,6 @@ private:
 
     // UDP callbacks
     void onRecvPdu(const uint8_t* data, size_t len, const struct sockaddr* addr, hio_t* io);
-    void processStunMsg(const uint8_t* data, size_t len, const struct sockaddr* addr, hio_t* io);
 
     // TCP callbacks (static trampolines)
     static void onTcpAccept(hio_t* io);
@@ -101,7 +98,6 @@ private:
     static void onTcpRecv(hio_t* io, void* buf, int readbytes);
     static void onTcpClose(hio_t* io);
 
-    void handleTcpRecv(hio_t* io, const uint8_t* data, size_t len);
     void identifyTcpConnection(hio_t* io, const uint8_t* data, size_t len);
 
     // Extract local ufrag from STUN USERNAME attribute
@@ -125,9 +121,7 @@ private:
     hio_t* tcp_listen_io_ = nullptr;
     int tcp_port_ = 0;
     unpack_setting_t tcp_unpack_setting_;
-    std::unordered_map<uint32_t, TcpIceConnection> tcp_connections_;
-
-    std::unique_ptr<StunRequestManager> stun_request_manager_;
+    std::unordered_map<uint32_t, hio_t*> tcp_connections_;
 };
 
 } // namespace ice

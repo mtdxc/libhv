@@ -69,11 +69,21 @@ IceSession::IceSession(IceMode mode, IceAgent* agent, hv::EventLoopPtr loop)
     local_ufrag_ = randomString(8);
     local_pwd_ = randomString(24);
     tiebreaker_ = ((uint64_t)rand() << 32) | rand();
+    stun_mgr_.reset(new StunRequestManager(loop_));
     hlogi("IceSession %s created, local_pwd=%s, tiebreaker=%llu", id(), local_pwd_.c_str(), tiebreaker_);
 }
 
 IceSession::~IceSession() {
     close();
+}
+
+void IceSession::StunRequest(const StunMessage& req, const struct sockaddr* server, hio_t* io,
+    std::function<void(StunMessage* resp, int code)> callback) {
+    sockaddr_u destAddr;
+    memcpy(&destAddr.sa, server, SOCKADDR_LEN(server));
+    stun_mgr_->request(req, [destAddr, io, this](const void* data, size_t len) {
+        return agent_->send(data, len, &destAddr.sa, io);
+    }, std::move(callback));
 }
 
 void IceSession::close() {
@@ -98,11 +108,14 @@ void IceSession::close() {
             htimer_del(connectivity_timer_);
         }
     }
+    for (auto io : ios_) {
+        hio_close(io);
+    }
     check_timer_ = nullptr;
     keepalive_timer_ = nullptr;
     gathering_timer_ = nullptr;
     connectivity_timer_ = nullptr;
-
+    stun_mgr_->clear();
     // Unregister from agent
     if (agent_) {
         agent_->unregisterSession(local_ufrag_);
@@ -242,7 +255,7 @@ void IceSession::sendStunBindingRequest(const struct sockaddr* server, const std
     StunMessage msg(STUN_METHOD_BINDING, STUN_CLASS_REQUEST);
     std::weak_ptr<IceSession> weak_self = shared_from_this();
     hlogi("IceSession %s sendStunBindingRequest to %s", id(), serverStr.c_str());
-    agent_->StunRequest(msg, server, agent_->udpIo(), [weak_self, serverStr](StunMessage* resp, int code) {
+    StunRequest(msg, server, agent_->udpIo(), [weak_self, serverStr](StunMessage* resp, int code) {
         if (auto self = weak_self.lock()) {
             if (resp) {
                 self->onGatheringResponse(*resp, serverStr);
@@ -448,7 +461,7 @@ void IceSession::sendConnectivityCheck(CandidatePairPtr pair) {
           iceRoleString(role_), (int)useCandidate, (int)pair->nominated);
 
     std::weak_ptr<IceSession> weak_self = shared_from_this();
-    agent_->StunRequest(msg, &pair->remote.addr.sa, io, [weak_self, this, pair](StunMessage* resp, int code) {
+    StunRequest(msg, &pair->remote.addr.sa, io, [weak_self, this, pair](StunMessage* resp, int code) {
         auto self = weak_self.lock();
         if (!self) return;
         if (resp) {
@@ -476,9 +489,33 @@ void IceSession::sendConnectivityCheck(CandidatePairPtr pair) {
     });
 }
 
-void IceSession::onRecvData(const uint8_t* data, size_t len, const struct sockaddr* from) {
-    if (onData) {
-        onData(data, len);
+void IceSession::onRecvData(const uint8_t* data, size_t len, const struct sockaddr* from, hio_t* io) {
+    PacketType ptype = classifyPacket(data, len);
+    switch (ptype) {
+    case PacketType::STUN:
+    {
+        StunMessage msg;
+        if (!StunMessage::decode(data, len, &msg))
+            break;
+        if (msg.cls() == STUN_CLASS_REQUEST)
+            onStunRequest(msg, from, io);
+        else
+            stun_mgr_->handleResponse(msg, 0);
+        break;
+    }
+    case PacketType::DATA:
+        if (onData) {
+            onData(data, len);
+        }
+        break;
+    default:
+        {
+            char fromStr[SOCKADDR_STRLEN] = {0};
+            SOCKADDR_STR(from, fromStr);
+            hlogi("IceSession %s onRecvData skip %d unknown packet type from %s",
+                id(), len, fromStr);
+            break;
+        }
     }
 }
 
@@ -750,7 +787,17 @@ int IceSession::send(const void* data, size_t len) {
     return agent_->send(data, len, &selected_pair_->remote.addr.sa, io);
 }
 
+bool IceSession::onTcpAccepted(hio_t* io) {
+    bool ret = false;
+    if (state_ != IceState::Closed) {
+        ios_.insert(io);
+        ret = true;
+    }
+    return ret;
+}
+
 void IceSession::onTcpConnected(hio_t* io) {
+    ios_.insert(io);
     // Associate TCP connection with the matching pair
     sockaddr_u* peeraddr = (sockaddr_u*)hio_peeraddr(io);
     char peerStr[SOCKADDR_STRLEN] = {0};
@@ -770,6 +817,7 @@ void IceSession::onTcpConnected(hio_t* io) {
 }
 
 void IceSession::onTcpDisconnected(hio_t* io) {
+    ios_.erase(io);
     // Mark associated pairs as failed
     for (auto& pair : checklist_.pairs()) {
         if (pair->io == io) {
