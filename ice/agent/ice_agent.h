@@ -11,20 +11,15 @@
 
 #include "EventLoopThread.h"
 #include "ice_config.h"
+#include "../stun/stun_request_manager.h"
 #include "../stun/stun_message.h"
 namespace ice {
 class IceSession;
 class TurnClient;
-struct StunTransaction;
 struct TcpIceConnection;
-
-// STUN Transaction for tracking requests
-using StunCallback = std::function<void(StunMessage* resp, int code)>;
 
 // IceAgent: Top-level API managing all ICE sessions and transport
 class IceAgent {
-    // Transactions
-    std::map<TransactionId, StunTransaction*> transactions_;
 public:
     // 当hio为nullptr，数据通过relay方式转发，否则通过hio指定的tcp或udp方式转发
     void StunRequest(const StunMessage& msg, const struct sockaddr* addr, hio_t* io, StunCallback callback);
@@ -100,9 +95,6 @@ private:
     void onRecvPdu(const uint8_t* data, size_t len, const struct sockaddr* addr, hio_t* io);
     void processStunMsg(const uint8_t* data, size_t len, const struct sockaddr* addr, hio_t* io);
 
-    // STUN transaction retransmission
-    void onStunRetransmit(StunTransaction* txn);
-
     // TCP callbacks (static trampolines)
     static void onTcpAccept(hio_t* io);
     static void onTcpConnect(hio_t* io);
@@ -134,6 +126,8 @@ private:
     int tcp_port_ = 0;
     unpack_setting_t tcp_unpack_setting_;
     std::unordered_map<uint32_t, TcpIceConnection> tcp_connections_;
+
+    std::unique_ptr<StunRequestManager> stun_request_manager_;
 };
 
 } // namespace ice

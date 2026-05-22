@@ -5,7 +5,6 @@
 #include "../turn/turn_client.h"
 #include "hloop.h"
 #include "hlog.h"
-#include <algorithm>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -26,30 +25,6 @@ struct TcpIceConnection {
     bool identified = false; // true after first STUN exchange
 };
 
-static constexpr int MAX_RETRANSMIT = 4;  // ICE check: 4 retransmits (~1.5s max)
-static constexpr uint32_t MAX_RTO = 800; // Cap RTO at 800ms
-struct StunTransaction {
-    TransactionId id;
-    StunCallback callback;    // Callback on response or timeout
-    // retransmission
-    std::vector<uint8_t> msg;  // encoded STUN message for retransmission
-    sockaddr_u destAddr;      // destination address for retransmission
-    hio_t* io = nullptr;      // IO handle for retransmission
-    IceAgent* agent = nullptr;
-
-    uint64_t sentTime = 0;    // ms
-    int retransmitCount = 0;
-    uint32_t rto = 50;                        // Initial RTO ms (50ms for ICE checks)
-    htimer_t* timer = nullptr;                // Retransmit timer (userdata = this StunTransaction*)
-
-    ~StunTransaction() {
-        if (timer) {
-            htimer_del(timer);
-            timer = nullptr;
-        }
-    }
-};
-
 IceAgent::IceAgent(hv::EventLoopPtr loop) {
     if (loop) {
         loop_ = loop;
@@ -66,6 +41,8 @@ IceAgent::IceAgent(hv::EventLoopPtr loop) {
     tcp_unpack_setting_.length_field_bytes = 2;
     tcp_unpack_setting_.length_field_coding = ENCODE_BY_BIG_ENDIAN;
     tcp_unpack_setting_.length_adjustment = 0;
+
+    stun_request_manager_.reset(new StunRequestManager(loop_));
 }
 
 IceAgent::~IceAgent() {
@@ -151,11 +128,9 @@ void IceAgent::stop() {
     ufrag_map_.clear();
     pair_map_.clear();
 
-    // Cancel pending transactions
-    for (auto& kv : transactions_) {
-        delete kv.second; // ~StunTransaction() handles htimer_del
+    if (stun_request_manager_) {
+        stun_request_manager_->clear();
     }
-    transactions_.clear();
 
     if (loop_thread_) {
         loop_thread_->stop(true);
@@ -220,73 +195,13 @@ void IceAgent::unregisterPair(const sockaddr_u& addr) {
 
 void IceAgent::StunRequest(const StunMessage& req, const struct sockaddr* server, hio_t* io,
     std::function<void(StunMessage* resp, int code)> callback) {
-    auto encoded = req.encode();
-    send(encoded.data(), encoded.size(), server, io);
-    if (callback) {
-        auto* txn = new StunTransaction();
-        txn->id = req.transactionId();
-        txn->msg = std::move(encoded);
-        txn->callback = callback;
-        txn->agent = this;
-        memcpy(&txn->destAddr, server, SOCKADDR_LEN(server));
-        txn->io = io;
-        txn->sentTime = hloop_now_ms(loop_->loop());
-        txn->rto = 50; // RFC 5389 initial RTO (50ms for ICE checks)
-
-        // Start retransmission timer (one-shot, rescheduled on each retransmit)
-        // StunTransaction* itself is the htimer userdata
-        htimer_t* timer = htimer_add(loop_->loop(), [](htimer_t* t) {
-            auto* txn = (StunTransaction*)hevent_userdata(t);
-            if (txn && txn->agent) {
-                txn->agent->onStunRetransmit(txn);
-            }
-        }, txn->rto, 0);
-        hevent_set_userdata(timer, txn);
-        txn->timer = timer;
-
-        transactions_[txn->id] = txn;
+    if (stun_request_manager_) {
+        sockaddr_u destAddr;
+        memcpy(&destAddr.sa, server, SOCKADDR_LEN(server));
+        stun_request_manager_->request(req, [destAddr, io, this](const void* data, size_t len) {
+            return send(data, len, &destAddr.sa, io);
+        }, std::move(callback));
     }
-}
-
-void IceAgent::onStunRetransmit(StunTransaction* txn) {
-    // Defensive: verify txn is still in map
-    auto it = transactions_.find(txn->id);
-    if (it == transactions_.end() || it->second != txn) return;
-    auto id = TransactionIdStr(txn->id);
-    // Check if maximum retransmissions exceeded (RFC 5389 Section 7.2.1)
-    if (txn->retransmitCount >= MAX_RETRANSMIT) {
-        char destStr[SOCKADDR_STRLEN] = {0};
-        SOCKADDR_STR((struct sockaddr*)&txn->destAddr, destStr);
-        hlogi("IceAgent onStunRetransmit %s: to %s timed out after %d retries", 
-          id.c_str(), destStr, txn->retransmitCount);
-        // Transaction timed out — notify callback with error
-        if (txn->callback) {
-            txn->callback(nullptr, -1); // code=-1 indicates timeout
-        }
-        transactions_.erase(it);
-        delete txn; // ~StunTransaction() handles htimer_del
-        return;
-    }
-
-    // Retransmit the STUN message
-    send(txn->msg.data(), txn->msg.size(), &txn->destAddr.sa, txn->io);
-    txn->retransmitCount++;
-    hlogd("IceAgent onStunRetransmit %s: retransmit #%d rto=%u", id.c_str(), txn->retransmitCount, txn->rto);
-
-    // Exponential backoff: RTO = min(RTO * 2, MAX_RTO)
-    txn->rto = (std::min)(txn->rto * 2, MAX_RTO);
-
-    // Delete old timer and schedule a new one-shot timer
-    if (txn->timer) {
-        htimer_del(txn->timer);
-    }
-    txn->timer = htimer_add(loop_->loop(), [](htimer_t* t) {
-        auto* txn = (StunTransaction*)hevent_userdata(t);
-        if (txn && txn->agent) {
-            txn->agent->onStunRetransmit(txn);
-        }
-    }, txn->rto, 0);
-    hevent_set_userdata(txn->timer, txn);
 }
 
 void IceAgent::processStunMsg(const uint8_t* data, size_t len, const struct sockaddr* addr, hio_t* io) {
@@ -336,15 +251,8 @@ void IceAgent::processStunMsg(const uint8_t* data, size_t len, const struct sock
             hlogd("IceAgent processStunMsg: indication from %s no handler", addrStr);
         }
     } else { // stun响应
-        auto it = transactions_.find(msg.transactionId());
-        if (it != transactions_.end()) {
+        if (stun_request_manager_ && stun_request_manager_->handleResponse(msg, 0)) {
             hlogd("IceAgent processStunMsg: response from %s matched transaction", addrStr);
-            StunTransaction* txn = it->second;
-            if (txn->callback) {
-                txn->callback(&msg, 0);
-            }
-            transactions_.erase(it);
-            delete txn; // ~StunTransaction() handles htimer_del
         } else {
             hlogw("IceAgent processStunMsg: response from %s no matching transaction %s", 
               addrStr, TransactionIdStr(msg.transactionId()));

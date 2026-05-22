@@ -1,4 +1,5 @@
 set(ICE_SRCS
+    stun/stun_request_manager.cpp
     stun/stun_message.cpp
     stun/stun_auth.cpp
     session/ice_candidate.cpp
@@ -11,6 +12,7 @@ set(ICE_SRCS
 
 set(ICE_HEADERS
     ice.h
+    stun/stun_request_manager.h
     stun/stun_message.h
     stun/stun_auth.h
     session/ice_candidate.h
