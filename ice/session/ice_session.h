@@ -13,10 +13,10 @@
 #include "candidate_pair.h"
 #include "ice_checklist.h"
 #include "../stun/stun_message.h"
-#include "../agent/ice_agent.h"
+#include "../agent/ice_config.h"
 
 namespace ice {
-
+class IceAgent;
 // TURN allocation state (forward declaration from turn_client.h)
 enum class TurnState;
 
@@ -35,7 +35,7 @@ const char* iceStateString(IceState state);
 
 
 // ICE Session - one per peer connection component
-class IceSession : public IDataRecv, public std::enable_shared_from_this<IceSession> {
+class IceSession : public std::enable_shared_from_this<IceSession> {
 public:
     IceSession(IceMode mode, IceAgent* agent, hv::EventLoopPtr loop);
     ~IceSession();
@@ -43,8 +43,10 @@ public:
     // Configuration
     void setRole(IceRole role) { role_ = role; }
     IceRole role() const { return role_; }
+
     void setNomination(NominationMode mode) { nomination_ = mode; }
     void setTiebreaker(uint64_t tb) { tiebreaker_ = tb; }
+
     const char* id() const { return local_ufrag_.c_str(); }
     
     // Credentials
@@ -81,11 +83,11 @@ public:
     void onTurnStateChanged(TurnState state);
 
     // Packet handlers (called by transport layer)
-    void onRecvData(const uint8_t* data, size_t len, const struct sockaddr* from) override;
+    void onRecvData(const uint8_t* data, size_t len, const struct sockaddr* from);
     // STUN request handling
-    void onStunRequest(StunMessage& req, const sockaddr* addr, hio_t* io) override;
-    void onTcpConnected(hio_t* io) override;
-    void onTcpDisconnected(hio_t* io) override;
+    void onStunRequest(StunMessage& req, const sockaddr* addr, hio_t* io);
+    void onTcpConnected(hio_t* io);
+    void onTcpDisconnected(hio_t* io);
 
     // Callbacks
     std::function<void(IceState)> onStateChange;

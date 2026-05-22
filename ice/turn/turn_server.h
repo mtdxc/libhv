@@ -9,11 +9,10 @@
 #include <vector>
 #include <cstdint>
 
-#include "EventLoop.h"
+#include "EventLoopThread.h"
 #include "hsocket.h"
 
 #include "../stun/stun_message.h"
-#include "../agent/ice_agent.h"   // IDataRecv, SockaddrCompare
 
 namespace ice {
 

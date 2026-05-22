@@ -22,8 +22,7 @@ namespace ice {
 // TCP connection state for ICE
 struct TcpIceConnection {
     hio_t* io = nullptr;
-    IDataRecv* session = nullptr;
-    std::string ufrag;       // associated ufrag once identified
+    IceSession* session = nullptr;
     bool identified = false; // true after first STUN exchange
 };
 
@@ -194,7 +193,7 @@ int IceAgent::send(const void* data, size_t len, const struct sockaddr* addr, hi
     }
 }
 
-void IceAgent::registerSession(const std::string& ufrag, IDataRecv* session) {
+void IceAgent::registerSession(const std::string& ufrag, IceSession* session) {
     loop_->runInLoop([this, ufrag, session]() {
         ufrag_map_[ufrag] = session;
     });
@@ -206,7 +205,7 @@ void IceAgent::unregisterSession(const std::string& ufrag) {
     });
 }
 
-void IceAgent::registerPair(const sockaddr_u& addr, IDataRecv* session) {
+void IceAgent::registerPair(const sockaddr_u& addr, IceSession* session) {
     loop_->runInLoop([this, addr, session]() {
         pair_map_[addr] = session;
     });
@@ -397,7 +396,7 @@ std::string IceAgent::extractLocalUfrag(const uint8_t* data, size_t len) {
 
 // ---- TCP APIs ----
 
-int IceAgent::connectTcp(const struct sockaddr* addr, IDataRecv* session) {
+int IceAgent::connectTcp(const struct sockaddr* addr, IceSession* session) {
     hloop_t* loop = loop_->loop();
     if (!loop) return -1;
 
@@ -412,7 +411,7 @@ int IceAgent::connectTcp(const struct sockaddr* addr, IDataRecv* session) {
         inet_ntop(AF_INET6, &addr6->sin6_addr, host, sizeof(host));
         port = ntohs(addr6->sin6_port);
     }
-    hlogi("IceAgent connectTcp %s:%d with %p", host, port, session);
+    hlogi("IceAgent %s connectTcp %s:%d", session->id(), host, port);
     hio_t* io = hio_create_socket(loop, host, port, HIO_TYPE_TCP, HIO_CLIENT_SIDE);
     if (!io) return -1;
 
@@ -537,7 +536,6 @@ void IceAgent::identifyTcpConnection(hio_t* io, const uint8_t* data, size_t len)
     auto it = tcp_connections_.find(id);
     if (it != tcp_connections_.end()) {
         it->second.session = sit->second;
-        it->second.ufrag = local_ufrag;
         it->second.identified = true;
         char peerStr[SOCKADDR_STRLEN] = {0};
         SOCKADDR_STR(hio_peeraddr(io), peerStr);

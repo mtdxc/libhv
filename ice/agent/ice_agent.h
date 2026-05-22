@@ -18,14 +18,6 @@ class TurnClient;
 struct StunTransaction;
 struct TcpIceConnection;
 
-class IDataRecv {
-public:
-    virtual void onRecvData(const uint8_t* data, size_t len, const sockaddr* addr) = 0;
-    virtual void onStunRequest(StunMessage& req, const sockaddr* addr, hio_t* io) = 0;
-    virtual void onTcpConnected(hio_t* io) {}
-    virtual void onTcpDisconnected(hio_t* io) {}
-};
-
 // STUN Transaction for tracking requests
 using StunCallback = std::function<void(StunMessage* resp, int code)>;
 
@@ -78,15 +70,15 @@ public:
     int send(const void* data, size_t len, const struct sockaddr* addr, hio_t* io);
 
     // TCP connect / send / close
-    int connectTcp(const struct sockaddr* addr, IDataRecv* session);
+    int connectTcp(const struct sockaddr* addr, IceSession* session);
     void closeTcpConnection(hio_t* io);
 
     // Session registration (by ufrag)
-    void registerSession(const std::string& ufrag, IDataRecv* session);
+    void registerSession(const std::string& ufrag, IceSession* session);
     void unregisterSession(const std::string& ufrag);
 
     // Register established pair mapping (by address, UDP only)
-    void registerPair(const sockaddr_u& addr, IDataRecv* session);
+    void registerPair(const sockaddr_u& addr, IceSession* session);
     void unregisterPair(const sockaddr_u& addr);
 
     // ---- TURN relay APIs (used by IceSession) ----
@@ -130,12 +122,12 @@ private:
     std::vector<std::shared_ptr<IceSession>> sessions_;
     bool running_ = false;
 
-    std::unordered_map<std::string, IDataRecv*> ufrag_map_;
+    std::unordered_map<std::string, IceSession*> ufrag_map_;
     // ---- UDP state ----
     hio_t* udp_io_ = nullptr;
     int udp_port_ = 0;
     sockaddr_u udp_local_addr_;
-    std::map<sockaddr_u, IDataRecv*, SockaddrCompare> pair_map_;
+    std::map<sockaddr_u, IceSession*, SockaddrCompare> pair_map_;
 
     // ---- TCP state ----
     hio_t* tcp_listen_io_ = nullptr;
