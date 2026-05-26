@@ -9,8 +9,8 @@
 #include <map>
 #include <functional>
 
-#include "EventLoopThread.h"
 #include "ice_config.h"
+#include "EventLoopThreadPool.h"
 #include "../stun/stun_message.h"
 namespace ice {
 class IceSession;
@@ -23,13 +23,13 @@ public:
 
     // Create agent with optional external event loop
     // If loop is null, creates its own EventLoopThread
-    explicit IceAgent(hv::EventLoopPtr loop = nullptr);
+    IceAgent();
     ~IceAgent();
 
     // Configuration (must be called before start())
     void setConfig(const IceConfig& config);
     const IceConfig& config() const { return config_; }
-
+    void setThreadNum(int num) { loops_.setThreadNum(num); }
     // Start transport (bind ports)
     // Returns 0 on success, <0 on error
     int start();
@@ -49,9 +49,6 @@ public:
 
     // Get local address
     struct sockaddr* udpLocalAddr() { return (struct sockaddr*)&udp_local_addr_; }
-
-    // Get event loop
-    hv::EventLoopPtr loop() const { return loop_; }
 
     // Check if running
     bool isRunning() const { return running_; }
@@ -104,8 +101,7 @@ private:
     static std::string extractLocalUfrag(const uint8_t* data, size_t len);
 
     IceConfig config_;
-    hv::EventLoopPtr loop_;
-    std::unique_ptr<hv::EventLoopThread> loop_thread_; // owned if no external loop
+    hv::EventLoopThreadPool loops_;
 
     std::vector<std::shared_ptr<IceSession>> sessions_;
     bool running_ = false;
@@ -116,6 +112,7 @@ private:
     int udp_port_ = 0;
     sockaddr_u udp_local_addr_;
     std::map<sockaddr_u, IceSession*, SockaddrCompare> pair_map_;
+    std::recursive_mutex mutex_;
 
     // ---- TCP state ----
     hio_t* tcp_listen_io_ = nullptr;

@@ -19,14 +19,7 @@
 
 namespace ice {
 
-IceAgent::IceAgent(hv::EventLoopPtr loop) {
-    if (loop) {
-        loop_ = loop;
-    } else {
-        loop_thread_.reset(new hv::EventLoopThread());
-        loop_ = loop_thread_->loop();
-    }
-
+IceAgent::IceAgent() {
     memset(&tcp_unpack_setting_, 0, sizeof(unpack_setting_t));
     tcp_unpack_setting_.mode = UNPACK_BY_LENGTH_FIELD;
     tcp_unpack_setting_.package_max_length = DEFAULT_PACKAGE_MAX_LENGTH;
@@ -47,8 +40,8 @@ void IceAgent::setConfig(const IceConfig& config) {
 
 int IceAgent::start() {
     if (running_) return 0;
-
-    hloop_t* loop = loop_->loop();
+    loops_.start();
+    hloop_t* loop = loops_.loop()->loop();
     if (!loop) return -1;
 
     // Create UDP server
@@ -80,9 +73,6 @@ int IceAgent::start() {
         tcp_port_ = sockaddr_port((sockaddr_u*)hio_localaddr(tcp_listen_io_));
     }
 
-    if (loop_thread_ && !loop_thread_->isRunning()) {
-        loop_thread_->start();
-    }
     hlogi("IceAgent start udpPort=%d tcpPort=%d", udp_port_, tcp_port_);
     running_ = true;
     return 0;
@@ -120,19 +110,19 @@ void IceAgent::stop() {
     ufrag_map_.clear();
     pair_map_.clear();
 
-    if (loop_thread_) {
-        loop_thread_->stop(true);
-    }
+    loops_.stop(true);
 }
 
 IceSessionPtr IceAgent::createSession(IceMode mode) {
-    auto session = std::make_shared<IceSession>(mode, this, loop_);
+    auto session = std::make_shared<IceSession>(mode, this, loops_.loop());
+    std::lock_guard<decltype(mutex_)> lock(mutex_);
     sessions_.push_back(session);
     return session;
 }
 
 void IceAgent::destroySession(const IceSessionPtr& session) {
     session->close();
+    std::lock_guard<decltype(mutex_)> lock(mutex_);
     sessions_.erase(
         std::remove(sessions_.begin(), sessions_.end(), session),
         sessions_.end());
@@ -158,27 +148,23 @@ int IceAgent::send(const void* data, size_t len, const struct sockaddr* addr, hi
 }
 
 void IceAgent::registerSession(const std::string& ufrag, IceSession* session) {
-    loop_->runInLoop([this, ufrag, session]() {
-        ufrag_map_[ufrag] = session;
-    });
+    std::lock_guard<decltype(mutex_)> lock(mutex_);
+    ufrag_map_[ufrag] = session;
 }
 
 void IceAgent::unregisterSession(const std::string& ufrag) {
-    loop_->runInLoop([this, ufrag]() {
-        ufrag_map_.erase(ufrag);
-    });
+    std::lock_guard<decltype(mutex_)> lock(mutex_);
+    ufrag_map_.erase(ufrag);
 }
 
 void IceAgent::registerPair(const sockaddr_u& addr, IceSession* session) {
-    loop_->runInLoop([this, addr, session]() {
-        pair_map_[addr] = session;
-    });
+    std::lock_guard<decltype(mutex_)> lock(mutex_);
+    pair_map_[addr] = session;
 }
 
 void IceAgent::unregisterPair(const sockaddr_u& addr) {
-    loop_->runInLoop([this, addr]() {
-        pair_map_.erase(addr);
-    });
+    std::lock_guard<decltype(mutex_)> lock(mutex_);
+    pair_map_.erase(addr);
 }
 
 void dispatchData(IceSession* session, const uint8_t* data, size_t len, const struct sockaddr* addr, hio_t* io) {
@@ -246,8 +232,8 @@ std::string IceAgent::extractLocalUfrag(const uint8_t* data, size_t len) {
 // ---- TCP APIs ----
 
 int IceAgent::connectTcp(const struct sockaddr* addr, IceSession* session) {
-    hloop_t* loop = loop_->loop();
-    if (!loop) return -1;
+    if (!session || !addr || !session->loop()) return -1;
+    auto loop = session->loop();
 
     char host[SOCKADDR_STRLEN] = {0};
     int port = 0;
@@ -261,7 +247,7 @@ int IceAgent::connectTcp(const struct sockaddr* addr, IceSession* session) {
         port = ntohs(addr6->sin6_port);
     }
     hlogi("IceAgent %s connectTcp %s:%d", session->id(), host, port);
-    hio_t* io = hio_create_socket(loop, host, port, HIO_TYPE_TCP, HIO_CLIENT_SIDE);
+    hio_t* io = hio_create_socket(loop->loop(), host, port, HIO_TYPE_TCP, HIO_CLIENT_SIDE);
     if (!io) return -1;
 
     uint32_t id = hio_id(io);
@@ -290,6 +276,7 @@ void IceAgent::onTcpAccept(hio_t* io) {
     }
 
     uint32_t id = hio_id(io);
+    std::lock_guard<decltype(self->mutex_)> lock(self->mutex_);
     self->tcp_connections_[id] = io;
 
     hevent_set_userdata(io, self);
@@ -311,6 +298,7 @@ void IceAgent::onTcpConnect(hio_t* io) {
 void IceAgent::onTcpClose(hio_t* io) {
     IceAgent* self = (IceAgent*)hevent_userdata(io);
     if (self) {
+        std::unique_lock<decltype(self->mutex_)> lock(self->mutex_);
         self->tcp_connections_.erase(hio_id(io));
     }
 
@@ -376,6 +364,7 @@ void IceAgent::identifyTcpConnection(hio_t* io, const uint8_t* data, size_t len)
 IceSession* IceAgent::findSession(const uint8_t* data, size_t len){
     std::string local_ufrag = extractLocalUfrag(data, len);
     if (local_ufrag.empty()) return nullptr;
+    std::unique_lock<decltype(mutex_)> lock(mutex_);
     auto it = ufrag_map_.find(local_ufrag);
     if (it != ufrag_map_.end()) {
         return it->second;
@@ -531,7 +520,7 @@ void IceAgent::allocateTurn() {
 
     for (const auto& server : config_.turnServers) {
 
-        turn_client_ = std::make_shared<TurnClient>(loop_, server);
+        turn_client_ = std::make_shared<TurnClient>(loops_.loop(), server);
 
         // Route peer data received via TURN to the appropriate session
         turn_client_->onData = [this](const void* data, size_t len, const struct sockaddr* peerAddr) {
