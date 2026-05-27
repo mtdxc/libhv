@@ -8,13 +8,16 @@
 #include <map>
 #include <vector>
 #include <cstdint>
-
-#include "EventLoopThread.h"
+#include <mutex>
+#include <list>
+#include "EventLoopThreadPool.h"
 #include "hsocket.h"
 
 #include "../stun/stun_message.h"
 
 namespace ice {
+
+class TurnServer;
 
 // ────────────────────────────────────────────────────────────
 // TURN server configuration
@@ -38,7 +41,10 @@ struct TurnServerOptions {
 // ────────────────────────────────────────────────────────────
 // Per-allocation data
 // ────────────────────────────────────────────────────────────
-struct TurnAllocation {
+struct TurnAllocation : public std::enable_shared_from_this<TurnAllocation> {
+    hv::EventLoopPtr loop;
+    std::string allocKey;
+
     sockaddr_u  clientAddr;  // who did ALLOCATE
     hio_t*      clientIo;    // IO channel toward the client
 
@@ -58,12 +64,19 @@ struct TurnAllocation {
     // Channel bindings: channel number -> peer addr
     struct ChannelEntry {
         uint16_t   channelNumber;
-        sockaddr_u peerAddr;
+        std::shared_ptr<sockaddr_u> peerAddr;
         uint64_t   expireTime; // ms
     };
     std::unordered_map<uint16_t, ChannelEntry> channels;
     // Reverse map: peer addr -> channel number
     std::map<sockaddr_u, uint16_t, SockaddrCompare> peerToChannel;
+public:
+    ~TurnAllocation() { close(); }
+    void forwardData(const void* data, size_t len, std::shared_ptr<sockaddr_u> to);
+    void onRelayRecv(const void* data, size_t len, const struct sockaddr* from, hio_t* relayIo);
+    void bindRelaySocket(std::string host, int port);
+    void close();
+    void addChannelBinding(uint16_t channel, std::shared_ptr<sockaddr_u> peerAddr);
 };
 
 // ────────────────────────────────────────────────────────────
@@ -75,7 +88,7 @@ struct TurnAllocation {
 // ────────────────────────────────────────────────────────────
 class TurnServer {
 public:
-    explicit TurnServer(hv::EventLoopPtr loop = nullptr);
+    explicit TurnServer();
     ~TurnServer();
 
     // Must be called before start()
@@ -83,7 +96,7 @@ public:
     const TurnServerOptions& options() const { return opts_; }
 
     // Bind ports and start serving
-    int  start();
+    int  start(int threadNum = 0);
     void stop();
 
     bool isRunning() const { return running_; }
@@ -97,8 +110,6 @@ private:
     // ---- Incoming packet dispatch ----
     void onRecvPdu(const uint8_t* data, size_t len,
                    const struct sockaddr* from, hio_t* io);
-    void onRelayRecv(const uint8_t* data, size_t len,
-                     const struct sockaddr* from, hio_t* relay_io);
 
     // ---- STUN method handlers ----
     void handleAllocate       (const StunMessage& req, const struct sockaddr* from, hio_t* io);
@@ -134,18 +145,13 @@ private:
     using AllocKey = std::string;
     AllocKey makeKey(const struct sockaddr* addr, hio_t* io) const;
 
-    TurnAllocation* findAllocation(const AllocKey& key);
-    TurnAllocation* findAllocationByRelay(hio_t* relay_io);
+    std::shared_ptr<TurnAllocation> findAllocation(const AllocKey& key);
+    std::list<std::shared_ptr<TurnAllocation>> getLoopAllocations(const hv::EventLoopPtr& loop);
 
     void removeAllocation(const AllocKey& key);
-    void scheduleExpiry(const AllocKey& key, uint32_t lifetimeSec);
-
-    // ---- Relay socket management ----
-    // Bind a fresh ephemeral UDP socket for a new allocation.
-    hio_t* bindRelaySocket();
-    // Release relay socket
-    void   closeRelaySocket(hio_t* io);
-
+    void removeAllocationInLoop(const std::shared_ptr<TurnAllocation>& alloc);
+    void startExpirySweep(const hv::EventLoopPtr& loop);
+    void sweepExpiredAllocations(const hv::EventLoopPtr& loop);
     // ---- Channel data ----
     void handleChannelData(const uint8_t* data, size_t len,
                            const struct sockaddr* from, hio_t* io);
@@ -161,8 +167,7 @@ private:
 
     // ---- State ----
     TurnServerOptions opts_;
-    hv::EventLoopPtr  loop_;
-    std::unique_ptr<hv::EventLoopThread> loop_thread_;
+    hv::EventLoopThreadPool thread_pool_;
 
     bool running_   = false;
     int  udp_port_  = 0;
@@ -172,12 +177,8 @@ private:
     hio_t* tcp_listen_io_= nullptr;
 
     // Active allocations keyed by AllocKey
-    std::unordered_map<AllocKey, TurnAllocation> allocations_;
-    // Map: relay hio fd -> AllocKey (for fast relay lookup)
-    std::unordered_map<int, AllocKey> relay_io_map_;
-
-    // Expiry timers: AllocKey -> timer handle
-    std::unordered_map<AllocKey, htimer_t*> expiry_timers_;
+    std::unordered_map<AllocKey, std::shared_ptr<TurnAllocation>> allocations_;
+    std::mutex allocations_mutex_;
 
     // Nonce set (nonces currently issued but not yet consumed)
     // value = expiry time ms
