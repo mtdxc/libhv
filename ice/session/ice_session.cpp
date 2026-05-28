@@ -349,13 +349,7 @@ void IceSession::startChecks() {
     setState(IceState::Checking);
 
     // Start periodic check timer
-    if (!check_timer_) {
-        check_timer_ = htimer_add(loop_->loop(), [](htimer_t* timer) {
-            IceSession* self = (IceSession*)hevent_userdata(timer);
-            if (self) self->onCheckTimer();
-        }, check_interval_ms_, INFINITE);
-        hevent_set_userdata(check_timer_, this);
-    }
+    ensureCheckTimer();
 
     // Start connectivity timeout timer
     if (!connectivity_timer_ && agent_) {
@@ -375,6 +369,17 @@ void IceSession::startChecks() {
         }, timeoutMs, 0);
         hevent_set_userdata(connectivity_timer_, this);
     }
+}
+
+void IceSession::ensureCheckTimer() {
+    if (check_timer_ || !loop_) return;
+    if (state_ == IceState::Closed || state_ == IceState::Failed) return;
+
+    check_timer_ = htimer_add(loop_->loop(), [](htimer_t* timer) {
+        IceSession* self = (IceSession*)hevent_userdata(timer);
+        if (self) self->onCheckTimer();
+    }, check_interval_ms_, INFINITE);
+    hevent_set_userdata(check_timer_, this);
 }
 
 void IceSession::onCheckTimer() {
@@ -565,6 +570,18 @@ void IceSession::onStunRequest(StunMessage& msg, const struct sockaddr* from, hi
     sockaddr_u fromAddr;
     memcpy(&fromAddr, from, SOCKADDR_LEN(from));
 
+    auto shouldKeepCurrentSelected = [this](const CandidatePairPtr& incoming) {
+        if (!selected_pair_ || !incoming || selected_pair_ == incoming) return false;
+
+        // For ICE-TCP, keep an already selected prflx pair instead of downgrading
+        // back to a host-host pair that represents a listening address.
+        return selected_pair_->local.protocol == TransportProtocol::TCP &&
+               selected_pair_->remote.type == CandidateType::PeerReflexive &&
+               incoming->local.protocol == TransportProtocol::TCP &&
+               incoming->remote.type == CandidateType::Host &&
+               sockaddr_compare(&selected_pair_->local.addr, &incoming->local.addr) == 0;
+    };
+
     CandidatePairPtr matchedPair = nullptr;
     for (auto& pair : checklist_.pairs()) {
         sockaddr_u remoteAddr = pair->remote.addr;
@@ -579,9 +596,14 @@ void IceSession::onStunRequest(StunMessage& msg, const struct sockaddr* from, hi
             // Already succeeded
             if (useCandidate && role_ == IceRole::Controlled) {
                 matchedPair->nominated = true;
-                hlogi("IceSession %s onStunRequest USE-CANDIDATE, select pair %s",
-                      id(), matchedPair->toString().c_str());
-                setSelectPair(matchedPair);
+                if (shouldKeepCurrentSelected(matchedPair)) {
+                    hlogi("IceSession %s onStunRequest USE-CANDIDATE keep selected pair %s over %s",
+                          id(), selected_pair_->toString().c_str(), matchedPair->toString().c_str());
+                } else {
+                    hlogi("IceSession %s onStunRequest USE-CANDIDATE, select pair %s",
+                          id(), matchedPair->toString().c_str());
+                    setSelectPair(matchedPair);
+                }
             }
         } else if (matchedPair->state != PairState::InProgress) {
             if (useCandidate && role_ == IceRole::Controlled) {
@@ -592,6 +614,7 @@ void IceSession::onStunRequest(StunMessage& msg, const struct sockaddr* from, hi
                   id(), matchedPair->toString().c_str(),
                   pairStateString(matchedPair->state));
             checklist_.addTriggeredCheck(matchedPair);
+            ensureCheckTimer();
         }
     } else {
         // Peer-reflexive candidate discovery (RFC 8445 Section 7.3.1.3)
@@ -628,6 +651,7 @@ void IceSession::onStunRequest(StunMessage& msg, const struct sockaddr* from, hi
             newPair->state = PairState::Waiting;
             checklist_.addPair(newPair);
             checklist_.addTriggeredCheck(newPair);
+            ensureCheckTimer();
             hlogi("IceSession %s onStunRequest created prflx pair %s, triggered check",
                   id(), newPair->toString().c_str());
         }
@@ -638,7 +662,9 @@ void IceSession::onStunRequest(StunMessage& msg, const struct sockaddr* from, hi
         matchedPair->nominated = true;
         matchedPair->state = PairState::Succeeded;
         matchedPair->valid = true;
-        setSelectPair(matchedPair);
+        if (!shouldKeepCurrentSelected(matchedPair)) {
+            setSelectPair(matchedPair);
+        }
     }
 }
 
@@ -659,8 +685,19 @@ void IceSession::onCheckSuccess(CandidatePairPtr pair, const StunMessage& respon
         setState(IceState::Connected);
     }
 
-    // If already selected, nothing more to do
-    if (selected_pair_) return;
+    // If already selected, keep it unless this is a better TCP prflx pair.
+    bool allowUpgradeSelected = false;
+    if (selected_pair_) {
+        allowUpgradeSelected =
+            selected_pair_->local.protocol == TransportProtocol::TCP &&
+            selected_pair_->remote.type == CandidateType::Host &&
+            pair->local.protocol == TransportProtocol::TCP &&
+            pair->remote.type == CandidateType::PeerReflexive &&
+            sockaddr_compare(&selected_pair_->local.addr, &pair->local.addr) == 0;
+        if (!allowUpgradeSelected) {
+            return;
+        }
+    }
 
     // Handle nomination
     if (role_ == IceRole::Controlling) {
@@ -818,6 +855,9 @@ void IceSession::onTcpConnected(hio_t* io) {
 
 void IceSession::onTcpDisconnected(hio_t* io) {
     ios_.erase(io);
+    if (state_ == IceState::Closed) {
+        return;
+    }
     // Mark associated pairs as failed
     for (auto& pair : checklist_.pairs()) {
         if (pair->io == io) {

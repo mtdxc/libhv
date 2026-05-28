@@ -113,6 +113,7 @@ private:
     void setSelectPair(ice::CandidatePairPtr pair);
     void onCheckFailure(CandidatePairPtr pair, uint16_t errorCode);
     void onCheckTimer();
+    void ensureCheckTimer();
 
     // Nomination
     void nominate(CandidatePairPtr pair);
