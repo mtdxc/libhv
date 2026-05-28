@@ -348,12 +348,14 @@ void IceAgent::identifyTcpConnection(hio_t* io, const uint8_t* data, size_t len)
         std::string temp((const char*)data, len);
         sockaddr_u peerAddr;
         memcpy(&peerAddr.sa, hio_peeraddr(io), SOCKADDR_LEN(hio_peeraddr(io)));
+        hio_del(io);
         hio_detach(io); // detach io from current thread, will be used in session's loop
         std::weak_ptr<IceSession> weak_self = session->shared_from_this();
         session->loop()->runInLoop([weak_self, temp, peerAddr, io]() {
             if (auto session = weak_self.lock()) {
                 if (!session->onTcpAccepted(io)) return;
-                hio_attach(hv::tlsEventLoop()->loop(), io);
+                hio_attach(session->loop()->loop(), io);
+                hio_read(io);
                 hio_set_context(io, session.get());
                 session->onRecvData((const uint8_t*)temp.data(), temp.size(), &peerAddr.sa, io);
             }

@@ -346,12 +346,14 @@ void TurnServer::handleAllocate(const StunMessage& req,
     alloc->realm = opts_.realm;
     bool attach = false;
     if (hio_type(io) == HIO_TYPE_TCP && !alloc->loop->isInLoopThread()) {
+        hio_del(io);
         hio_detach(io);
         attach = true;
     }
     alloc->loop->runInLoop([this, alloc, req, lifetime, attach]() {
         if (attach) {
             hio_attach(alloc->loop->loop(), alloc->clientIo);
+            hio_read(alloc->clientIo);
         }
         alloc->bindRelaySocket(opts_.bindHost, 0);
         if (!alloc->relayIo) {
