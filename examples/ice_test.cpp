@@ -56,17 +56,23 @@ int main(int argc, char* argv[]) {
     session2->onData = [](const void* data, size_t len) {
         printf("  Session2 recv data: %s\n", (const char*)data);
     };
-    session1->onLocalCandidate = [session2, testTcp](const IceCandidate& candidate) {
+    std::weak_ptr<IceSession> weak_session1 = session1;
+    std::weak_ptr<IceSession> weak_session2 = session2;
+    session1->onLocalCandidate = [weak_session2, testTcp](const IceCandidate& candidate) {
         printf("  Session1 local candidate: %s\n", candidate.toSdp().c_str());
         if (testTcp && candidate.protocol != TransportProtocol::TCP) 
             return;
-        session2->addRemoteCandidate(candidate);
+        if (auto session2 = weak_session2.lock()) {
+            session2->addRemoteCandidate(candidate);
+        }
     };
-    session2->onLocalCandidate = [session1, testTcp](const IceCandidate& candidate) {
+    session2->onLocalCandidate = [weak_session1, testTcp](const IceCandidate& candidate) {
         printf("  Session2 local candidate: %s\n", candidate.toSdp().c_str());
         if (testTcp && candidate.protocol != TransportProtocol::TCP) 
             return;
-        session1->addRemoteCandidate(candidate);
+        if (auto session1 = weak_session1.lock()) {
+            session1->addRemoteCandidate(candidate);
+        }
     };
     session1->onSelectedPair = [](const CandidatePair& pair) {
         printf("  Session1 selected pair: %s\n", pair.toString().c_str());
@@ -95,6 +101,7 @@ int main(int argc, char* argv[]) {
     }
     agent.destroySession(session1);
     agent.destroySession(session2);
+    session1 = session2 = nullptr;
     agent.stop();
     printf("  Agent stopped cleanly\n");
     return 0;

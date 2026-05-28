@@ -92,9 +92,14 @@ void IceAgent::stop() {
         turn_client_.reset();
     }
 
-    // Close TCP connections
+    // Close only TCP connections that are not attached to an ICE session.
+    // Session-owned IOs are closed by IceSession::close().
     for (auto& kv : tcp_connections_) {
-        if (kv.second) hio_close(kv.second);
+        hio_t* io = kv.second;
+        if (!io || hio_is_closed(io)) continue;
+        if (hio_context(io) == nullptr) {
+            hio_close(io);
+        }
     }
     tcp_connections_.clear();
 
@@ -121,11 +126,13 @@ IceSessionPtr IceAgent::createSession(IceMode mode) {
 }
 
 void IceAgent::destroySession(const IceSessionPtr& session) {
-    session->close();
     std::lock_guard<decltype(mutex_)> lock(mutex_);
     sessions_.erase(
         std::remove(sessions_.begin(), sessions_.end(), session),
         sessions_.end());
+    session->loop()->runInLoop([session]() {
+        session->close();
+    });
 }
 
 // ---- UDP APIs ----

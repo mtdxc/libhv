@@ -74,6 +74,7 @@ IceSession::IceSession(IceMode mode, IceAgent* agent, hv::EventLoopPtr loop)
 }
 
 IceSession::~IceSession() {
+    hlogi("IceSession %s destroyed", id());
     close();
 }
 
@@ -108,7 +109,8 @@ void IceSession::close() {
             htimer_del(connectivity_timer_);
         }
     }
-    for (auto io : ios_) {
+    auto ios = std::move(ios_);
+    for (auto io : ios) {
         hio_close(io);
     }
     check_timer_ = nullptr;
@@ -827,6 +829,7 @@ int IceSession::send(const void* data, size_t len) {
 bool IceSession::onTcpAccepted(hio_t* io) {
     bool ret = false;
     if (state_ != IceState::Closed) {
+        hlogi("IceSession %s onTcpAccepted io=%p", id(), io);
         ios_.insert(io);
         ret = true;
     }
@@ -834,6 +837,7 @@ bool IceSession::onTcpAccepted(hio_t* io) {
 }
 
 void IceSession::onTcpConnected(hio_t* io) {
+    hlogi("IceSession %s onTcpConnected io=%p", id(), io);
     ios_.insert(io);
     // Associate TCP connection with the matching pair
     sockaddr_u* peeraddr = (sockaddr_u*)hio_peeraddr(io);
@@ -854,6 +858,7 @@ void IceSession::onTcpConnected(hio_t* io) {
 }
 
 void IceSession::onTcpDisconnected(hio_t* io) {
+    hlogi("IceSession %s onTcpDisconnected io=%p", id(), io);
     ios_.erase(io);
     if (state_ == IceState::Closed) {
         return;
