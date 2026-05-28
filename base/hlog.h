@@ -63,7 +63,7 @@ typedef enum {
 
 #define DEFAULT_LOG_FILE            "libhv"
 #define DEFAULT_LOG_LEVEL           LOG_LEVEL_INFO
-#define DEFAULT_LOG_FORMAT          "%y-%m-%d %H:%M:%S.%z %L %s"
+#define DEFAULT_LOG_FORMAT          "%y-%m-%d %H:%M:%S.%z %t %L %s"
 #define DEFAULT_LOG_REMAIN_DAYS     1
 #define DEFAULT_LOG_MAX_BUFSIZE     (1<<14)  // 16k
 #define DEFAULT_LOG_MAX_FILESIZE    (1<<24)  // 16M
