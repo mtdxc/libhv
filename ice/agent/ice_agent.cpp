@@ -1,4 +1,4 @@
-#include "ice_agent.h"
+﻿#include "ice_agent.h"
 #include "../stun/stun_message.h"
 #include "../stun/stun_auth.h"
 #include "../session/ice_session.h"
@@ -11,7 +11,8 @@ namespace ice {
 
 static constexpr int MAX_RETRANSMIT = 4;  // ICE check: 4 retransmits (~1.5s max)
 static constexpr uint32_t MAX_RTO = 800; // Cap RTO at 800ms
-struct StunTransaction {
+class StunTransaction : public std::enable_shared_from_this<StunTransaction> {
+public:
     TransactionId id;
     StunCallback callback;    // Callback on response or timeout
     // retransmission
@@ -19,26 +20,63 @@ struct StunTransaction {
     sockaddr_u destAddr;      // destination address for retransmission
     hio_t* io = nullptr;      // IO handle for retransmission
     IceAgent* agent = nullptr;
+    hv::EventLoop* loop = nullptr;
 
     uint64_t sentTime = 0;    // ms
     int retransmitCount = 0;
     uint32_t rto = 50;                        // Initial RTO ms (50ms for ICE checks)
-    htimer_t* timer = nullptr;                // Retransmit timer (userdata = this StunTransaction*)
-
+    hv::TimerID timer = INVALID_TIMER_ID;     // Retransmit timer
+    void doCb(StunMessage* resp, int code) {
+        if (!callback) return;
+        auto cb = std::move(callback);
+        if (!loop || loop->isInLoopThread()) {
+            cb(resp, code);
+            return;
+        }
+        else {
+            StunMessage* respCopy = nullptr;
+            if (resp) {
+                respCopy = new StunMessage();
+                *respCopy = *resp; // Copy the response message for use in the callback
+            }
+            // Post callback to EventLoop to ensure thread safety
+            loop->runInLoop([respCopy, code, cb]() {
+                cb(respCopy, code);
+                delete respCopy;
+            });
+        }
+    }
+    void setRto(uint32_t newRto) {
+        rto = newRto;
+        if (timer != INVALID_TIMER_ID) {
+            loop->killTimer(timer);
+            timer = INVALID_TIMER_ID;
+        }
+        std::weak_ptr<StunTransaction> weak_self = weak_from_this();
+        timer = loop->setTimeout(rto, [weak_self](hv::TimerID tid) {
+            if (auto self = weak_self.lock()) {
+                if (self->agent) {
+                    self->timer = INVALID_TIMER_ID; // Clear timer ID to indicate no active timer
+                    self->agent->onStunRetransmit(self->id);
+                }
+            }
+        });
+    }
     ~StunTransaction() {
-        if (timer) {
-            htimer_del(timer);
-            timer = nullptr;
+        if (timer!= INVALID_TIMER_ID && loop) {
+            loop->killTimer(timer);
+            timer = INVALID_TIMER_ID;
         }
     }
 };
 
-IceAgent::IceAgent(hv::EventLoopPtr loop) {
-    if (loop) {
-        loop_ = loop;
+IceAgent::IceAgent(hv::EventLoopThreadPool* pool) {
+    if (pool) {
+        pools_ = pool;
+        owns_pools_ = false;
     } else {
-        loop_thread_.reset(new hv::EventLoopThread());
-        loop_ = loop_thread_->loop();
+        pools_ = new hv::EventLoopThreadPool();
+        owns_pools_ = true;
     }
 
     memset(&tcp_unpack_setting_, 0, sizeof(unpack_setting_t));
@@ -53,6 +91,10 @@ IceAgent::IceAgent(hv::EventLoopPtr loop) {
 
 IceAgent::~IceAgent() {
     stop();
+    if (owns_pools_) {
+        delete pools_;
+        pools_ = nullptr;
+    }
 }
 
 void IceAgent::setConfig(const IceConfig& config) {
@@ -61,8 +103,10 @@ void IceAgent::setConfig(const IceConfig& config) {
 
 int IceAgent::start() {
     if (running_) return 0;
-
-    hloop_t* loop = loop_->loop();
+    if (pools_ && !pools_->isRunning()) {
+        pools_->start();
+    }
+    hloop_t* loop = pools_->loop()->loop();
     if (!loop) return -1;
 
     // Create UDP server
@@ -94,186 +138,241 @@ int IceAgent::start() {
         tcp_port_ = sockaddr_port((sockaddr_u*)hio_localaddr(tcp_listen_io_));
     }
 
-    if (loop_thread_ && !loop_thread_->isRunning()) {
-        loop_thread_->start();
-    }
     hlogi("IceAgent start udpPort=%d tcpPort=%d", udp_port_, tcp_port_);
     running_ = true;
     return 0;
 }
 
 void IceAgent::stop() {
-    if (!running_) return;
-    running_ = false;
-    hlogi("IceAgent stop with %zu sessions", sessions_.size());
-    for (auto& session : sessions_) {
-        session->close();
-    }
-    sessions_.clear();
+    std::vector<std::shared_ptr<IceSession>> sessions;
+    std::vector<hio_t*> tcp_ios;
+    std::shared_ptr<TurnClient> turn_client;
+    std::map<TransactionId, std::shared_ptr<StunTransaction>> txns;
+    hio_t* tcp_listen_io = nullptr;
+    hio_t* udp_io = nullptr;
 
-    // Cleanup TURN client
-    if (turn_client_) {
+    {
+        std::unique_lock<decltype(mutex_)> lock(mutex_);
+        if (!running_) return;
+        running_ = false;
+
+        sessions = sessions_;
+        sessions_.clear();
+
+        turn_client = turn_client_;
         turn_client_.reset();
-    }
 
-    // Close TCP connections
-    for (auto& kv : tcp_connections_) {
-        if (auto io = kv.second) {
-            if(nullptr == hio_context(io)) { // Prevent callbacks after close
-                hio_close(io);
-            }
+        for (auto& kv : tcp_connections_) {
+            tcp_ios.push_back(kv.second);
         }
-    }
-    tcp_connections_.clear();
+        tcp_connections_.clear();
 
-    if (tcp_listen_io_) {
-        hio_close(tcp_listen_io_);
+        ufrag_map_.clear();
+        pair_map_.clear();
+
+        txns.swap(transactions_);
+
+        tcp_listen_io = tcp_listen_io_;
         tcp_listen_io_ = nullptr;
-    }
-
-    if (udp_io_) {
-        hio_close(udp_io_);
+        udp_io = udp_io_;
         udp_io_ = nullptr;
     }
-    ufrag_map_.clear();
-    pair_map_.clear();
 
-    // Cancel pending transactions
-    for (auto& kv : transactions_) {
-        delete kv.second; // ~StunTransaction() handles htimer_del
+    hlogi("IceAgent stop with %zu sessions", sessions.size());
+    for (auto& session : sessions) {
+        session->close();
     }
-    transactions_.clear();
 
-    if (loop_thread_) {
-        loop_thread_->stop(true);
+    turn_client.reset();
+
+    // Close TCP connections
+    for (auto* io : tcp_ios) {
+        if (io && nullptr == hio_context(io)) { // Prevent callbacks after close
+            hio_close(io);
+        }
     }
+
+    if (tcp_listen_io) {
+        hio_close(tcp_listen_io);
+    }
+
+    if (udp_io) {
+        hio_close(udp_io);
+    }
+
+    txns.clear();
 }
 
 IceSessionPtr IceAgent::createSession(IceMode mode) {
-    auto session = std::make_shared<IceSession>(mode, this, loop_);
+    auto session = std::make_shared<IceSession>(mode, this, pools_->loop());
+    std::unique_lock<decltype(mutex_)> lock(mutex_);
     sessions_.push_back(session);
     return session;
 }
 
 void IceAgent::destroySession(const IceSessionPtr& session) {
     session->close();
+    std::unique_lock<decltype(mutex_)> lock(mutex_);
     sessions_.erase(
         std::remove(sessions_.begin(), sessions_.end(), session),
         sessions_.end());
 }
 
+std::shared_ptr<TurnClient> IceAgent::getTurnClient() const {
+    std::unique_lock<decltype(mutex_)> lock(mutex_);
+    return turn_client_;
+}
+
 // ---- UDP APIs ----
 int IceAgent::send(const void* data, size_t len, const struct sockaddr* addr, hio_t* io) {
+    int ret = -1;
     if (!io) {
         // sendViaRelay
-        if (turn_client_ && turn_client_->isAllocated())
-            return turn_client_->sendData(data, len, addr);
-        return -1;
-    }
-    if (hio_type(io) == HIO_TYPE_TCP) {
+        auto turn_client = getTurnClient();
+        if (turn_client && turn_client->isAllocated())
+            ret = turn_client->sendData(data, len, addr);
+    } else if (hio_type(io) == HIO_TYPE_TCP) {
         uint8_t header[2];
         header[0] = (uint8_t)((len >> 8) & 0xFF);
         header[1] = (uint8_t)(len & 0xFF);
         hio_write(io, header, 2);
-        return hio_write(io, data, len);
+        ret = hio_write(io, data, len);
     } else {
-        return hio_sendto(io, data, len, (struct sockaddr*)addr);
+        ret = hio_sendto(io, data, len, (struct sockaddr*)addr);
     }
+    if (ret < 0) {
+        char addrStr[SOCKADDR_STRLEN] = {0};
+        if (addr) {
+            SOCKADDR_STR(addr, addrStr);
+        }
+        hlogw("IceAgent send io=%p to %s return %d", io, addrStr, ret);
+    }
+    return ret;
+}
+
+std::shared_ptr<IceSession> IceAgent::findSessionByAddr(const struct sockaddr* addr) {
+    std::unique_lock<decltype(mutex_)> lock(mutex_);
+    auto it = pair_map_.find(*((sockaddr_u*)addr));
+    if (it!= pair_map_.end()) {
+        if (auto session = it->second.lock()) {
+            return session;
+        } else {
+            // Session expired, remove from map
+            pair_map_.erase(it);
+        }
+    }
+    return nullptr;
+}
+
+std::shared_ptr<IceSession> IceAgent::findSessionByUfrag(const std::string& ufrag) {
+    std::unique_lock<decltype(mutex_)> lock(mutex_);
+    auto it = ufrag_map_.find(ufrag);
+    if (it != ufrag_map_.end()) {
+        if (auto session = it->second.lock()) {
+            return session;
+        } else {
+            // Session expired, remove from map
+            ufrag_map_.erase(it);
+        }
+    }
+    return nullptr;
 }
 
 void IceAgent::registerSession(const std::string& ufrag, IceSession* session) {
-    loop_->runInLoop([this, ufrag, session]() {
-        ufrag_map_[ufrag] = session;
-    });
+    std::unique_lock<decltype(mutex_)> lock(mutex_);
+    ufrag_map_[ufrag] = session->shared_from_this();
 }
 
 void IceAgent::unregisterSession(const std::string& ufrag) {
-    loop_->runInLoop([this, ufrag]() {
-        ufrag_map_.erase(ufrag);
-    });
+    std::unique_lock<decltype(mutex_)> lock(mutex_);
+    ufrag_map_.erase(ufrag);
 }
 
 void IceAgent::registerPair(const sockaddr_u& addr, IceSession* session) {
-    loop_->runInLoop([this, addr, session]() {
-        pair_map_[addr] = session;
-    });
+    std::unique_lock<decltype(mutex_)> lock(mutex_);
+    pair_map_[addr] = session->shared_from_this();
 }
 
 void IceAgent::unregisterPair(const sockaddr_u& addr) {
-    loop_->runInLoop([this, addr]() {
-        pair_map_.erase(addr);
-    });
+    std::unique_lock<decltype(mutex_)> lock(mutex_);
+    pair_map_.erase(addr);
+}
+
+std::shared_ptr<StunTransaction> IceAgent::getTransaction(TransactionId id, bool pop) {
+    std::shared_ptr<StunTransaction> ret;
+    std::unique_lock<decltype(mutex_)> lock(mutex_);
+    auto it = transactions_.find(id);
+    if (it != transactions_.end()) {
+        ret = it->second;
+        if (pop) transactions_.erase(it);
+    }
+    return ret;
 }
 
 void IceAgent::StunRequest(const StunMessage& req, const struct sockaddr* server, hio_t* io,
-    std::function<void(StunMessage* resp, int code)> callback) {
+    std::function<void(StunMessage* resp, int code)> callback, hv::EventLoop* loop) {
+    if (!loop) {
+        loop = hv::tlsEventLoop();
+        if (!loop) {
+            hlogw("IceAgent StunRequest without loop");
+            return;
+        }
+    }
     auto encoded = req.encode();
-    send(encoded.data(), encoded.size(), server, io);
     if (callback) {
-        auto* txn = new StunTransaction();
+        auto txn = std::make_shared<StunTransaction>();
         txn->id = req.transactionId();
-        txn->msg = std::move(encoded);
+        txn->msg = encoded;
         txn->callback = callback;
+        txn->loop = loop;
         txn->agent = this;
-        memcpy(&txn->destAddr, server, SOCKADDR_LEN(server));
         txn->io = io;
-        txn->sentTime = hloop_now_ms(loop_->loop());
-        txn->rto = 50; // RFC 5389 initial RTO (50ms for ICE checks)
-
-        // Start retransmission timer (one-shot, rescheduled on each retransmit)
-        // StunTransaction* itself is the htimer userdata
-        htimer_t* timer = htimer_add(loop_->loop(), [](htimer_t* t) {
-            auto* txn = (StunTransaction*)hevent_userdata(t);
-            if (txn && txn->agent) {
-                txn->agent->onStunRetransmit(txn);
-            }
-        }, txn->rto, 0);
-        hevent_set_userdata(timer, txn);
-        txn->timer = timer;
-
+        memcpy(&txn->destAddr, server, SOCKADDR_LEN(server));
+        txn->sentTime = hloop_now_ms(loop->loop());
+        txn->setRto(50); // RFC 5389 initial RTO (50ms for ICE checks)
+        std::unique_lock<decltype(mutex_)> lock(mutex_);
         transactions_[txn->id] = txn;
     }
+    send(encoded.data(), encoded.size(), server, io);
 }
 
-void IceAgent::onStunRetransmit(StunTransaction* txn) {
-    // Defensive: verify txn is still in map
-    auto it = transactions_.find(txn->id);
-    if (it == transactions_.end() || it->second != txn) return;
+void IceAgent::onStunRetransmit(TransactionId tid) {
+    std::shared_ptr<StunTransaction> txn;
+    bool timeout = false;
+
+    {
+        // Serialize decision against response path.
+        std::unique_lock<decltype(mutex_)> lock(mutex_);
+        auto it = transactions_.find(tid);
+        if (it == transactions_.end()) return;
+        txn = it->second;
+        if (!txn) {
+            transactions_.erase(it);
+            return;
+        }
+        if (txn->retransmitCount >= MAX_RETRANSMIT) {
+            transactions_.erase(it);
+            timeout = true;
+        }
+    }
+
     auto id = TransactionIdStr(txn->id);
-    // Check if maximum retransmissions exceeded (RFC 5389 Section 7.2.1)
-    if (txn->retransmitCount >= MAX_RETRANSMIT) {
+    if (timeout) {
         char destStr[SOCKADDR_STRLEN] = {0};
         SOCKADDR_STR((struct sockaddr*)&txn->destAddr, destStr);
         hlogi("IceAgent onStunRetransmit %s: to %s timed out after %d retries", 
           id.c_str(), destStr, txn->retransmitCount);
-        // Transaction timed out — notify callback with error
-        if (txn->callback) {
-            txn->callback(nullptr, -1); // code=-1 indicates timeout
-        }
-        transactions_.erase(it);
-        delete txn; // ~StunTransaction() handles htimer_del
-        return;
+        txn->doCb(nullptr, -1);// code=-1 indicates timeout
     }
+    else {
+        // Retransmit the STUN message
+        send(txn->msg.data(), txn->msg.size(), &txn->destAddr.sa, txn->io);
+        txn->retransmitCount++;
+        hlogd("IceAgent onStunRetransmit %s: retransmit #%d rto=%u", id.c_str(), txn->retransmitCount, txn->rto);
 
-    // Retransmit the STUN message
-    send(txn->msg.data(), txn->msg.size(), &txn->destAddr.sa, txn->io);
-    txn->retransmitCount++;
-    hlogd("IceAgent onStunRetransmit %s: retransmit #%d rto=%u", id.c_str(), txn->retransmitCount, txn->rto);
-
-    // Exponential backoff: RTO = min(RTO * 2, MAX_RTO)
-    txn->rto = (std::min)(txn->rto * 2, MAX_RTO);
-
-    // Delete old timer and schedule a new one-shot timer
-    if (txn->timer) {
-        htimer_del(txn->timer);
+        // Exponential backoff: RTO = min(RTO * 2, MAX_RTO)
+        txn->setRto((std::min)(txn->rto * 2, MAX_RTO));
     }
-    txn->timer = htimer_add(loop_->loop(), [](htimer_t* t) {
-        auto* txn = (StunTransaction*)hevent_userdata(t);
-        if (txn && txn->agent) {
-            txn->agent->onStunRetransmit(txn);
-        }
-    }, txn->rto, 0);
-    hevent_set_userdata(txn->timer, txn);
 }
 
 void IceAgent::processStunMsg(const uint8_t* data, size_t len, const struct sockaddr* addr, hio_t* io) {
@@ -295,14 +394,12 @@ void IceAgent::processStunMsg(const uint8_t* data, size_t len, const struct sock
             ufrag = username.substr(0, colon);
         }
         if (!ufrag.empty()) {
-            auto it = ufrag_map_.find(ufrag);
-            if (it != ufrag_map_.end() && it->second) {
-                hlogd("IceAgent processStunMsg: request from %s -> session ufrag=%s",
-                      addrStr, ufrag.c_str());
-                it->second->onStunRequest(msg, addr, io);
+            auto session = findSessionByUfrag(ufrag);
+            if (session) {
+                hlogd("IceAgent processStunMsg: request from %s -> session ufrag=%s", addrStr, ufrag.c_str());
+                session->onStunRequest(msg, addr, io);
             } else {
-                hlogw("IceAgent processStunMsg: request from %s ufrag=%s not found",
-                      addrStr, ufrag.c_str());
+                hlogw("IceAgent processStunMsg: request from %s ufrag=%s not found", addrStr, ufrag.c_str());
             }
         }
     } else if (msg.cls() == STUN_CLASS_INDICATION) {
@@ -315,22 +412,16 @@ void IceAgent::processStunMsg(const uint8_t* data, size_t len, const struct sock
             }
         }
         // UDP: route via pair_map_
-        auto pit = pair_map_.find(*(sockaddr_u*)addr);
-        if (pit != pair_map_.end() && pit->second) {
-            pit->second->onStunRequest(msg, addr, io);
+        auto session = findSessionByAddr(addr);
+        if (session) {
+            session->onStunRequest(msg, addr, io);
         } else {
             hlogd("IceAgent processStunMsg: indication from %s no handler", addrStr);
         }
     } else { // stun响应
-        auto it = transactions_.find(msg.transactionId());
-        if (it != transactions_.end()) {
-            hlogd("IceAgent processStunMsg: response from %s matched transaction", addrStr);
-            StunTransaction* txn = it->second;
-            if (txn->callback) {
-                txn->callback(&msg, 0);
-            }
-            transactions_.erase(it);
-            delete txn; // ~StunTransaction() handles htimer_del
+        auto txn = getTransaction(msg.transactionId(), true);
+        if (txn) {
+            txn->doCb(&msg, 0);
         } else {
             hlogw("IceAgent processStunMsg: response from %s no matching transaction %s", 
               addrStr, TransactionIdStr(msg.transactionId()).c_str());
@@ -344,9 +435,9 @@ void IceAgent::onRecvPdu(const uint8_t* data, size_t len, const sockaddr* addr, 
         processStunMsg(data, len, addr, io);
     }
     else{
-        auto it = pair_map_.find(*(sockaddr_u*)addr);
-        if (it != pair_map_.end()) {
-            it->second->onRecvData(data, len, addr);
+        auto session = findSessionByAddr(addr);
+        if (session) {
+            session->onRecvData(data, len, addr);
         } else {
             char addrStr[SOCKADDR_STRLEN] = {0};
             SOCKADDR_STR(addr, addrStr);
@@ -459,7 +550,10 @@ void IceAgent::onTcpAccept(hio_t* io) {
     }
 
     uint32_t id = hio_id(io);
-    self->tcp_connections_[id] = io;
+    {
+        std::unique_lock<decltype(self->mutex_)> lock(self->mutex_);
+        self->tcp_connections_[id] = io;
+    }
     hio_set_context(io, nullptr);
     hevent_set_userdata(io, self);
     hio_setcb_read(io, onTcpRecv);
@@ -483,6 +577,7 @@ void IceAgent::onTcpClose(hio_t* io) {
     }
     if (self) {
         uint32_t id = hio_id(io);
+        std::unique_lock<decltype(self->mutex_)> lock(self->mutex_);
         self->tcp_connections_.erase(id);
     }
 }
@@ -490,18 +585,12 @@ void IceAgent::onTcpClose(hio_t* io) {
 void IceAgent::onTcpRecv(hio_t* io, void* buf, int readbytes) {
     IceAgent* self = (IceAgent*)hevent_userdata(io);
     if (!self) return;
-    if (readbytes <= 2) return;
+    if (readbytes < 2) return;
     self->handleTcpRecv(io, (const uint8_t*)buf + 2, readbytes - 2);
 }
 
 void IceAgent::handleTcpRecv(hio_t* io, const uint8_t* data, size_t len) {
     IceSession* session = (IceSession*)hio_context(io);    
-    if (!session) {
-        identifyTcpConnection(io, data, len);
-        // identifyTcpConnection may bind this io to a session.
-        session = (IceSession*)hio_context(io);
-    }
-
     if (session) {
         PacketType ptype = classifyPacket(data, len);
         if (ptype == PacketType::STUN) {
@@ -509,6 +598,9 @@ void IceAgent::handleTcpRecv(hio_t* io, const uint8_t* data, size_t len) {
         } else {
             session->onRecvData(data, len, hio_peeraddr(io));
         }
+    }
+    else{
+        identifyTcpConnection(io, data, len);
     }
 }
 
@@ -519,40 +611,72 @@ void IceAgent::identifyTcpConnection(hio_t* io, const uint8_t* data, size_t len)
         hio_close(io);
         return;
     }
-    if (len < 20) return;
 
-    std::string local_ufrag = extractLocalUfrag(data, len);
+    StunMessage msg;
+    if (!StunMessage::decode(data, len, &msg)) {
+        return;
+    }
+
+    if (msg.cls() != STUN_CLASS_REQUEST || msg.getUsername().empty()) { 
+        hlogw("IceAgent identifyTcpConnection: cannot extract ufrag, close io");
+        return ;
+    }
+
+    std::string local_ufrag, username = msg.getUsername();
+    size_t colon = username.find(':');
+    if (colon != std::string::npos) {
+        local_ufrag = username.substr(0, colon);
+    }
     if (local_ufrag.empty()) {
         hlogw("IceAgent identifyTcpConnection: cannot extract ufrag, close io");
         return;
     }
-
-    auto sit = ufrag_map_.find(local_ufrag);
-    if (sit == ufrag_map_.end() || !sit->second) {
-        hlogw("IceAgent identifyTcpConnection: ufrag=%s not found, close io", local_ufrag.c_str());
+    
+    auto session = findSessionByUfrag(local_ufrag);
+    if (!session) {
+        hlogw("IceAgent identifyTcpConnection: session for ufrag=%s expired, close io", local_ufrag.c_str());
         hio_close(io);
         return;
     }
-
-    if (sit->second->onTcpAccepted(io)){
-        hio_set_context(io, sit->second);
+    if (session->onTcpAccepted(io)) {
         char peerStr[SOCKADDR_STRLEN] = {0};
         SOCKADDR_STR(hio_peeraddr(io), peerStr);
         hlogi("IceAgent identifyTcpConnection: peer=%s accepted -> session ufrag=%s",
-               peerStr, local_ufrag.c_str());
+                peerStr, session->localUfrag().c_str());
+        // tcp连接迁移到session的EventLoop，确保后续STUN请求都在同一线程处理
+        if (session->loop()->isInLoopThread()) {
+            hio_set_context(io, session.get());
+            session->onStunRequest(msg, hio_peeraddr(io), io);
+        }
+        else {
+            hio_del(io); // Delay processing until we can safely attach to session's loop
+            hio_detach(io); // Detach from current loop, will be attached to session's loop
+            std::weak_ptr<IceSession> weak_self = session->weak_from_this();
+            session->loop()->runInLoop([this, weak_self, io, msg]() {
+                if (auto session = weak_self.lock()) {
+                    hio_attach(session->loop()->loop(), io);
+                    hio_read(io);
+                    hio_set_context(io, session.get());
+                    session->onStunRequest(msg, hio_peeraddr(io), io);
+                }
+                else{
+                    hio_close(io);
+                }
+            });
+        }
     } else {
         hlogw("IceAgent identifyTcpConnection: session rejected TCP connection for ufrag=%s", local_ufrag.c_str());
         hio_close(io);
-        return;
     }
 }
 
 void IceAgent::addTurnCandidates(IceSession* session, int componentId) {
-    if (!turn_client_) return;
+    auto turn_client = getTurnClient();
+    if (!turn_client) return;
 
-    auto serverAddr = turn_client_->serverAddr();
+    auto serverAddr = turn_client->serverAddr();
 
-    auto addr = turn_client_->serverReflexiveAddr();
+    auto addr = turn_client->serverReflexiveAddr();
     if (sockaddr_port(&addr)) {
         IceCandidate cand;
         cand.type = CandidateType::ServerReflexive;
@@ -565,7 +689,7 @@ void IceAgent::addTurnCandidates(IceSession* session, int componentId) {
         session->addLocalCandidate(cand);
     }
 
-    addr = turn_client_->relayAddr();
+    addr = turn_client->relayAddr();
     if (sockaddr_port(&addr)) {
         IceCandidate cand;
         cand.type = CandidateType::Relay;
@@ -582,27 +706,31 @@ void IceAgent::addTurnCandidates(IceSession* session, int componentId) {
 // ---- TURN APIs ----
 
 bool IceAgent::isTurnAllocated() const {
-    return turn_client_ && turn_client_->isAllocated();
+    auto turn_client = getTurnClient();
+    return turn_client && turn_client->isAllocated();
 }
 
 bool IceAgent::isTurnAllocating() const {
-    return turn_client_ && turn_client_->state() == TurnState::Allocating;
+    auto turn_client = getTurnClient();
+    return turn_client && turn_client->state() == TurnState::Allocating;
 }
 
 void IceAgent::createTurnPermission(const struct sockaddr* peerAddr) {
-    if (turn_client_ && turn_client_->isAllocated()) {
-        turn_client_->createPermission(peerAddr);
+    auto turn_client = getTurnClient();
+    if (turn_client && turn_client->isAllocated()) {
+        turn_client->createPermission(peerAddr);
     }
 }
 
 void IceAgent::allocateTurn() {
+    std::unique_lock<decltype(mutex_)> lock(mutex_);
     if (turn_client_) return; // Already created
 
     if (config_.turnServers.empty()) return;
 
     for (const auto& server : config_.turnServers) {
 
-        turn_client_ = std::make_shared<TurnClient>(loop_, server);
+        turn_client_ = std::make_shared<TurnClient>(pools_->loop(), server);
 
         // Route peer data received via TURN to the appropriate session
         turn_client_->onData = [this](const void* data, size_t len, const struct sockaddr* peerAddr) {
@@ -611,7 +739,12 @@ void IceAgent::allocateTurn() {
 
         // Notify sessions when TURN state changes
         turn_client_->onStateChange = [this](TurnState state) {
-            for (auto& session : sessions_) {
+            std::vector<std::shared_ptr<IceSession>> sessions;
+            {
+                std::unique_lock<decltype(mutex_)> lock(mutex_);
+                sessions = sessions_;
+            }
+            for (auto& session : sessions) {
                 session->onTurnStateChanged(state);
             }
         };

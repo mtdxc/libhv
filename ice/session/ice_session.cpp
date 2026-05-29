@@ -87,6 +87,7 @@ IceSession::~IceSession() {
     hlogi("IceSession %s destroyed", id());
     close();
 }
+
 hio_t* IceSession::udpIo() const { 
     return udp_io_ ? udp_io_ : agent_->udpIo(); 
 }
@@ -423,7 +424,7 @@ void IceSession::sendStunBindingRequest(const struct sockaddr* server, const std
                 self->onGatheringComplete();
             }
         }
-    });
+    }, loop_.get());
     pending_gathering_requests_++;
 }
 
@@ -643,18 +644,43 @@ void IceSession::sendConnectivityCheck(CandidatePairPtr pair) {
         } else {
             onCheckFailure(pair, code);
         }
-    });
+    }, loop_.get());
 }
 
 void IceSession::onRecvData(const uint8_t* data, size_t len, const struct sockaddr* from) {
+    if (loop_ && !loop_->isInLoopThread()) {
+        hlogi("IceSession %s onRecv %d Data in different thread, post to loop", id(), len);
+        sockaddr_u fromCopy;
+        memcpy(&fromCopy, from, SOCKADDR_LEN(from));
+        std::vector<uint8_t> dataCopy(data, data + len);
+        std::weak_ptr<IceSession> weak_self = shared_from_this();
+        loop_->runInLoop([weak_self, dataCopy = std::move(dataCopy), fromCopy]() {
+            if (auto self = weak_self.lock()) {
+                self->onRecvData(dataCopy.data(), dataCopy.size(), (const struct sockaddr*)&fromCopy);
+            }
+        });
+        return ;
+    }
     if (onData) {
         onData(data, len);
     }
 }
 
-void IceSession::onStunRequest(StunMessage& msg, const struct sockaddr* from, hio_t* io) {
+void IceSession::onStunRequest(const StunMessage& msg, const struct sockaddr* from, hio_t* io) {
     if (msg.method() != STUN_METHOD_BINDING) return;
     if (msg.cls() != STUN_CLASS_REQUEST) return;
+    if (!loop_->isInLoopThread()) { // Ensure STUN requests are processed in the session's event loop thread
+        hlogi("IceSession %s onStunRequest in different thread, post to loop", id());
+        sockaddr_u fromCopy;
+        memcpy(&fromCopy, from, SOCKADDR_LEN(from));
+        std::weak_ptr<IceSession> weak_self = shared_from_this();
+        loop_->runInLoop([weak_self, msg, fromCopy, io]() {
+            if (auto self = weak_self.lock()) {
+                self->onStunRequest(msg, (const struct sockaddr*)&fromCopy, io);
+            }
+        });
+        return ;
+    }
 
     char fromStr[SOCKADDR_STRLEN] = {0};
     SOCKADDR_STR(from, fromStr);

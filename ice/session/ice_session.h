@@ -59,6 +59,7 @@ public:
     // State
     IceState state() const { return state_; }
     IceMode mode() const { return mode_; }
+    hv::EventLoopPtr loop() const { return loop_; }
 
     // Candidate management
     void addLocalCandidate(const IceCandidate& candidate);
@@ -67,31 +68,11 @@ public:
     const std::vector<IceCandidate>& localCandidates() const { return local_candidates_; }
     const std::vector<IceCandidate>& remoteCandidates() const { return remote_candidates_; }
 
-    // Gathering
-    void gatherCandidates(bool bandUdp = false);
-    void addHostCandidates(int componentId);
-
-    // Start connectivity checks
-    void startChecks();
-
     // Send data (post-ICE-completion)
     int send(const void* data, size_t len);
 
     // Get selected pair
     CandidatePairPtr selectedPair() const { return selected_pair_; }
-
-    // TURN state notification (called by IceAgent)
-    void onTurnStateChanged(TurnState state);
-
-    // Packet handlers (called by transport layer)
-    void onRecvData(const uint8_t* data, size_t len, const struct sockaddr* from);
-    // STUN request handling
-    void onStunRequest(StunMessage& req, const sockaddr* addr, hio_t* io);
-    hv::EventLoopPtr loop() const { return loop_; }
-    bool onTcpAccepted(hio_t* io);
-    void onTcpConnected(hio_t* io);
-    void onTcpDisconnected(hio_t* io);
-
     // Callbacks
     std::function<void(IceState)> onStateChange;
     std::function<void(const IceCandidate&)> onLocalCandidate;
@@ -100,6 +81,28 @@ public:
 
     // Close session
     void close();
+
+    // Gathering
+    void gatherCandidates(bool bandUdp = false);
+protected:
+    friend class IceAgent;
+    void addHostCandidates(int componentId);
+
+    // Start connectivity checks
+    void startChecks();
+
+    // TURN state notification (called by IceAgent)
+    void onTurnStateChanged(TurnState state);
+
+    // Packet handlers (called by transport layer)
+    void onRecvData(const uint8_t* data, size_t len, const struct sockaddr* from);
+    // STUN request handling
+    void onStunRequest(const StunMessage& req, const sockaddr* addr, hio_t* io);
+
+    bool onTcpAccepted(hio_t* io);
+    void onTcpConnected(hio_t* io);
+    void onTcpDisconnected(hio_t* io);
+
     hio_t* udpIo() const;
 private:
     // State management

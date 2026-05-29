@@ -1,4 +1,4 @@
-#ifndef ICE_AGENT_H_
+﻿#ifndef ICE_AGENT_H_
 #define ICE_AGENT_H_
 
 #include <cstdint>
@@ -9,28 +9,32 @@
 #include <map>
 #include <functional>
 
-#include "EventLoopThread.h"
+#include "EventLoopThreadPool.h"
 #include "ice_config.h"
 #include "../stun/stun_message.h"
+
 namespace ice {
 class IceSession;
 class TurnClient;
-struct StunTransaction;
+class StunTransaction;
 
 // STUN Transaction for tracking requests
 using StunCallback = std::function<void(StunMessage* resp, int code)>;
 
 // IceAgent: Top-level API managing all ICE sessions and transport
 class IceAgent {
+    friend class StunTransaction;
     // Transactions
-    std::map<TransactionId, StunTransaction*> transactions_;
+    std::map<TransactionId, std::shared_ptr<StunTransaction>> transactions_;
+    std::shared_ptr<StunTransaction> getTransaction(TransactionId id, bool pop = false);
+
 public:
     // 当hio为nullptr，数据通过relay方式转发，否则通过hio指定的tcp或udp方式转发
-    void StunRequest(const StunMessage& msg, const struct sockaddr* addr, hio_t* io, StunCallback callback);
+    void StunRequest(const StunMessage& msg, const struct sockaddr* addr, hio_t* io, StunCallback callback, hv::EventLoop* loop = nullptr);
 
     // Create agent with optional external event loop
     // If loop is null, creates its own EventLoopThread
-    explicit IceAgent(hv::EventLoopPtr loop = nullptr);
+    explicit IceAgent(hv::EventLoopThreadPool* pool = nullptr);
     ~IceAgent();
 
     // Configuration (must be called before start())
@@ -56,9 +60,6 @@ public:
 
     // Get local address
     struct sockaddr* udpLocalAddr() { return (struct sockaddr*)&udp_local_addr_; }
-
-    // Get event loop
-    hv::EventLoopPtr loop() const { return loop_; }
 
     // Check if running
     bool isRunning() const { return running_; }
@@ -92,6 +93,7 @@ public:
     void allocateTurn();
 
 private:
+    std::shared_ptr<TurnClient> getTurnClient() const;
     // ---- TURN state ----
     std::shared_ptr<TurnClient> turn_client_;
 
@@ -100,7 +102,7 @@ private:
     void processStunMsg(const uint8_t* data, size_t len, const struct sockaddr* addr, hio_t* io);
 
     // STUN transaction retransmission
-    void onStunRetransmit(StunTransaction* txn);
+    void onStunRetransmit(TransactionId id);
 
     // TCP callbacks (static trampolines)
     static void onTcpAccept(hio_t* io);
@@ -115,18 +117,21 @@ private:
     static std::string extractLocalUfrag(const uint8_t* data, size_t len);
 
     IceConfig config_;
-    hv::EventLoopPtr loop_;
-    std::unique_ptr<hv::EventLoopThread> loop_thread_; // owned if no external loop
+    hv::EventLoopThreadPool*  pools_;
+    bool owns_pools_ = false;
+    mutable std::recursive_mutex mutex_;
 
     std::vector<std::shared_ptr<IceSession>> sessions_;
     bool running_ = false;
 
-    std::unordered_map<std::string, IceSession*> ufrag_map_;
+    std::shared_ptr<IceSession> findSessionByAddr(const struct sockaddr* addr);
+    std::shared_ptr<IceSession> findSessionByUfrag(const std::string& ufrag);
+    std::unordered_map<std::string, std::weak_ptr<IceSession>> ufrag_map_;
     // ---- UDP state ----
     hio_t* udp_io_ = nullptr;
     int udp_port_ = 0;
     sockaddr_u udp_local_addr_;
-    std::map<sockaddr_u, IceSession*, SockaddrCompare> pair_map_;
+    std::map<sockaddr_u, std::weak_ptr<IceSession>, SockaddrCompare> pair_map_;
 
     // ---- TCP state ----
     hio_t* tcp_listen_io_ = nullptr;
