@@ -151,23 +151,56 @@ void IceSession::addRemoteCandidate(const IceCandidate& candidate) {
     // If already checking, form new pairs with this candidate
     if (state_ == IceState::Checking || state_ == IceState::Connected) {
         int newPairs = 0;
-        for (const auto& local : local_candidates_) {
-            if (!canPairCandidates(local, candidate)) continue;
+        if (candidate.protocol == TransportProtocol::TCP) {
+            // For ICE-TCP, remote active/SO are connection-scoped in our stack.
+            // Do not pre-form checklist pairs here; pair will be created/reused on inbound STUN/prflx path.
+            if (candidate.tcpType != TcpType::Passive) {
+                hlogi("IceSession %s addRemoteCandidate tcp-active trickle: skip pre-pairing", id());
+                return;
+            }
+
+            const IceCandidate* localForConnect = nullptr;
+            for (const auto& local : local_candidates_) {
+                if (canPairCandidates(local, candidate)) {
+                    localForConnect = &local;
+                    break;
+                }
+            }
+            if (!localForConnect) {
+                hlogi("IceSession %s addRemoteCandidate tcp-passive trickle: no compatible local candidate", id());
+                return;
+            }
 
             CandidatePairPtr pair = std::make_shared<CandidatePair>();
-            pair->local = local;
+            pair->local = *localForConnect;
+            pair->local.protocol = TransportProtocol::TCP; // Override local protocol to TCP for correct role assignment
+            pair->local.tcpType = TcpType::Active; // Override local TCP type to passive for correct role assignment
+            pair->local.componentId = candidate.componentId; // Override local component ID to match remote
             pair->remote = candidate;
             pair->computePriority(role_);
             pair->state = PairState::Waiting; // New pairs start as Waiting (trickle)
             checklist_.addPair(pair);
-            hlogi("IceSession %s addRemoteCandidate new pair %s",
-                  id(), pair->toString().c_str());
+            pair->io = agent_->connectTcp(&candidate.addr.sa, this);
+            hlogi("IceSession %s addRemoteCandidate new tcp-passive pair %s io=%p",
+                  id(), pair->toString().c_str(), (void*)pair->io);
             ++newPairs;
+        } else {
+            for (const auto& local : local_candidates_) {
+                if (!canPairCandidates(local, candidate)) continue;
+
+                CandidatePairPtr pair = std::make_shared<CandidatePair>();
+                pair->local = local;
+                pair->remote = candidate;
+                pair->computePriority(role_);
+                pair->state = PairState::Waiting; // New pairs start as Waiting (trickle)
+                checklist_.addPair(pair);
+                hlogi("IceSession %s addRemoteCandidate new pair %s", id(), pair->toString().c_str());
+                ++newPairs;
+            }
         }
         checklist_.sort();
         if (newPairs > 0) {
-            hlogi("IceSession %s addRemoteCandidate formed %d new pairs (trickle)",
-                  id(), newPairs);
+            hlogi("IceSession %s addRemoteCandidate formed %d new pairs (trickle)", id(), newPairs);
         }
     }
 }
@@ -430,13 +463,12 @@ void IceSession::sendConnectivityCheck(CandidatePairPtr pair) {
     } else if (pair->local.protocol == TransportProtocol::TCP) {
         if (pair->io) {
             io = pair->io;
+            if (!hio_is_opened(io))
+                return;
         } else if (pair->remote.tcpType == TcpType::Passive) {
             // Need to initiate TCP connection
-            if (agent_) {
-                agent_->connectTcp(&pair->remote.addr.sa, this);
-            }
-            hlogi("IceSession %s sendConnectivityCheck %s: initiating TCP connection",
-                  id(), pair->toString().c_str());
+            pair->state = PairState::Waiting;
+            pair->io = agent_->connectTcp(&pair->remote.addr.sa, this);
             return; // Will retry after connection established
         } else {
             // active-active or unsupported TCP type: cannot establish connection
@@ -550,18 +582,18 @@ void IceSession::onStunRequest(StunMessage& msg, const struct sockaddr* from, hi
     }
 
     if (matchedPair) {
+        if (useCandidate && role_ == IceRole::Controlled) {
+            // Keep nomination intent even when the check is already InProgress.
+            matchedPair->nominated = true;
+        }
         if (matchedPair->state == PairState::Succeeded) {
             // Already succeeded
-            if (useCandidate && role_ == IceRole::Controlled) {
-                matchedPair->nominated = true;
+            if (matchedPair->nominated && role_ == IceRole::Controlled) {
                 hlogi("IceSession %s onStunRequest USE-CANDIDATE, select pair %s",
                       id(), matchedPair->toString().c_str());
                 setSelectPair(matchedPair);
             }
         } else if (matchedPair->state != PairState::InProgress) {
-            if (useCandidate && role_ == IceRole::Controlled) {
-                matchedPair->nominated = true;
-            }
             // Trigger check
             hlogi("IceSession %s onStunRequest triggered check for pair %s state=%s",
                   id(), matchedPair->toString().c_str(),
@@ -755,9 +787,8 @@ int IceSession::send(const void* data, size_t len) {
         io = agent_->udpIo();
     } else {
         io = selected_pair_->io;
-        if (!io) {
+        if (!io || !hio_is_opened(io))
             return -1;
-        }
     }
     return agent_->send(data, len, &selected_pair_->remote.addr.sa, io);
 }
@@ -779,34 +810,41 @@ void IceSession::onTcpConnected(hio_t* io) {
     ios_.insert(io);
     // Associate TCP connection with the matching pair
     sockaddr_u* peeraddr = (sockaddr_u*)hio_peeraddr(io);
+    sockaddr_u* localaddr = (sockaddr_u*)hio_localaddr(io);
     char peerStr[SOCKADDR_STRLEN] = {0};
+    char localStr[SOCKADDR_STRLEN] = {0};
     SOCKADDR_STR((struct sockaddr*)peeraddr, peerStr);
-    hlogi("IceSession %s onTcpConnected peer=%s", id(), peerStr);
-    for (auto& pair : checklist_.pairs()) {
-        if (pair->local.protocol == TransportProtocol::TCP &&
-            sockaddr_compare(&pair->remote.addr, peeraddr) == 0) {
-            pair->io = io;
-            hlogi("IceSession %s onTcpConnected matched pair %s, sending check",
-                  id(), pair->toString().c_str());
-            // Now send the connectivity check
-            sendConnectivityCheck(pair);
-            break;
-        }
+    SOCKADDR_STR((struct sockaddr*)localaddr, localStr);
+    hlogi("IceSession %s onTcpConnected local=%s peer=%s", id(), localStr, peerStr);
+
+    CandidatePairPtr pair = checklist_.findByIO(io);
+    if (pair) {
+        auto& localCand = pair->local;
+        localCand.type = CandidateType::Host;
+        localCand.tcpType = TcpType::Active;
+        memcpy(&localCand.addr, localaddr, SOCKADDR_LEN((struct sockaddr*)localaddr));
+        memcpy(&localCand.baseAddr, &localCand.addr, sizeof(sockaddr_u));
+        localCand.update();
+        pair->computePriority(role_);
+        hlogi("IceSession %s onTcpConnected upgraded pair %s", id(), pair->toString().c_str());
     }
+
+    hlogi("IceSession %s onTcpConnected matched pair %s, sending check", id(), pair->toString().c_str());
+    // Now send the connectivity check
+    sendConnectivityCheck(pair);
 }
 
 void IceSession::onTcpDisconnected(hio_t* io) {
     ios_.erase(io);
     // Mark associated pairs as failed
-    for (auto& pair : checklist_.pairs()) {
-        if (pair->io == io) {
-            hlogi("IceSession %s onTcpDisconnected pair=%s state=%s",
-                  id(), pair->toString().c_str(),
-                  pairStateString(pair->state));
-            pair->io = nullptr;
-            if (pair->state == PairState::InProgress) {
-                pair->state = PairState::Failed;
-            }
+    CandidatePairPtr pair = checklist_.findByIO(io);
+    if (pair) {
+        pair->io = nullptr;
+        hlogi("IceSession %s onTcpDisconnected pair=%s state=%s",
+              id(), pair->toString().c_str(),
+              pairStateString(pair->state));
+        if (pair->state == PairState::InProgress) {
+            pair->state = PairState::Failed;
         }
     }
 }

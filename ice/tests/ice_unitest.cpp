@@ -160,6 +160,27 @@ TEST(IceCandidate, ToSdpRoundTrip) {
     EXPECT_NE(sdp.find("8080"), std::string::npos);
 }
 
+TEST(IceCandidate, TcpHostActiveSdpRoundTrip) {
+    IceCandidate cand;
+    cand.componentId = 1;
+    cand.protocol = TransportProtocol::TCP;
+    cand.tcpType = TcpType::Active;
+    cand.type = CandidateType::Host;
+    sockaddr_set_ipport(&cand.addr, "10.10.10.8", 45678);
+    memcpy(&cand.baseAddr, &cand.addr, sizeof(sockaddr_u));
+    cand.update();
+
+    std::string sdp = cand.toSdp();
+    EXPECT_NE(sdp.find(" typ host"), std::string::npos);
+    EXPECT_NE(sdp.find(" tcptype active"), std::string::npos);
+
+    IceCandidate parsed;
+    ASSERT_TRUE(parsed.fromSdp(sdp));
+    EXPECT_EQ(parsed.protocol, TransportProtocol::TCP);
+    EXPECT_EQ(parsed.tcpType, TcpType::Active);
+    EXPECT_EQ(parsed.type, CandidateType::Host);
+}
+
 // ────────────────────────────────────────────────────────────
 // CandidatePair Tests
 // ────────────────────────────────────────────────────────────
@@ -547,6 +568,42 @@ TEST_F(IceAgentTest, SessionGathering) {
         }
     }
     EXPECT_TRUE(hasHost);
+
+    agent.destroySession(session);
+    agent.stop();
+}
+
+TEST_F(IceAgentTest, TcpConnectedDoesNotDuplicateActiveLocalCandidate) {
+    IceAgent agent;
+    config_.gatherTcp = true;
+    config_.gatherSrflx = false;
+    config_.gatherRelay = false;
+    agent.setConfig(config_);
+    ASSERT_EQ(agent.start(), 0);
+
+    auto session = agent.createSession(IceMode::Full);
+    ASSERT_TRUE(session != nullptr);
+
+    std::vector<IceCandidate> gathered;
+    session->onLocalCandidate = [&gathered](const IceCandidate& cand) {
+        gathered.push_back(cand);
+    };
+
+    session->gatherCandidates();
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    bool hasTcpPassive = false;
+    bool hasTcpActive = false;
+    for (const auto& cand : gathered) {
+        if (cand.protocol != TransportProtocol::TCP) continue;
+        if (cand.tcpType == TcpType::Passive) hasTcpPassive = true;
+        if (cand.tcpType == TcpType::Active) hasTcpActive = true;
+    }
+
+    EXPECT_TRUE(hasTcpPassive);
+    // WebRTC-like lifecycle: active TCP candidate is connection/pair scoped,
+    // not gathered into the static local candidate list.
+    EXPECT_FALSE(hasTcpActive);
 
     agent.destroySession(session);
     agent.stop();

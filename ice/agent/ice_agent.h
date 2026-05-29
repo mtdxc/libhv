@@ -69,7 +69,7 @@ public:
     int send(const void* data, size_t len, const struct sockaddr* addr, hio_t* io);
 
     // TCP connect / send / close
-    int connectTcp(const struct sockaddr* addr, IceSession* session);
+    hio_t* connectTcp(const struct sockaddr* addr, IceSession* session);
     void closeTcpConnection(hio_t* io);
 
     // Session registration (by ufrag)

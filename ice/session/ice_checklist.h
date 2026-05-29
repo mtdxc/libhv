@@ -89,7 +89,15 @@ public:
         }
         return nullptr;
     }
-
+    CandidatePairPtr findByIO(hio_t* io) {
+        auto it = std::find_if(pairs_.begin(), pairs_.end(), [&io](const CandidatePairPtr& pair) {
+            return pair->io == io;
+        });
+        if (it != pairs_.end()) {
+            return *it;
+        }
+        return nullptr;
+    }
     // Find pair by local and remote candidate addresses
     CandidatePairPtr findByAddresses(const sockaddr_u& localAddr, const sockaddr_u& remoteAddr) {
         auto it = std::find_if(pairs_.begin(), pairs_.end(), [&localAddr, &remoteAddr](const CandidatePairPtr& pair) {

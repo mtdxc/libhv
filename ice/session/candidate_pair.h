@@ -53,7 +53,6 @@ struct CandidatePair {
 
     // Transaction tracking
     TransactionId transactionId;
-    int retransmitCount = 0;
     uint64_t lastSendTime = 0; // ms
     std::string toString() const {
         char line[64];

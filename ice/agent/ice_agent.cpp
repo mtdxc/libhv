@@ -395,9 +395,9 @@ std::string IceAgent::extractLocalUfrag(const uint8_t* data, size_t len) {
 
 // ---- TCP APIs ----
 
-int IceAgent::connectTcp(const struct sockaddr* addr, IceSession* session) {
+hio_t* IceAgent::connectTcp(const struct sockaddr* addr, IceSession* session) {
     hloop_t* loop = loop_->loop();
-    if (!loop) return -1;
+    if (!loop) return nullptr;
 
     char host[SOCKADDR_STRLEN] = {0};
     int port = 0;
@@ -412,7 +412,7 @@ int IceAgent::connectTcp(const struct sockaddr* addr, IceSession* session) {
     }
     hlogi("IceAgent %s connectTcp %s:%d", session->id(), host, port);
     hio_t* io = hio_create_socket(loop, host, port, HIO_TYPE_TCP, HIO_CLIENT_SIDE);
-    if (!io) return -1;
+    if (!io) return nullptr;
 
     uint32_t id = hio_id(io);
     hio_set_context(io, session);
@@ -423,7 +423,7 @@ int IceAgent::connectTcp(const struct sockaddr* addr, IceSession* session) {
     hio_set_unpack(io, &tcp_unpack_setting_);
     hio_connect(io);
 
-    return (int)id;
+    return io;
 }
 
 void IceAgent::closeTcpConnection(hio_t* io) {
