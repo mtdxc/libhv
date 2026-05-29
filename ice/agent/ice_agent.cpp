@@ -19,12 +19,6 @@
 #endif
 
 namespace ice {
-// TCP connection state for ICE
-struct TcpIceConnection {
-    hio_t* io = nullptr;
-    IceSession* session = nullptr;
-    bool identified = false; // true after first STUN exchange
-};
 
 static constexpr int MAX_RETRANSMIT = 4;  // ICE check: 4 retransmits (~1.5s max)
 static constexpr uint32_t MAX_RTO = 800; // Cap RTO at 800ms
@@ -135,7 +129,11 @@ void IceAgent::stop() {
 
     // Close TCP connections
     for (auto& kv : tcp_connections_) {
-        if (kv.second.io) hio_close(kv.second.io);
+        if (auto io = kv.second) {
+            if(nullptr == hio_context(io)) { // Prevent callbacks after close
+                hio_close(io);
+            }
+        }
     }
     tcp_connections_.clear();
 
@@ -321,10 +319,9 @@ void IceAgent::processStunMsg(const uint8_t* data, size_t len, const struct sock
     } else if (msg.cls() == STUN_CLASS_INDICATION) {
         // INDICATION (e.g. TURN DATA indication) —— 路由到 TCP session 或 pair_map_
         if (io && hio_type(io) == HIO_TYPE_TCP) {
-            uint32_t id = hio_id(io);
-            auto cit = tcp_connections_.find(id);
-            if (cit != tcp_connections_.end() && cit->second.session) {
-                cit->second.session->onStunRequest(msg, addr, io);
+            IceSession* session = (IceSession*)hio_context(io);
+            if (session) {
+                session->onStunRequest(msg, addr, io);
                 return;
             }
         }
@@ -417,13 +414,8 @@ int IceAgent::connectTcp(const struct sockaddr* addr, IceSession* session) {
     hio_t* io = hio_create_socket(loop, host, port, HIO_TYPE_TCP, HIO_CLIENT_SIDE);
     if (!io) return -1;
 
-    TcpIceConnection conn;
-    conn.io = io;
-    conn.session = session;
-    conn.identified = true;
     uint32_t id = hio_id(io);
-    tcp_connections_[id] = conn;
-
+    hio_set_context(io, session);
     hevent_set_userdata(io, this);
     hio_setcb_connect(io, onTcpConnect);
     hio_setcb_read(io, onTcpRecv);
@@ -445,13 +437,9 @@ void IceAgent::onTcpAccept(hio_t* io) {
         return;
     }
 
-    TcpIceConnection conn;
-    conn.io = io;
-    conn.session = nullptr;
-    conn.identified = false;
     uint32_t id = hio_id(io);
-    self->tcp_connections_[id] = conn;
-
+    self->tcp_connections_[id] = io;
+    hio_set_context(io, nullptr);
     hevent_set_userdata(io, self);
     hio_setcb_read(io, onTcpRecv);
     hio_setcb_close(io, onTcpClose);
@@ -460,29 +448,21 @@ void IceAgent::onTcpAccept(hio_t* io) {
 }
 
 void IceAgent::onTcpConnect(hio_t* io) {
-    IceAgent* self = (IceAgent*)hevent_userdata(io);
-    if (!self) return;
-
-    hio_read(io);
-
-    uint32_t id = hio_id(io);
-    auto it = self->tcp_connections_.find(id);
-    if (it != self->tcp_connections_.end() && it->second.session) {
-        it->second.session->onTcpConnected(io);
+    if (IceSession* session = (IceSession*)hio_context(io)) {
+        session->onTcpConnected(io);
     }
+    hio_read(io);
 }
 
 void IceAgent::onTcpClose(hio_t* io) {
     IceAgent* self = (IceAgent*)hevent_userdata(io);
-    if (!self) return;
-
-    uint32_t id = hio_id(io);
-    auto it = self->tcp_connections_.find(id);
-    if (it != self->tcp_connections_.end()) {
-        if (it->second.session) {
-            it->second.session->onTcpDisconnected(io);
-        }
-        self->tcp_connections_.erase(it);
+    IceSession* session = (IceSession*)hio_context(io);
+    if (session) {
+        session->onTcpDisconnected(io);
+    }
+    if (self) {
+        uint32_t id = hio_id(io);
+        self->tcp_connections_.erase(id);
     }
 }
 
@@ -494,20 +474,19 @@ void IceAgent::onTcpRecv(hio_t* io, void* buf, int readbytes) {
 }
 
 void IceAgent::handleTcpRecv(hio_t* io, const uint8_t* data, size_t len) {
-    uint32_t id = hio_id(io);
-    auto it = tcp_connections_.find(id);
-    if (it == tcp_connections_.end()) return;
-
-    if (!it->second.identified) {
+    IceSession* session = (IceSession*)hio_context(io);    
+    if (!session) {
         identifyTcpConnection(io, data, len);
+        // identifyTcpConnection may bind this io to a session.
+        session = (IceSession*)hio_context(io);
     }
 
-    if (it->second.session) {
+    if (session) {
         PacketType ptype = classifyPacket(data, len);
         if (ptype == PacketType::STUN) {
             processStunMsg(data, len, hio_peeraddr(io), io);
         } else {
-            it->second.session->onRecvData(data, len, hio_peeraddr(io));
+            session->onRecvData(data, len, hio_peeraddr(io));
         }
     }
 }
@@ -534,15 +513,16 @@ void IceAgent::identifyTcpConnection(hio_t* io, const uint8_t* data, size_t len)
         return;
     }
 
-    uint32_t id = hio_id(io);
-    auto it = tcp_connections_.find(id);
-    if (it != tcp_connections_.end()) {
-        it->second.session = sit->second;
-        it->second.identified = true;
+    if (sit->second->onTcpAccepted(io)){
+        hio_set_context(io, sit->second);
         char peerStr[SOCKADDR_STRLEN] = {0};
         SOCKADDR_STR(hio_peeraddr(io), peerStr);
-        hlogi("IceAgent identifyTcpConnection: io=%u peer=%s identified -> session ufrag=%s",
-              id, peerStr, local_ufrag.c_str());
+        hlogi("IceAgent identifyTcpConnection: peer=%s accepted -> session ufrag=%s",
+               peerStr, local_ufrag.c_str());
+    } else {
+        hlogw("IceAgent identifyTcpConnection: session rejected TCP connection for ufrag=%s", local_ufrag.c_str());
+        hio_close(io);
+        return;
     }
 }
 

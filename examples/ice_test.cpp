@@ -9,11 +9,13 @@ using namespace ice;
 
 int main(int argc, char* argv[]) {
     logger_enable_color(hlog, true);
-    hlog_set_handler(stdout_logger);
     bool testTcp = false;
     for (int i =0; i < argc; ++i) {
         if (strcmp(argv[i], "--tcp") == 0) {
             testTcp = true;
+        }
+        if (strcmp(argv[i], "--log") == 0) {
+            hlog_set_handler(stdout_logger);
         }
     }
     IceConfig config;
@@ -95,6 +97,9 @@ int main(int argc, char* argv[]) {
     }
     agent.destroySession(session1);
     agent.destroySession(session2);
+    session1->onLocalCandidate = nullptr;
+    session2->onLocalCandidate = nullptr;
+    session1 = session2 = nullptr;
     agent.stop();
     printf("  Agent stopped cleanly\n");
     return 0;

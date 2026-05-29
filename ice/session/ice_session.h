@@ -6,7 +6,7 @@
 #include <memory>
 #include <functional>
 #include <unordered_map>
-
+#include <set>
 #include "EventLoop.h"
 
 #include "ice_candidate.h"
@@ -86,6 +86,7 @@ public:
     void onRecvData(const uint8_t* data, size_t len, const struct sockaddr* from);
     // STUN request handling
     void onStunRequest(StunMessage& req, const sockaddr* addr, hio_t* io);
+    bool onTcpAccepted(hio_t* io);
     void onTcpConnected(hio_t* io);
     void onTcpDisconnected(hio_t* io);
 
@@ -164,8 +165,8 @@ private:
     htimer_t* gathering_timer_ = nullptr;
     htimer_t* connectivity_timer_ = nullptr;
     int check_interval_ms_ = 20; // Ta: RFC 5245 recommended 20ms
-
-
+    // connect hio_t*
+    std::set<hio_t*> ios_;
     // Gathering state
     int pending_gathering_requests_ = 0;
 };

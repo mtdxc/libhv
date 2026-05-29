@@ -73,6 +73,7 @@ IceSession::IceSession(IceMode mode, IceAgent* agent, hv::EventLoopPtr loop)
 }
 
 IceSession::~IceSession() {
+    hlogi("IceSession %s destroyed", id());
     close();
 }
 
@@ -98,6 +99,17 @@ void IceSession::close() {
             htimer_del(connectivity_timer_);
         }
     }
+
+    auto ios = ios_;
+    ios_.clear();
+    for (auto io : ios) {
+        if (io) {
+            // Avoid dangling session pointer in IceAgent::onTcpClose callback.
+            hio_set_context(io, nullptr);
+            hio_close(io);
+        }
+    }
+
     check_timer_ = nullptr;
     keepalive_timer_ = nullptr;
     gathering_timer_ = nullptr;
@@ -750,7 +762,21 @@ int IceSession::send(const void* data, size_t len) {
     return agent_->send(data, len, &selected_pair_->remote.addr.sa, io);
 }
 
+bool IceSession::onTcpAccepted(hio_t* io) {
+    if (state_ == IceState::Closed) {
+        return false;
+    }
+    // Associate TCP connection with the matching pair
+    sockaddr_u* peeraddr = (sockaddr_u*)hio_peeraddr(io);
+    char peerStr[SOCKADDR_STRLEN] = {0};
+    SOCKADDR_STR((struct sockaddr*)peeraddr, peerStr);
+    hlogi("IceSession %s onTcpAccepted peer=%s", id(), peerStr);
+    ios_.insert(io);
+    return true;
+}
+
 void IceSession::onTcpConnected(hio_t* io) {
+    ios_.insert(io);
     // Associate TCP connection with the matching pair
     sockaddr_u* peeraddr = (sockaddr_u*)hio_peeraddr(io);
     char peerStr[SOCKADDR_STRLEN] = {0};
@@ -770,6 +796,7 @@ void IceSession::onTcpConnected(hio_t* io) {
 }
 
 void IceSession::onTcpDisconnected(hio_t* io) {
+    ios_.erase(io);
     // Mark associated pairs as failed
     for (auto& pair : checklist_.pairs()) {
         if (pair->io == io) {

@@ -16,7 +16,6 @@ namespace ice {
 class IceSession;
 class TurnClient;
 struct StunTransaction;
-struct TcpIceConnection;
 
 // STUN Transaction for tracking requests
 using StunCallback = std::function<void(StunMessage* resp, int code)>;
@@ -133,7 +132,13 @@ private:
     hio_t* tcp_listen_io_ = nullptr;
     int tcp_port_ = 0;
     unpack_setting_t tcp_unpack_setting_;
-    std::unordered_map<uint32_t, TcpIceConnection> tcp_connections_;
+    /*
+    tcp connect for accept, 
+    for tcp hio_t:
+    - hevent_userdata -> IceAgent* associated with this connection
+    - hio_context -> nullptr before identified, IceSession* after identified
+    */
+    std::unordered_map<uint32_t, hio_t*> tcp_connections_;
 };
 
 } // namespace ice
