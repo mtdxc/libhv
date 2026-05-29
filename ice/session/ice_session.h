@@ -68,7 +68,8 @@ public:
     const std::vector<IceCandidate>& remoteCandidates() const { return remote_candidates_; }
 
     // Gathering
-    void gatherCandidates();
+    void gatherCandidates(bool bandUdp = false);
+    void addHostCandidates(int componentId);
 
     // Start connectivity checks
     void startChecks();
@@ -86,6 +87,7 @@ public:
     void onRecvData(const uint8_t* data, size_t len, const struct sockaddr* from);
     // STUN request handling
     void onStunRequest(StunMessage& req, const sockaddr* addr, hio_t* io);
+    hv::EventLoopPtr loop() const { return loop_; }
     bool onTcpAccepted(hio_t* io);
     void onTcpConnected(hio_t* io);
     void onTcpDisconnected(hio_t* io);
@@ -98,7 +100,7 @@ public:
 
     // Close session
     void close();
-
+    hio_t* udpIo() const;
 private:
     // State management
     void setState(IceState state);
@@ -167,6 +169,7 @@ private:
     int check_interval_ms_ = 20; // Ta: RFC 5245 recommended 20ms
     // connect hio_t*
     std::set<hio_t*> ios_;
+    hio_t* udp_io_ = nullptr;
     // Gathering state
     int pending_gathering_requests_ = 0;
 };

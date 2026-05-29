@@ -7,17 +7,6 @@
 #include "hlog.h"
 #include <algorithm>
 
-#ifdef _WIN32
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <iphlpapi.h>
-#pragma comment(lib, "iphlpapi.lib")
-#else
-#include <arpa/inet.h>
-#include <ifaddrs.h>
-#include <net/if.h>
-#endif
-
 namespace ice {
 
 static constexpr int MAX_RETRANSMIT = 4;  // ICE check: 4 retransmits (~1.5s max)
@@ -393,10 +382,38 @@ std::string IceAgent::extractLocalUfrag(const uint8_t* data, size_t len) {
     return "";
 }
 
+hio_t* IceAgent::bindUdp(IceSession* session, uint16_t port) {
+    auto loop = session->loop();
+    if (!loop) return nullptr;
+
+    hio_t* io = hio_create_socket(loop->loop(), nullptr, port, HIO_TYPE_UDP, HIO_SERVER_SIDE);
+    if (!io) return nullptr;
+    auto local_adr = (sockaddr_u*)hio_localaddr(io);
+    hlogi("IceAgent %s bindUdp %d", session->id(), port);
+    hio_set_context(io, session);
+    hevent_set_userdata(io, this);
+    hio_setcb_read(io, [](hio_t* io, void* buf, int len) {
+        IceAgent* self = (IceAgent*)hevent_userdata(io);
+        IceSession* session = (IceSession*)hio_context(io);
+        if (!self || !session) return;
+        const struct sockaddr* addr = hio_peeraddr(io);
+        uint8_t* data = (uint8_t*)buf;
+        PacketType ptype = classifyPacket(data, len);
+        if (ptype == PacketType::STUN) {
+            self->processStunMsg(data, len, addr, io);
+        }
+        else{
+            session->onRecvData(data, len, addr);
+        }
+    });
+    hio_read(io);
+    return io;
+}
+
 // ---- TCP APIs ----
 
 hio_t* IceAgent::connectTcp(const struct sockaddr* addr, IceSession* session) {
-    hloop_t* loop = loop_->loop();
+    auto loop = session->loop();
     if (!loop) return nullptr;
 
     char host[SOCKADDR_STRLEN] = {0};
@@ -411,7 +428,7 @@ hio_t* IceAgent::connectTcp(const struct sockaddr* addr, IceSession* session) {
         port = ntohs(addr6->sin6_port);
     }
     hlogi("IceAgent %s connectTcp %s:%d", session->id(), host, port);
-    hio_t* io = hio_create_socket(loop, host, port, HIO_TYPE_TCP, HIO_CLIENT_SIDE);
+    hio_t* io = hio_create_socket(loop->loop(), host, port, HIO_TYPE_TCP, HIO_CLIENT_SIDE);
     if (!io) return nullptr;
 
     uint32_t id = hio_id(io);
@@ -426,8 +443,12 @@ hio_t* IceAgent::connectTcp(const struct sockaddr* addr, IceSession* session) {
     return io;
 }
 
-void IceAgent::closeTcpConnection(hio_t* io) {
-    if (io) hio_close(io);
+void IceAgent::closeIo(hio_t* io) {
+    if (io) {
+        hio_set_context(io, nullptr); // Prevent callbacks after close
+        hevent_set_userdata(io, nullptr);
+        hio_close(io);
+    }
 }
 
 void IceAgent::onTcpAccept(hio_t* io) {
@@ -524,99 +545,6 @@ void IceAgent::identifyTcpConnection(hio_t* io, const uint8_t* data, size_t len)
         hio_close(io);
         return;
     }
-}
-
-// addLoacalIceCandidate helper api
-void IceAgent::addHostCandidates(IceSession* session, int componentId) {
-#ifdef _WIN32
-    // Windows: Use GetAdaptersAddresses
-    ULONG bufLen = 0;
-    GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_PREFIX, nullptr, nullptr, &bufLen);
-    std::vector<uint8_t> buf(bufLen);
-    PIP_ADAPTER_ADDRESSES addrs = (PIP_ADAPTER_ADDRESSES)buf.data();
-    if (GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_PREFIX, nullptr, addrs, &bufLen) == NO_ERROR) {
-        for (auto adapter = addrs; adapter; adapter = adapter->Next) {
-            if (adapter->OperStatus != IfOperStatusUp) continue;
-            if (adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) continue;
-
-            for (auto ua = adapter->FirstUnicastAddress; ua; ua = ua->Next) {
-                struct sockaddr* sa = ua->Address.lpSockaddr;
-                if (sa->sa_family != AF_INET && sa->sa_family != AF_INET6)
-                    continue;
-
-                // Skip link-local IPv6
-                if (sa->sa_family == AF_INET6) {
-                    struct sockaddr_in6* sin6 = (struct sockaddr_in6*)sa;
-                    if (IN6_IS_ADDR_LINKLOCAL(&sin6->sin6_addr))
-                        continue;
-                }
-                IceCandidate cand;
-                cand.type = CandidateType::Host;
-                cand.protocol = TransportProtocol::UDP;
-                cand.componentId = 1;
-                memcpy(&cand.addr, sa, SOCKADDR_LEN(sa));
-                // Set port from agent
-                sockaddr_set_port(&cand.addr, udp_port_);
-                memcpy(&cand.baseAddr, &cand.addr, sizeof(sockaddr_u));
-                cand.update();
-                session->addLocalCandidate(cand);
-
-                // TCP passive candidate (if TCP enabled)
-                if (tcp_port_ > 0) {
-                    IceCandidate tcpCand = cand;
-                    tcpCand.protocol = TransportProtocol::TCP;
-                    tcpCand.tcpType = TcpType::Passive;
-                    sockaddr_set_port(&tcpCand.addr, tcp_port_);
-                    memcpy(&tcpCand.baseAddr, &tcpCand.addr, sizeof(sockaddr_u));
-                    tcpCand.update();
-
-                    session->addLocalCandidate(tcpCand);
-                }
-            }
-        }
-    }
-#else
-    // Unix/Linux/macOS: Use getifaddrs
-    struct ifaddrs* ifaddr;
-    if (getifaddrs(&ifaddr) == -1) return;
-
-    for (struct ifaddrs* ifa = ifaddr; ifa; ifa = ifa->ifa_next) {
-        if (!ifa->ifa_addr) continue;
-        if (!(ifa->ifa_flags & IFF_UP)) continue;
-        if (ifa->ifa_flags & IFF_LOOPBACK) continue;
-
-        struct sockaddr* sa = ifa->ifa_addr;
-        if (sa->sa_family != AF_INET && sa->sa_family != AF_INET6) continue;
-
-        // Skip link-local IPv6
-        if (sa->sa_family == AF_INET6) {
-            struct sockaddr_in6* sin6 = (struct sockaddr_in6*)sa;
-            if (IN6_IS_ADDR_LINKLOCAL(&sin6->sin6_addr)) continue;
-        }
-
-        IceCandidate cand;
-        cand.type = CandidateType::Host;
-        cand.protocol = TransportProtocol::UDP;
-        cand.componentId = componentId;
-        memcpy(&cand.addr, sa, SOCKADDR_LEN(sa));
-        sockaddr_set_port(&cand.addr, udp_port_);
-        memcpy(&cand.baseAddr, &cand.addr, sizeof(sockaddr_u));
-        cand.update();
-        session->addLocalCandidate(cand);
-
-        if (tcp_port_ > 0) {
-            IceCandidate tcpCand = cand;
-            tcpCand.protocol = TransportProtocol::TCP;
-            tcpCand.tcpType = TcpType::Passive;
-            sockaddr_set_port(&tcpCand.addr, tcp_port_);
-            memcpy(&tcpCand.baseAddr, &tcpCand.addr, sizeof(sockaddr_u));
-            tcpCand.update();
-            session->addLocalCandidate(tcpCand);
-        }
-    }
-
-    freeifaddrs(ifaddr);
-#endif
 }
 
 void IceAgent::addTurnCandidates(IceSession* session, int componentId) {

@@ -70,7 +70,8 @@ public:
 
     // TCP connect / send / close
     hio_t* connectTcp(const struct sockaddr* addr, IceSession* session);
-    void closeTcpConnection(hio_t* io);
+    hio_t* bindUdp(IceSession* session, uint16_t port = 0);
+    void closeIo(hio_t* io);
 
     // Session registration (by ufrag)
     void registerSession(const std::string& ufrag, IceSession* session);
@@ -85,7 +86,6 @@ public:
     bool isTurnAllocating() const;
     TurnClient* turnClient() const { return turn_client_.get(); }
     void addTurnCandidates(IceSession* session, int componentId = 1);
-    void addHostCandidates(IceSession* session, int componentId = 1);
 
     void createTurnPermission(const struct sockaddr* peerAddr);
     // Start TURN allocation (lazy, called by IceSession during gathering)

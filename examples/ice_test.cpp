@@ -79,7 +79,7 @@ int main(int argc, char* argv[]) {
     session1->setRemoteCredentials(session2->localUfrag(), session2->localPwd());
     session2->setRemoteCredentials(session1->localUfrag(), session1->localPwd());
     session1->gatherCandidates();
-    session2->gatherCandidates();
+    session2->gatherCandidates(!testTcp);
     printf("press q to quit loop\n");
     char line[256];
     while (fgets(line, sizeof(line), stdin)) {
