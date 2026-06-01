@@ -24,11 +24,23 @@ set(ICE_HEADERS
     sdp/ice_sdp.h
 )
 
-add_library(ice ${ICE_SRCS} ${ICE_HEADERS})
 set(LIBS "hv_static")
 if(WIN32 OR MINGW)
     set(LIBS ${LIBS} iphlpapi)
 endif()
+
+if(WITH_OPENSSL)
+    find_path(SRTP_INCLUDE_DIR NAMES srtp2/srtp.h)
+    find_library(SRTP_LIBRARY NAMES srtp2 libsrtp2)
+    if(SRTP_LIBRARY AND SRTP_INCLUDE_DIR)
+        set(LIBS ${LIBS} ${SRTP_LIBRARY})
+        list(APPEND ICE_SRCS SrtpSession.cpp DtlsTransport.cpp)
+    else()
+        message(FATAL_ERROR "WITH_OPENSSL=ON requires libsrtp headers and library (srtp2/srtp.h and srtp2/libsrtp2), but they were not found.")
+    endif()
+endif()
+
+add_library(ice ${ICE_SRCS} ${ICE_HEADERS})
 
 target_link_libraries(ice PUBLIC ${LIBS})
 
@@ -42,3 +54,7 @@ target_include_directories(ice PUBLIC
     ${CMAKE_SOURCE_DIR}/ssl
     ${CMAKE_SOURCE_DIR}/util
 )
+
+if(WITH_OPENSSL)
+    target_include_directories(ice PUBLIC ${SRTP_INCLUDE_DIR})
+endif()
