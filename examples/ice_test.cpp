@@ -53,10 +53,10 @@ int main(int argc, char* argv[]) {
         printf("  Session2 state changed: %s\n", iceStateString(state));
     };
     session1->onData = [](const void* data, size_t len) {
-        printf("  Session1 recv data: %.*s\n", (int)len, (const char*)data);
+        printf("  Session1 recv %d data: %.*s\n", len, (int)len, (const char*)data);
     };
     session2->onData = [](const void* data, size_t len) {
-        printf("  Session2 recv data: %.*s\n", (int)len, (const char*)data);
+        printf("  Session2 recv %d data: %.*s\n", len, (int)len, (const char*)data);
     };
     session1->onLocalCandidate = [session2, testTcp](const IceCandidate& candidate) {
         printf("  Session1 local candidate: %s\n", candidate.toSdp().c_str());

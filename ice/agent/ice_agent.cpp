@@ -102,6 +102,7 @@ void IceAgent::setConfig(const IceConfig& config) {
 }
 
 int IceAgent::start() {
+    std::unique_lock<decltype(mutex_)> lock(mutex_);
     if (running_) return 0;
     if (pools_ && !pools_->isRunning()) {
         pools_->start();
@@ -147,7 +148,6 @@ void IceAgent::stop() {
     std::vector<std::shared_ptr<IceSession>> sessions;
     std::vector<hio_t*> tcp_ios;
     std::shared_ptr<TurnClient> turn_client;
-    std::map<TransactionId, std::shared_ptr<StunTransaction>> txns;
     hio_t* tcp_listen_io = nullptr;
     hio_t* udp_io = nullptr;
 
@@ -167,15 +167,21 @@ void IceAgent::stop() {
         }
         tcp_connections_.clear();
 
-        ufrag_map_.clear();
-        pair_map_.clear();
-
-        txns.swap(transactions_);
-
         tcp_listen_io = tcp_listen_io_;
         tcp_listen_io_ = nullptr;
         udp_io = udp_io_;
         udp_io_ = nullptr;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(route_mutex_);
+        ufrag_map_.clear();
+        pair_map_.clear();
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(txn_mutex_);
+        transactions_.clear();
     }
 
     hlogi("IceAgent stop with %zu sessions", sessions.size());
@@ -200,7 +206,6 @@ void IceAgent::stop() {
         hio_close(udp_io);
     }
 
-    txns.clear();
 }
 
 IceSessionPtr IceAgent::createSession(IceMode mode) {
@@ -251,7 +256,7 @@ int IceAgent::send(const void* data, size_t len, const struct sockaddr* addr, hi
 }
 
 std::shared_ptr<IceSession> IceAgent::findSessionByAddr(const struct sockaddr* addr) {
-    std::unique_lock<decltype(mutex_)> lock(mutex_);
+    std::lock_guard<std::mutex> lock(route_mutex_);
     auto it = pair_map_.find(*((sockaddr_u*)addr));
     if (it!= pair_map_.end()) {
         if (auto session = it->second.lock()) {
@@ -265,7 +270,7 @@ std::shared_ptr<IceSession> IceAgent::findSessionByAddr(const struct sockaddr* a
 }
 
 std::shared_ptr<IceSession> IceAgent::findSessionByUfrag(const std::string& ufrag) {
-    std::unique_lock<decltype(mutex_)> lock(mutex_);
+    std::lock_guard<std::mutex> lock(route_mutex_);
     auto it = ufrag_map_.find(ufrag);
     if (it != ufrag_map_.end()) {
         if (auto session = it->second.lock()) {
@@ -279,28 +284,28 @@ std::shared_ptr<IceSession> IceAgent::findSessionByUfrag(const std::string& ufra
 }
 
 void IceAgent::registerSession(const std::string& ufrag, IceSession* session) {
-    std::unique_lock<decltype(mutex_)> lock(mutex_);
+    std::lock_guard<std::mutex> lock(route_mutex_);
     ufrag_map_[ufrag] = session->shared_from_this();
 }
 
 void IceAgent::unregisterSession(const std::string& ufrag) {
-    std::unique_lock<decltype(mutex_)> lock(mutex_);
+    std::lock_guard<std::mutex> lock(route_mutex_);
     ufrag_map_.erase(ufrag);
 }
 
 void IceAgent::registerPair(const sockaddr_u& addr, IceSession* session) {
-    std::unique_lock<decltype(mutex_)> lock(mutex_);
+    std::lock_guard<std::mutex> lock(route_mutex_);
     pair_map_[addr] = session->shared_from_this();
 }
 
 void IceAgent::unregisterPair(const sockaddr_u& addr) {
-    std::unique_lock<decltype(mutex_)> lock(mutex_);
+    std::lock_guard<std::mutex> lock(route_mutex_);
     pair_map_.erase(addr);
 }
 
 std::shared_ptr<StunTransaction> IceAgent::getTransaction(TransactionId id, bool pop) {
     std::shared_ptr<StunTransaction> ret;
-    std::unique_lock<decltype(mutex_)> lock(mutex_);
+    std::lock_guard<std::mutex> lock(txn_mutex_);
     auto it = transactions_.find(id);
     if (it != transactions_.end()) {
         ret = it->second;
@@ -330,7 +335,7 @@ void IceAgent::StunRequest(const StunMessage& req, const struct sockaddr* server
         memcpy(&txn->destAddr, server, SOCKADDR_LEN(server));
         txn->sentTime = hloop_now_ms(loop->loop());
         txn->setRto(50); // RFC 5389 initial RTO (50ms for ICE checks)
-        std::unique_lock<decltype(mutex_)> lock(mutex_);
+        std::lock_guard<std::mutex> lock(txn_mutex_);
         transactions_[txn->id] = txn;
     }
     send(encoded.data(), encoded.size(), server, io);
@@ -342,7 +347,7 @@ void IceAgent::onStunRetransmit(TransactionId tid) {
 
     {
         // Serialize decision against response path.
-        std::unique_lock<decltype(mutex_)> lock(mutex_);
+        std::lock_guard<std::mutex> lock(txn_mutex_);
         auto it = transactions_.find(tid);
         if (it == transactions_.end()) return;
         txn = it->second;

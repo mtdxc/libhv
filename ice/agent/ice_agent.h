@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <map>
 #include <functional>
+#include <mutex>
 
 #include "EventLoopThreadPool.h"
 #include "ice_config.h"
@@ -25,6 +26,7 @@ using StunCallback = std::function<void(StunMessage* resp, int code)>;
 class IceAgent {
     friend class StunTransaction;
     // Transactions
+    mutable std::mutex txn_mutex_;
     std::map<TransactionId, std::shared_ptr<StunTransaction>> transactions_;
     std::shared_ptr<StunTransaction> getTransaction(TransactionId id, bool pop = false);
 
@@ -126,12 +128,14 @@ private:
 
     std::shared_ptr<IceSession> findSessionByAddr(const struct sockaddr* addr);
     std::shared_ptr<IceSession> findSessionByUfrag(const std::string& ufrag);
+    mutable std::mutex route_mutex_;
     std::unordered_map<std::string, std::weak_ptr<IceSession>> ufrag_map_;
+    std::map<sockaddr_u, std::weak_ptr<IceSession>, SockaddrCompare> pair_map_;
+
     // ---- UDP state ----
     hio_t* udp_io_ = nullptr;
     int udp_port_ = 0;
     sockaddr_u udp_local_addr_;
-    std::map<sockaddr_u, std::weak_ptr<IceSession>, SockaddrCompare> pair_map_;
 
     // ---- TCP state ----
     hio_t* tcp_listen_io_ = nullptr;
