@@ -198,6 +198,12 @@ if(WITH_ICE)
     add_executable(turn_server_test turn_server_test.cpp)
     target_link_libraries(turn_server_test ice)
     list(APPEND EXAMPLES turn_server)
+
+    if(WITH_OPENSSL)
+        add_executable(rtc_test rtc_test.cpp)
+        target_link_libraries(rtc_test ice)
+        list(APPEND EXAMPLES rtc_test)
+    endif()
 endif()
 
 add_custom_target(examples DEPENDS ${EXAMPLES})

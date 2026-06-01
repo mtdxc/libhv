@@ -62,7 +62,11 @@ enum class PacketType {
 inline PacketType classifyPacket(const uint8_t* data, size_t len) {
     if (len < 1) return PacketType::DATA;
     uint8_t first = data[0];
-    if ((first & 0xC0) == 0x00) return PacketType::STUN;      // 0x00-0x3F
+    if ((first & 0xC0) == 0x00 && len >= 8 &&
+        data[4] == 0x21 && data[5] == 0x12 &&
+        data[6] == 0xA4 && data[7] == 0x42) {
+        return PacketType::STUN;
+    }
     if (first >= 0x40 && first <= 0x7F) return PacketType::TURN_CHANNEL;
     return PacketType::DATA;
 }
