@@ -26,50 +26,59 @@ public:
     int retransmitCount = 0;
     uint32_t rto = 50;                        // Initial RTO ms (50ms for ICE checks)
     hv::TimerID timer = INVALID_TIMER_ID;     // Retransmit timer
-    void doCb(StunMessage* resp, int code) {
-        if (!callback) return;
-        auto cb = std::move(callback);
-        if (!loop || loop->isInLoopThread()) {
-            cb(resp, code);
-            return;
-        }
-        else {
-            StunMessage* respCopy = nullptr;
-            if (resp) {
-                respCopy = new StunMessage();
-                *respCopy = *resp; // Copy the response message for use in the callback
-            }
-            // Post callback to EventLoop to ensure thread safety
-            loop->runInLoop([respCopy, code, cb]() {
-                cb(respCopy, code);
-                delete respCopy;
-            });
-        }
-    }
-    void setRto(uint32_t newRto) {
-        rto = newRto;
-        if (timer != INVALID_TIMER_ID) {
-            loop->killTimer(timer);
-            timer = INVALID_TIMER_ID;
-        }
-        std::weak_ptr<StunTransaction> weak_self = weak_from_this();
-        timer = loop->setTimeout(rto, [weak_self](hv::TimerID tid) {
-            if (auto self = weak_self.lock()) {
-                if (self->agent) {
-                    self->timer = INVALID_TIMER_ID; // Clear timer ID to indicate no active timer
-                    self->agent->onStunRetransmit(self->id);
-                }
-            }
-        });
-    }
-    ~StunTransaction() {
-        if (timer!= INVALID_TIMER_ID && loop) {
-            loop->killTimer(timer);
-            timer = INVALID_TIMER_ID;
-        }
-    }
+
+    std::string IdStr() const { return TransactionIdStr(id); }
+    void doCb(StunMessage* resp, int code);
+    void setRto(uint32_t newRto);
+    ~StunTransaction();
 };
 
+void StunTransaction::doCb(StunMessage* resp, int code) {
+    if (!callback) return;
+    auto cb = std::move(callback);
+    if (!loop || loop->isInLoopThread()) {
+        cb(resp, code);
+        return;
+    }
+    else {
+        StunMessage* respCopy = nullptr;
+        if (resp) {
+            respCopy = new StunMessage();
+            *respCopy = *resp; // Copy the response message for use in the callback
+        }
+        // Post callback to EventLoop to ensure thread safety
+        loop->runInLoop([respCopy, code, cb]() {
+            cb(respCopy, code);
+            delete respCopy;
+        });
+    }
+}
+
+void StunTransaction::setRto(uint32_t newRto) {
+    rto = newRto;
+    if (timer != INVALID_TIMER_ID) {
+        loop->killTimer(timer);
+        timer = INVALID_TIMER_ID;
+    }
+    std::weak_ptr<StunTransaction> weak_self = shared_from_this();
+    timer = loop->setTimeout(rto, [weak_self](hv::TimerID tid) {
+        if (auto self = weak_self.lock()) {
+            if (self->agent) {
+                self->timer = INVALID_TIMER_ID; // Clear timer ID to indicate no active timer
+                self->agent->onStunRetransmit(self->id);
+            }
+        }
+    });
+}
+
+StunTransaction::~StunTransaction() {
+    if (timer!= INVALID_TIMER_ID && loop) {
+        loop->killTimer(timer);
+        timer = INVALID_TIMER_ID;
+    }
+}
+
+/// IceAgent implementation
 IceAgent::IceAgent(hv::EventLoopThreadPool* pool) {
     if (pool) {
         pools_ = pool;
@@ -319,7 +328,7 @@ void IceAgent::StunRequest(const StunMessage& req, const struct sockaddr* server
     if (!loop) {
         loop = hv::tlsEventLoop();
         if (!loop) {
-            hlogw("IceAgent StunRequest without loop");
+            hlogw("IceAgent skip StunRequest %s without loop", req.IdStr().c_str());
             return;
         }
     }
@@ -361,7 +370,7 @@ void IceAgent::onStunRetransmit(TransactionId tid) {
         }
     }
 
-    auto id = TransactionIdStr(txn->id);
+    auto id = txn->IdStr();
     if (timeout) {
         char destStr[SOCKADDR_STRLEN] = {0};
         SOCKADDR_STR((struct sockaddr*)&txn->destAddr, destStr);
@@ -429,7 +438,7 @@ void IceAgent::processStunMsg(const uint8_t* data, size_t len, const struct sock
             txn->doCb(&msg, 0);
         } else {
             hlogw("IceAgent processStunMsg: response from %s no matching transaction %s", 
-              addrStr, TransactionIdStr(msg.transactionId()).c_str());
+              addrStr, msg.IdStr().c_str());
         }
     }
 }
@@ -656,15 +665,16 @@ void IceAgent::identifyTcpConnection(hio_t* io, const uint8_t* data, size_t len)
         else {
             hio_del(io); // Delay processing until we can safely attach to session's loop
             hio_detach(io); // Detach from current loop, will be attached to session's loop
-            std::weak_ptr<IceSession> weak_self = session->weak_from_this();
+            std::weak_ptr<IceSession> weak_self = session->shared_from_this();
             session->loop()->runInLoop([this, weak_self, io, msg]() {
                 if (auto session = weak_self.lock()) {
+                    hio_set_context(io, session.get());
                     hio_attach(session->loop()->loop(), io);
                     hio_read(io);
-                    hio_set_context(io, session.get());
                     session->onStunRequest(msg, hio_peeraddr(io), io);
                 }
                 else{
+                    hlogw("IceAgent identifyTcpConnection: session freed close io: %p", io);
                     hio_close(io);
                 }
             });

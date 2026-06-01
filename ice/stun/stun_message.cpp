@@ -4,6 +4,9 @@
 #include <cstdlib>
 #include <ctime>
 #include <algorithm>
+#include <atomic>
+#include <mutex>
+#include <random>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -16,14 +19,28 @@ namespace ice {
 
 TransactionId stun_generate_transaction_id() {
     TransactionId id;
-    static bool seeded = false;
-    if (!seeded) {
-        srand((unsigned int)time(nullptr));
-        seeded = true;
-    }
-    for (auto& b : id) {
-        b = (uint8_t)(rand() & 0xFF);
-    }
+    static std::once_flag init_flag;
+    static uint64_t process_seed = 0;
+    std::call_once(init_flag, []() {
+        std::random_device rd;
+        uint64_t seed = 0;
+        seed ^= (uint64_t)rd();
+        seed ^= (uint64_t)rd() << 16;
+        seed ^= (uint64_t)rd() << 32;
+        seed ^= (uint64_t)rd() << 48;
+        process_seed = seed;
+    });
+
+    static std::atomic<uint64_t> sequence{0};
+    uint64_t counter = sequence.fetch_add(1, std::memory_order_relaxed);
+
+    uint32_t hi = (uint32_t)(process_seed >> 32) ^ (uint32_t)counter;
+    uint32_t lo = (uint32_t)process_seed ^ (uint32_t)(counter >> 32);
+    uint32_t mix = hi ^ (lo << 1) ^ 0xA5A5A5A5u;
+
+    write_be32(id.data(), hi);
+    write_be32(id.data() + 4, lo);
+    write_be32(id.data() + 8, mix);
     return id;
 }
 

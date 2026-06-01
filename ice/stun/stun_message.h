@@ -194,6 +194,7 @@ public:
     uint16_t method() const { return stun_get_method(header_.type); }
     uint16_t cls() const { return stun_get_class(header_.type); }
 
+    std::string IdStr() const { return TransactionIdStr(header_.transaction_id); }
     const TransactionId& transactionId() const { return header_.transaction_id; }
     void setTransactionId(const TransactionId& id) { header_.transaction_id = id; }
 

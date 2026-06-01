@@ -614,8 +614,8 @@ void IceSession::sendConnectivityCheck(CandidatePairPtr pair) {
         pair->state = PairState::InProgress;
     }
 
-    hlogi("IceSession %s sendConnectivityCheck %s role=%s useCandidate=%d nominated=%d",
-          id(), pair->toString().c_str(),
+    hlogi("IceSession %s sendConnectivityCheck %s tid=%s role=%s useCandidate=%d nominated=%d", 
+          id(), pair->toString().c_str(), msg.IdStr().c_str(),
           iceRoleString(role_), (int)useCandidate, (int)pair->nominated);
 
     std::weak_ptr<IceSession> weak_self = shared_from_this();
