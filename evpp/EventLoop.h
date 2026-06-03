@@ -240,6 +240,11 @@ private:
 };
 
 typedef std::shared_ptr<EventLoop> EventLoopPtr;
+struct ThreadPool {
+    virtual EventLoopPtr loop(int idx = -1) = 0;
+    virtual EventLoopPtr nextLoop(load_balance_e lb = LB_RoundRobin) = 0;
+    virtual int threadNum() = 0;
+};
 
 // ThreadLocalStorage
 static inline EventLoop* tlsEventLoop() {

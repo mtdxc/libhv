@@ -10,7 +10,7 @@
 namespace hv {
 
 // EventLoopThread owns a background thread running one EventLoop.
-class EventLoopThread : public Status {
+class EventLoopThread : public Status, public ThreadPool {
 public:
     // Return 0 means OK, other failed.
     typedef std::function<int()> Functor;
@@ -25,6 +25,10 @@ public:
         stop();
         join();
     }
+
+    EventLoopPtr loop(int idx) {return loop_;}
+    EventLoopPtr nextLoop(load_balance_e lb = LB_RoundRobin) {return loop_;}
+    int threadNum() {return 1;}
 
     const EventLoopPtr& loop() {
         return loop_;

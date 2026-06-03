@@ -291,16 +291,45 @@ int http_server_stop(http_server_t* server) {
 
 namespace hv {
 
-std::shared_ptr<hv::EventLoop> HttpServer::loop(int idx) {
+int HttpServer::threadNum() {
+    HttpServerPrivdata* privdata = (HttpServerPrivdata*)this->privdata;
+    if (privdata == NULL) return 0;
+    std::lock_guard<std::mutex> locker(privdata->mutex_);
+    return privdata->loops.size();    
+}
+
+ std::shared_ptr<hv::EventLoop> HttpServer::nextLoop(load_balance_e lb) {
     HttpServerPrivdata* privdata = (HttpServerPrivdata*)this->privdata;
     if (privdata == NULL) return NULL;
     std::lock_guard<std::mutex> locker(privdata->mutex_);
+    size_t numLoops = privdata->loops.size();
+    if (numLoops == 0) return NULL;
+    size_t idx = 0;
+    if (lb == LB_RoundRobin) {
+        if (++next_loop_idx_ >= numLoops) next_loop_idx_ = 0;
+        idx = next_loop_idx_ % numLoops;
+    } else if (lb == LB_Random) {
+        idx = hv_rand(0, numLoops - 1);
+    } else if (lb == LB_LeastConnections) {
+        for (size_t i = 1; i < numLoops; ++i) {
+            if (privdata->loops[i]->connectionNum < privdata->loops[idx]->connectionNum) {
+                idx = i;
+            }
+        }
+    } else {
+        // Not Implemented
+    }
+    return privdata->loops[idx];
+}
+
+std::shared_ptr<hv::EventLoop> HttpServer::loop(int idx) {
+    HttpServerPrivdata* privdata = (HttpServerPrivdata*)this->privdata;
+    if (privdata == NULL) return NULL;
+    std::unique_lock<std::mutex> locker(privdata->mutex_);
     if (privdata->loops.empty()) return NULL;
     if (idx < 0) {
-        EventLoop* cur = currentThreadEventLoop;
-        for (auto& loop : privdata->loops) {
-            if (loop.get() == cur) return loop;
-        }
+        locker.unlock();
+        return nextLoop();
     }
     else if (idx >= 0 && idx < (int)privdata->loops.size()) {
         return privdata->loops[idx];

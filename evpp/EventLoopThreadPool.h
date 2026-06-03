@@ -6,7 +6,7 @@
 
 namespace hv {
 
-class EventLoopThreadPool : public Status {
+class EventLoopThreadPool : public Status, public ThreadPool {
 public:
     EventLoopThreadPool(int thread_num = std::thread::hardware_concurrency()) {
         setStatus(kInitializing);

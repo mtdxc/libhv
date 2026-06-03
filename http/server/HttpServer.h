@@ -3,7 +3,7 @@
 
 #include "hexport.h"
 #include "hssl.h"
-// #include "EventLoop.h"
+#include "EventLoop.h"
 #include "HttpService.h"
 // #include "WebSocketServer.h"
 namespace hv {
@@ -83,7 +83,8 @@ int main() {
 
 namespace hv {
 
-class HV_EXPORT HttpServer : public http_server_t {
+class HV_EXPORT HttpServer : public http_server_t, public ThreadPool {
+    int next_loop_idx_ = 0; // for LB_RoundRobin
 public:
     HttpServer(HttpService* service = NULL)
         : http_server_t()
@@ -97,7 +98,8 @@ public:
     }
 
     std::shared_ptr<hv::EventLoop> loop(int idx = -1);
-
+    std::shared_ptr<hv::EventLoop> nextLoop(load_balance_e lb = LB_RoundRobin);
+    int threadNum();
     void setHost(const char* host = "0.0.0.0") {
         if (host) strcpy(this->host, host);
     }
