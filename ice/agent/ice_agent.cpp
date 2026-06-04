@@ -6,6 +6,7 @@
 #include "hloop.h"
 #include "hlog.h"
 #include <algorithm>
+#include "EventLoopThreadPool.h"
 
 namespace ice {
 
@@ -79,12 +80,14 @@ StunTransaction::~StunTransaction() {
 }
 
 /// IceAgent implementation
-IceAgent::IceAgent(hv::EventLoopThreadPool* pool) {
+IceAgent::IceAgent(hv::ThreadPool* pool) {
     if (pool) {
         pools_ = pool;
         owns_pools_ = false;
     } else {
-        pools_ = new hv::EventLoopThreadPool();
+        auto pool = new hv::EventLoopThreadPool();
+        pool->start();
+        pools_ = pool;
         owns_pools_ = true;
     }
 
@@ -113,9 +116,6 @@ void IceAgent::setConfig(const IceConfig& config) {
 int IceAgent::start() {
     std::unique_lock<decltype(mutex_)> lock(mutex_);
     if (running_) return 0;
-    if (pools_ && !pools_->isRunning()) {
-        pools_->start();
-    }
     hloop_t* loop = pools_->loop()->loop();
     if (!loop) return -1;
 

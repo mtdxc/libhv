@@ -203,6 +203,10 @@ if(WITH_ICE)
         add_executable(rtc_test rtc_test.cpp)
         target_link_libraries(rtc_test ice)
         list(APPEND EXAMPLES rtc_test)
+
+        add_executable(rtc_http_test rtc_http_test.cpp)
+        target_link_libraries(rtc_http_test ice)
+        list(APPEND EXAMPLES rtc_http_test)
     endif()
 endif()
 

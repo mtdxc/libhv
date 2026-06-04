@@ -67,7 +67,7 @@ class WebRtcTransport : public RTC::DtlsTransport::Listener {
 public:
     using Ptr = std::shared_ptr<WebRtcTransport>;
 
-    explicit WebRtcTransport(const WebRtcOptions& options);
+    explicit WebRtcTransport(const WebRtcOptions& options, IceAgent* agent = nullptr);
     ~WebRtcTransport();
 
     // ===================== SDP Interface =====================
@@ -116,7 +116,7 @@ public:
     // ===================== Accessors =====================
 
     IceSessionPtr iceSession() const { return ice_session_; }
-    IceAgent* iceAgent() const { return ice_agent_.get(); }
+    IceAgent* iceAgent() const { return ice_agent_; }
     RTC::DtlsTransport::Ptr dtlsTransport() const { return dtls_transport_; }
     RTC::SrtpSession* srtpSendSession() const { return srtp_send_.get(); }
     RTC::SrtpSession* srtpRecvSession() const { return srtp_recv_.get(); }
@@ -185,8 +185,8 @@ private:
                    uint8_t* localKey, size_t localKeyLen,
                    uint8_t* remoteKey, size_t remoteKeyLen);
     void setState(WebRtcState state);
-
-    std::unique_ptr<IceAgent> ice_agent_;
+    bool owner_agent_ = false;
+    IceAgent* ice_agent_;
     IceSessionPtr ice_session_;
     RTC::DtlsTransport::Ptr dtls_transport_;
     RTC::SrtpSession::Ptr srtp_send_;

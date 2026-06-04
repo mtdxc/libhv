@@ -10,8 +10,8 @@
 #include <functional>
 #include <mutex>
 
-#include "EventLoopThreadPool.h"
 #include "ice_config.h"
+#include "EventLoop.h"
 #include "../stun/stun_message.h"
 
 namespace ice {
@@ -36,7 +36,7 @@ public:
 
     // Create agent with optional external event loop
     // If loop is null, creates its own EventLoopThread
-    explicit IceAgent(hv::EventLoopThreadPool* pool = nullptr);
+    explicit IceAgent(hv::ThreadPool* pool = nullptr);
     ~IceAgent();
 
     // Configuration (must be called before start())
@@ -119,7 +119,7 @@ private:
     static std::string extractLocalUfrag(const uint8_t* data, size_t len);
 
     IceConfig config_;
-    hv::EventLoopThreadPool*  pools_;
+    hv::ThreadPool*  pools_;
     bool owns_pools_ = false;
     mutable std::recursive_mutex mutex_;
 

@@ -27,17 +27,24 @@ static constexpr int kMaxSrtpOverhead = 16;
 // Construction / Destruction
 // ============================================================================
 
-WebRtcTransport::WebRtcTransport(const WebRtcOptions& options)
-    : options_(options)
+WebRtcTransport::WebRtcTransport(const WebRtcOptions& options, IceAgent* agent)
+    : options_(options), ice_agent_(agent)
 {
-    // Create and start ICE agent
-    ice_agent_ = std::unique_ptr<IceAgent>(new IceAgent());
-    ice_agent_->setConfig(options_.iceConfig);
+    if (!ice_agent_) {
+        // Create and start ICE agent
+        ice_agent_ = new IceAgent();
+        ice_agent_->setConfig(options_.iceConfig);
+        ice_agent_->start();
+        owner_agent_ = true;
+    }
     ice_agent_->start();
 }
 
 WebRtcTransport::~WebRtcTransport() {
     close();
+    if (owner_agent_) {
+        delete ice_agent_;
+    }
 }
 
 // ============================================================================
@@ -152,11 +159,6 @@ void WebRtcTransport::close() {
     if (ice_session_ && ice_agent_) {
         ice_agent_->destroySession(ice_session_);
         ice_session_.reset();
-    }
-
-    if (ice_agent_) {
-        ice_agent_->stop();
-        ice_agent_.reset();
     }
 }
 

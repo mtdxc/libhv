@@ -34,8 +34,8 @@ if(WITH_OPENSSL)
     find_library(SRTP_LIBRARY NAMES srtp2 libsrtp2)
     if(SRTP_LIBRARY AND SRTP_INCLUDE_DIR)
         set(LIBS ${LIBS} ${SRTP_LIBRARY})
-        list(APPEND ICE_SRCS SrtpSession.cpp DtlsTransport.cpp WebRtcTransport.cpp)
-        list(APPEND ICE_HEADERS SrtpSession.hpp DtlsTransport.hpp WebRtcTransport.hpp)
+        list(APPEND ICE_SRCS SrtpSession.cpp DtlsTransport.cpp WebRtcTransport.cpp RtcHttpServer.cpp)
+        list(APPEND ICE_HEADERS SrtpSession.hpp DtlsTransport.hpp WebRtcTransport.hpp RtcHttpServer.h)
     else()
         message(FATAL_ERROR "WITH_OPENSSL=ON requires libsrtp headers and library (srtp2/srtp.h and srtp2/libsrtp2), but they were not found.")
     endif()
@@ -54,6 +54,8 @@ target_include_directories(ice PUBLIC
     ${CMAKE_SOURCE_DIR}/base
     ${CMAKE_SOURCE_DIR}/ssl
     ${CMAKE_SOURCE_DIR}/util
+    ${CMAKE_SOURCE_DIR}/http
+    ${CMAKE_SOURCE_DIR}/http/server
 )
 
 if(WITH_OPENSSL)
