@@ -2,11 +2,11 @@
 #include "EventLoopThread.h"
 #include "sdp/ice_sdp.h"
 #include "hlog.h"
-
+#include "htime.h"
 #include <cstring>
 #include <sstream>
 #include <algorithm>
-
+using namespace std;
 namespace ice {
 
 const char* webrtcStateString(WebRtcState state) {
@@ -38,6 +38,7 @@ WebRtcTransport::WebRtcTransport(const WebRtcOptions& options, IceAgent* agent)
         owner_agent_ = true;
     }
     ice_agent_->start();
+    createIceSession();
 }
 
 WebRtcTransport::~WebRtcTransport() {
@@ -51,53 +52,126 @@ WebRtcTransport::~WebRtcTransport() {
 // SDP Interface
 // ============================================================================
 
-std::string WebRtcTransport::createOffer() {
-    createIceSession();
-    auto ret = generateSdp(true);
-    hlogi("WebRtcTransport %s createOffer:\n%s", getIdentifier(), ret.c_str());
-    return ret;
+std::string getFingerprint(const std::string &algorithm_str, const std::shared_ptr<RTC::DtlsTransport> &transport) {
+    auto algorithm = RTC::DtlsTransport::GetFingerprintAlgorithm(algorithm_str);
+    for (auto &finger_prints : transport->GetLocalFingerprints()) {
+        if (finger_prints.algorithm == algorithm) {
+            return finger_prints.value;
+        }
+    }
+    throw std::invalid_argument(std::string("不支持的加密算法:") + algorithm_str);
 }
+
+void WebRtcTransport::onRtcConfigure(RtcConfigure &configure) const {
+    SdpAttrFingerprint fingerprint;
+    fingerprint.algorithm = _offer_sdp ? _offer_sdp->media[0].fingerprint.algorithm : "sha-256";
+    fingerprint.hash = getFingerprint(fingerprint.algorithm, dtls_transport_);
+    configure.setDefaultSetting(ice_session_->localUfrag(), ice_session_->localPwd(), RtpDirection::sendrecv, fingerprint);
+
+    // add local candidate
+    if (ice_session_ && !ice_session_->localCandidates().empty()) {
+        for(auto c : ice_session_->localCandidates()) {
+            auto candidate = std::make_shared<SdpAttrCandidate>();
+            candidate->foundation = c.foundation;
+            candidate->component = 1;
+            candidate->transport = TransportProtocolStr(c.protocol);
+            candidate->priority = c.priority;
+            char ipstr[64];
+            candidate->address = sockaddr_ip(&c.addr, ipstr, sizeof(ipstr));
+            candidate->port = sockaddr_port(&c.addr);
+            candidate->type = c.typeString(c.type);
+            if (strcasecmp(candidate->transport.c_str(), "tcp") == 0) {
+                candidate->type += " tcptype passive";
+            }
+            /*
+            if (candidate->type != "host" && !c.relatedAddr) {
+                candidate->arr.emplace_back("raddr", base_host);
+                candidate->arr.emplace_back("rport", std::to_string(base_port));
+            }
+            */
+            configure.addCandidate(*candidate);
+        }
+    }
+    // for echo
+    configure.audio.direction = configure.video.direction = RtpDirection::sendrecv;
+    configure.audio.extmap.emplace(RtpExtType::sdes_mid, RtpDirection::sendrecv);
+    configure.video.extmap.emplace(RtpExtType::sdes_mid, RtpDirection::sendrecv);
+
+}
+
+
+std::string WebRtcTransport::createOffer() {
+    try {
+        start();
+        RtcConfigure configure;
+        onRtcConfigure(configure);
+        _offer_sdp = configure.createOffer();
+        return _offer_sdp->toString();
+    } catch (exception &ex) {
+        //onShutdown(SockException(Err_shutdown, ex.what()));
+        throw;
+    }
+}
+
 
 std::string WebRtcTransport::createAnswer() {
-    createIceSession();
-    auto ret = generateSdp(false);
-    hlogi("WebRtcTransport %s createAnswer:\n%s", getIdentifier(), ret.c_str());
+    if (!_offer_sdp) {
+        throw std::runtime_error("createAnswer called before setRemoteDescription with offer");
+    }
+    start();
+    // sdp configure
+    RtcConfigure configure;
+    onRtcConfigure(configure);
+    // create answer
+    _answer_sdp = configure.createAnswer(*_offer_sdp);
+    onCheckSdp(SdpType::answer, *_answer_sdp);
+    //setSdpBitrate(*_answer_sdp);
+    _answer_sdp->checkValid();
+    return _answer_sdp->toString();
+}
+
+bool WebRtcTransport::setRemoteDescription(SdpType type, const std::string& sdp) {
+    try {
+        auto sdpSession = std::make_shared<RtcSession>();
+        sdpSession->loadFrom(sdp);
+        onCheckSdp(type, *sdpSession);
+        sdpSession->checkValid();
+        switch (type)
+        {
+        case SdpType::offer:
+            _offer_sdp = sdpSession;
+            break;
+        case SdpType::answer:
+            _answer_sdp = sdpSession;
+            break;
+        default:
+            break;
+        }
+        // 设置远端dtls签名
+        auto& media = sdpSession->media[0];
+        RTC::DtlsTransport::Fingerprint remote_fingerprint;
+        remote_fingerprint.algorithm = RTC::DtlsTransport::GetFingerprintAlgorithm(media.fingerprint.algorithm);
+        remote_fingerprint.value = media.fingerprint.hash;
+        dtls_transport_->SetRemoteFingerprint(remote_fingerprint);
+        ice_session_->setRemoteCredentials(media.ice_ufrag, media.ice_pwd);
+        return true;
+    } catch (exception &ex) {
+        //onShutdown(SockException(Err_shutdown, ex.what()));
+        throw;
+    }
+    return false;
+}
+
+std::string WebRtcTransport::getAnswerSdp(const string &offer) {
+    hlogi("WebRtcTransport %s offer=\n%s", getIdentifier(), offer.c_str());
+    setRemoteDescription(SdpType::offer, offer);
+    auto ret = createAnswer();
+    hlogi("WebRtcTransport %s answer=\n%s", getIdentifier(), ret.c_str());
     return ret;
 }
 
-bool WebRtcTransport::setRemoteDescription(const std::string& sdp) {
-    parseRemoteSdp(sdp);
-
-    if (remote_ufrag_.empty() || remote_pwd_.empty()) {
-        hloge("WebRtcTransport remote SDP missing ICE credentials", getIdentifier());
-        return false;
-    }
-
-    // Create IceSession if not yet created (answerer path)
-    createIceSession();
-
-    hlogi("WebRtcTransport %s Setting remote SDP:\n%s", getIdentifier(), sdp.c_str());
-
-    // Set ICE remote credentials
-    ice_session_->setRemoteCredentials(remote_ufrag_, remote_pwd_);
-
-    // Add remote ICE candidates parsed from SDP
-    // Re-parse to get candidates (IceSdp gives us IceCandidate objects)
-    IceSdp::ParseResult iceResult = IceSdp::parseAttributes(sdp);
-    for (const auto& cand : iceResult.candidates) {
-        ice_session_->addRemoteCandidate(cand);
-    }
-
-    // Set DTLS remote fingerprint
-    if (!remote_fingerprint_value_.empty() &&
-        remote_fingerprint_algo_ != RTC::DtlsTransport::FingerprintAlgorithm::NONE) {
-        RTC::DtlsTransport::Fingerprint fp;
-        fp.algorithm = remote_fingerprint_algo_;
-        fp.value = remote_fingerprint_value_;
-        dtls_transport_->SetRemoteFingerprint(fp);
-    }
-
-    return true;
+bool WebRtcTransport::setAnswerSdp(const std::string &answer) {
+    return setRemoteDescription(SdpType::answer, answer);
 }
 
 void WebRtcTransport::createIceSession() {
@@ -141,8 +215,21 @@ void WebRtcTransport::start() {
     setState(WebRtcState::Connecting);
 
     // Start ICE connectivity checks
-    ice_session_->gatherCandidates(true);
-
+    ice_session_->gatherCandidates(_role == Role::CLIENT);
+    last_tick = gettimeofday_ms();
+    auto self = shared_from_this();
+    ice_session_->loop()->setInterval(5000, [self](hv::TimerID id) {
+        if (self->state_ == WebRtcState::Closed) {
+            hv::killTimer(id);
+            return;
+        }
+        uint64_t now = gettimeofday_ms();
+        if (now - self->last_tick > 10000) {
+            hlogw("WebRtcTransport %s connectivity check timeout", self->getIdentifier());
+            self->setState(WebRtcState::Failed);
+            hv::killTimer(id);
+        }
+    });
     // If remote_setup_ is empty (we're the offerer), DTLS will start
     // in onIceStateChanged(Connected) after ICE completes.
 }
@@ -276,6 +363,7 @@ void WebRtcTransport::processRtpOrRtcp(const uint8_t* data, size_t len) {
         hlogw("WebRtcTransport %s SRTP recv session not ready, dropping packet", getIdentifier());
         return;
     }
+    last_tick = gettimeofday_ms();
 
     // Copy to writable buffer (decrypt modifies in-place)
     std::vector<uint8_t> buf(data, data + len);
@@ -310,27 +398,12 @@ void WebRtcTransport::onIceStateChanged(IceState state) {
     switch (state) {
         case IceState::Completed:
         {
-            // Determine DTLS role and start handshake if possible
-            if (remote_setup_ == "actpass") {
-                // Remote offered with actpass → we answer as client (DTLS client)
-                dtls_role_ = RTC::DtlsTransport::Role::CLIENT;
+            if ((getRole() == Role::PEER && _answer_sdp->media[0].role == DtlsRole::passive)
+                || (getRole() == Role::CLIENT && _answer_sdp->media[0].role == DtlsRole::active)) {
+                dtls_transport_->Run(RTC::DtlsTransport::Role::SERVER);
+            } else {
+                dtls_transport_->Run(RTC::DtlsTransport::Role::CLIENT);
             }
-            else if (remote_setup_ == "active") {
-                // Remote is DTLS client → we are server
-                dtls_role_ = RTC::DtlsTransport::Role::SERVER;
-            }
-            else if (remote_setup_ == "passive") {
-                // Remote is DTLS server → we are client
-                dtls_role_ = RTC::DtlsTransport::Role::CLIENT;
-            }
-
-            // ICE connected - start DTLS handshake if we are the offerer
-            // (answerer already started DTLS in start())
-            if (dtls_role_ == RTC::DtlsTransport::Role::NONE) {
-                // We are the offerer: become DTLS server (wait for client)
-                dtls_role_ = RTC::DtlsTransport::Role::SERVER;
-            }
-            dtls_transport_->Run(dtls_role_);
             break;
         }
         case IceState::Connected: 
@@ -350,7 +423,7 @@ void WebRtcTransport::onIceLocalCandidate(const IceCandidate& candidate) {
     if (onLocalCandidate) {
         std::string sdpLine = candidate.toSdp();
         // Use first media's mid, or empty string
-        std::string mid = options_.medias.empty() ? "0" : options_.medias[0].mid;
+        std::string mid = _offer_sdp ? _offer_sdp->media[0].mid : "0";
         onLocalCandidate(sdpLine, mid);
     }
 }
@@ -378,7 +451,6 @@ void WebRtcTransport::OnDtlsTransportConnected(
 {
     hlogi("WebRtcTransport %s DTLS connected, setting up SRTP", getIdentifier());
 
-    srtp_crypto_suite_ = srtpCryptoSuite;
     setupSrtp(srtpCryptoSuite, srtpLocalKey, srtpLocalKeyLen,
               srtpRemoteKey, srtpRemoteKeyLen);
 
@@ -447,151 +519,6 @@ void WebRtcTransport::setState(WebRtcState state) {
     hlogi("WebRtcTransport %s state -> %s", getIdentifier(), webrtcStateString(state));
     if (onStateChange) {
         onStateChange(state);
-    }
-}
-
-// ============================================================================
-// SDP Generation
-// ============================================================================
-
-std::string WebRtcTransport::generateSdp(bool isOffer) {
-    std::ostringstream sdp;
-
-    // --- Session-level ---
-    sdp << "v=0\r\n";
-    sdp << "o=- " << static_cast<uint64_t>(rand()) << " "
-        << static_cast<uint64_t>(rand()) << " IN IP4 0.0.0.0\r\n";
-    sdp << "s=-\r\n";
-    sdp << "t=0 0\r\n";
-
-    // BUNDLE group (all mids)
-    if (!options_.medias.empty()) {
-        sdp << "a=group:BUNDLE";
-        for (const auto& m : options_.medias) {
-            sdp << " " << m.mid;
-        }
-        sdp << "\r\n";
-    }
-
-    sdp << "a=msid-semantic:WMS *\r\n";
-
-    // --- ICE attributes (session-level) ---
-    if (ice_session_) {
-        sdp << "a=ice-ufrag:" << ice_session_->localUfrag() << "\r\n";
-        sdp << "a=ice-pwd:" << ice_session_->localPwd() << "\r\n";
-        sdp << "a=ice-options:trickle\r\n";
-
-        // ICE candidates
-        for (const auto& cand : ice_session_->localCandidates()) {
-            sdp << "a=candidate:" << cand.toSdp() << "\r\n";
-        }
-    }
-
-    // --- DTLS fingerprint (session-level) ---
-    auto& fingerprints = dtls_transport_->GetLocalFingerprints();
-    for (const auto& fp : fingerprints) {
-        sdp << "a=fingerprint:"
-            << RTC::DtlsTransport::GetFingerprintAlgorithmString(fp.algorithm)
-            << " " << fp.value << "\r\n";
-    }
-
-    // setup attribute
-    if (isOffer) {
-        sdp << "a=setup:actpass\r\n";
-    } else {
-        // Answer: active if remote had actpass, passive if remote had active
-        if (remote_setup_ == "actpass" || remote_setup_ == "passive") {
-            sdp << "a=setup:active\r\n";
-        } else if (remote_setup_ == "active") {
-            sdp << "a=setup:passive\r\n";
-        } else {
-            sdp << "a=setup:active\r\n";  // default for answer
-        }
-    }
-
-    // --- Media sections ---
-    for (const auto& media : options_.medias) {
-        sdp << "m=" << media.type << " 9 UDP/TLS/RTP/SAVPF";
-        for (const auto& codec : media.codecs) {
-            sdp << " " << codec.payloadType;
-        }
-        sdp << "\r\n";
-
-        sdp << "c=IN IP4 0.0.0.0\r\n";
-        sdp << "a=mid:" << media.mid << "\r\n";
-        sdp << "a=rtcp-mux\r\n";
-
-        if (!media.direction.empty()) {
-            sdp << "a=" << media.direction << "\r\n";
-        }
-
-        // Codec attributes
-        for (const auto& codec : media.codecs) {
-            // rtpmap
-            if (media.type == "audio" && codec.channels > 0) {
-                sdp << "a=rtpmap:" << codec.payloadType << " "
-                    << codec.name << "/" << codec.clockRate
-                    << "/" << codec.channels << "\r\n";
-            } else {
-                sdp << "a=rtpmap:" << codec.payloadType << " "
-                    << codec.name << "/" << codec.clockRate << "\r\n";
-            }
-
-            // fmtp
-            if (!codec.fmtp.empty()) {
-                sdp << "a=fmtp:" << codec.payloadType << " "
-                    << codec.fmtp << "\r\n";
-            }
-
-            // rtcp-fb
-            for (const auto& fb : codec.rtcpFeedback) {
-                sdp << "a=rtcp-fb:" << codec.payloadType << " " << fb << "\r\n";
-            }
-        }
-    }
-
-    return sdp.str();
-}
-
-// ============================================================================
-// SDP Parsing
-// ============================================================================
-
-void WebRtcTransport::parseRemoteSdp(const std::string& sdp) {
-    std::istringstream iss(sdp);
-    std::string line;
-
-    while (std::getline(iss, line)) {
-        // Trim trailing \r
-        if (!line.empty() && line.back() == '\r') {
-            line.pop_back();
-        }
-        if (line.empty()) continue;
-
-        // --- Session-level attributes (before any m= line) ---
-        if (line.find("a=ice-ufrag:") == 0 && remote_ufrag_.empty()) {
-            remote_ufrag_ = line.substr(12);
-        }
-        else if (line.find("a=ice-pwd:") == 0 && remote_pwd_.empty()) {
-            remote_pwd_ = line.substr(10);
-        }
-        else if (line.find("a=fingerprint:") == 0 && remote_fingerprint_value_.empty()) {
-            std::string rest = line.substr(14);
-            auto spacePos = rest.find(' ');
-            if (spacePos != std::string::npos) {
-                std::string algo = rest.substr(0, spacePos);
-                remote_fingerprint_algo_ =
-                    RTC::DtlsTransport::GetFingerprintAlgorithm(algo);
-                // Skip any whitespace between algo and value
-                size_t valStart = rest.find_first_not_of(' ', spacePos);
-                if (valStart != std::string::npos) {
-                    remote_fingerprint_value_ = rest.substr(valStart);
-                }
-            }
-        }
-        else if (line.find("a=setup:") == 0 && remote_setup_.empty()) {
-            remote_setup_ = line.substr(8);
-        }
     }
 }
 

@@ -13,7 +13,7 @@
 #include "SrtpSession.hpp"
 #include "agent/ice_agent.h"
 #include "session/ice_session.h"
-
+#include "sdp/Sdp.h"
 namespace ice {
 
 // WebRTC Transport state
@@ -27,31 +27,10 @@ enum class WebRtcState {
 
 const char* webrtcStateString(WebRtcState state);
 
-// Codec information for SDP
-struct CodecInfo {
-    int payloadType;
-    std::string name;
-    int clockRate;
-    int channels = 0;           // 0 = not applicable (video)
-    std::string fmtp;           // Optional fmtp line content
-    std::vector<std::string> rtcpFeedback;  // e.g. "nack", "nack pli", "goog-remb"
-};
-
-// Media description for SDP generation
-struct MediaDesc {
-    std::string type;           // "audio" or "video"
-    std::string mid;            // Media ID for BUNDLE
-    std::string direction = "sendrecv";  // sendrecv, sendonly, recvonly, inactive
-    std::vector<CodecInfo> codecs;
-};
-
 // Configuration for WebRtcTransport
 struct WebRtcOptions {
     // ICE configuration
     IceConfig iceConfig;
-
-    // Media to include in SDP offer/answer
-    std::vector<MediaDesc> medias;
 
     // ICE mode
     IceMode iceMode = IceMode::Full;
@@ -63,28 +42,38 @@ struct WebRtcOptions {
 // - IceSession for data transport
 // - SDP offer/answer interface
 // - RTP/RTCP send/receive interface
-class WebRtcTransport : public RTC::DtlsTransport::Listener {
+class WebRtcTransport : public RTC::DtlsTransport::Listener, public std::enable_shared_from_this<WebRtcTransport> {
 public:
     using Ptr = std::shared_ptr<WebRtcTransport>;
 
     explicit WebRtcTransport(const WebRtcOptions& options, IceAgent* agent = nullptr);
     ~WebRtcTransport();
 
+    enum class Role {
+        NONE = 0,
+        CLIENT,
+        PEER,
+    };
+    static const char* RoleStr(Role role);
+    Role getRole() const { return _role; }
+    void setRole(Role role) { _role = role; }
+
     // ===================== SDP Interface =====================
 
     // Create SDP offer (a=setup:actpass, ICE gathering started)
     std::string createOffer();
-
+    std::string createAnswer();
+    bool setRemoteDescription(SdpType type, const std::string& sdp);
     // Create SDP answer (must call setRemoteDescription with offer first)
     // Answers with setup:active if remote offer had actpass
-    std::string createAnswer();
     const char* getIdentifier() const {
          return ice_session_ ? ice_session_->id() : "";
     }
     // Process remote SDP (offer or answer)
     // Extracts ICE credentials, candidates, DTLS fingerprint, and setup role
-    bool setRemoteDescription(const std::string& sdp);
-
+    bool setAnswerSdp(const std::string& sdp);
+    std::string getAnswerSdp(const std::string &offer);
+    virtual void onCheckSdp(SdpType type, const RtcSession& sdp) const {}
     // Add a remote ICE candidate (trickle ICE)
     // candidate: SDP candidate string (after "a=candidate:")
     // mid: media ID (unused in single-stream, pass "")
@@ -121,10 +110,6 @@ public:
     RTC::SrtpSession* srtpSendSession() const { return srtp_send_.get(); }
     RTC::SrtpSession* srtpRecvSession() const { return srtp_recv_.get(); }
 
-    // Remote SDP info (available after setRemoteDescription)
-    std::string remoteUfrag() const { return remote_ufrag_; }
-    std::string remotePwd() const { return remote_pwd_; }
-
     // ===================== Callbacks =====================
 
     // State change notification
@@ -154,10 +139,6 @@ private:
     void processDtlsData(const uint8_t* data, size_t len);
     void processRtpOrRtcp(const uint8_t* data, size_t len);
 
-    // SDP generation
-    std::string generateSdp(bool isOffer);
-    void parseRemoteSdp(const std::string& sdp);
-
     // ICE session callbacks
     void onIceStateChanged(IceState state);
     void onIceLocalCandidate(const IceCandidate& candidate);
@@ -185,6 +166,8 @@ private:
                    uint8_t* localKey, size_t localKeyLen,
                    uint8_t* remoteKey, size_t remoteKeyLen);
     void setState(WebRtcState state);
+    int64_t last_tick = 0;
+    
     bool owner_agent_ = false;
     IceAgent* ice_agent_;
     IceSessionPtr ice_session_;
@@ -195,20 +178,13 @@ private:
     // Configuration
     WebRtcOptions options_;
 
-    // Negotiated parameters
-    RTC::SrtpSession::CryptoSuite srtp_crypto_suite_ = RTC::SrtpSession::CryptoSuite::NONE;
-
-    // Remote SDP info
-    std::string remote_ufrag_;
-    std::string remote_pwd_;
-    std::string remote_fingerprint_value_;
-    RTC::DtlsTransport::FingerprintAlgorithm remote_fingerprint_algo_ =
-        RTC::DtlsTransport::FingerprintAlgorithm::NONE;
-    std::string remote_setup_;  // "actpass", "active", "passive"
+    Role _role = Role::PEER;
+    RtcSession::Ptr _answer_sdp;
+    RtcSession::Ptr _offer_sdp;
+    void onRtcConfigure(RtcConfigure &configure) const;
 
     // State
     WebRtcState state_ = WebRtcState::New;
-    RTC::DtlsTransport::Role dtls_role_ = RTC::DtlsTransport::Role::NONE;
 };
 
 } // namespace ice

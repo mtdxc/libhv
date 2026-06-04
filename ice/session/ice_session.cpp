@@ -152,6 +152,14 @@ void IceSession::setRemoteCredentials(const std::string& ufrag, const std::strin
     hlogi("IceSession %s setRemoteCredentials %s/%s", id(), ufrag.c_str(), pwd.c_str());
     remote_ufrag_ = ufrag;
     remote_pwd_ = pwd;
+
+    // Remote credentials may arrive after we already moved to Checking
+    // (for example, when SDP exchange is asynchronous). In that case,
+    // build checklist and start connectivity checks now.
+    if (state_ == IceState::Checking && check_timer_ == nullptr) {
+        formPairs();
+        startChecks();
+    }
 }
 
 void IceSession::addLocalCandidate(const IceCandidate& candidate) {
@@ -684,8 +692,7 @@ void IceSession::onStunRequest(const StunMessage& msg, const struct sockaddr* fr
 
     char fromStr[SOCKADDR_STRLEN] = {0};
     SOCKADDR_STR(from, fromStr);
-    hlogi("IceSession %s onStunRequest from=%s useCandidate=%d",
-          id(), fromStr, (int)msg.hasUseCandidate());
+    hlogd("IceSession %s onStunRequest from=%s useCandidate=%d", id(), fromStr, (int)msg.hasUseCandidate());
 
     // Verify MESSAGE-INTEGRITY with local password
     if (!msg.verifyIntegrity(local_pwd_)) {
@@ -741,13 +748,12 @@ void IceSession::onStunRequest(const StunMessage& msg, const struct sockaddr* fr
         if (matchedPair->state == PairState::Succeeded) {
             // Already succeeded
             if (matchedPair->nominated && role_ == IceRole::Controlled) {
-                hlogi("IceSession %s onStunRequest USE-CANDIDATE, select pair %s",
-                      id(), matchedPair->toString().c_str());
+                // hlogi("IceSession %s onStunRequest USE-CANDIDATE, select pair %s", id(), matchedPair->toString().c_str());
                 setSelectPair(matchedPair);
             }
         } else if (matchedPair->state != PairState::InProgress) {
             // Trigger check
-            hlogi("IceSession %s onStunRequest triggered check for pair %s state=%s",
+            hlogi("IceSession %s onStunRequest triggered check for pair %s state=%s", 
                   id(), matchedPair->toString().c_str(),
                   pairStateString(matchedPair->state));
             checklist_.addTriggeredCheck(matchedPair);
@@ -847,6 +853,10 @@ void IceSession::onCheckSuccess(CandidatePairPtr pair, const StunMessage& respon
 void IceSession::setSelectPair(CandidatePairPtr pair) {
     if (selected_pair_ != pair) {
         selected_pair_ = pair;
+        // Register the valid pair for data routing
+        if (agent_ && pair->local.protocol == TransportProtocol::UDP && !udp_io_) {
+            agent_->registerPair(pair->remote.addr, this);
+        }
         hlogi("IceSession %s setSelectPair %s", id(), pair->toString().c_str());
         if (pair->local.type == CandidateType::Relay && agent_->turnClient()) {
             // If selected pair is relay, we may want to tear down direct sockets to save resources

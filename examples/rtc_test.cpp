@@ -65,45 +65,10 @@ std::string rtpPayloadView(const uint8_t* data, size_t len) {
     return std::string(reinterpret_cast<const char*>(data + headerLen), len - headerLen);
 }
 
-// Build a simple audio+video MediaDesc list for SDP
-std::vector<MediaDesc> defaultMedias() {
-    std::vector<MediaDesc> medias;
-
-    // audio: Opus
-    MediaDesc audio;
-    audio.type = "audio";
-    audio.mid = "0";
-    audio.direction = "sendrecv";
-    CodecInfo audioCodec;
-    audioCodec.payloadType = 111;
-    audioCodec.name = "opus";
-    audioCodec.clockRate = 48000;
-    audioCodec.channels = 2;
-    audioCodec.fmtp = "minptime=10;useinbandfec=1";
-    audio.codecs.push_back(audioCodec);
-    medias.push_back(audio);
-
-    // video: VP8
-    MediaDesc video;
-    video.type = "video";
-    video.mid = "1";
-    video.direction = "sendrecv";
-    CodecInfo videoCodec;
-    videoCodec.payloadType = 96;
-    videoCodec.name = "VP8";
-    videoCodec.clockRate = 90000;
-    videoCodec.rtcpFeedback.push_back("nack");
-    videoCodec.rtcpFeedback.push_back("nack pli");
-    video.codecs.push_back(videoCodec);
-    medias.push_back(video);
-
-    return medias;
-}
 
 WebRtcOptions makeOptions() {
     WebRtcOptions opts;
     opts.iceMode = IceMode::Full;
-    opts.medias = defaultMedias();
 
     IceConfig cfg;
     cfg.udpPort = 0;          // ephemeral
@@ -137,23 +102,25 @@ int main(int argc, char* argv[]) {
     auto optsA = makeOptions();
     auto optsB = makeOptions();
 
-    WebRtcTransport offerer(optsA);
-    WebRtcTransport answerer(optsB);
-
-    offerer.onStateChange = [&offererReady](WebRtcState s) {
+    IceAgent agent;
+    agent.start();
+    auto offerer = std::make_shared<WebRtcTransport>(optsA, &agent);
+    auto answerer = std::make_shared<WebRtcTransport>(optsB, &agent);
+    answerer->setRole(WebRtcTransport::Role::CLIENT);
+    offerer->onStateChange = [&offererReady](WebRtcState s) {
         printf("[offerer]   state -> %s\n", webrtcStateString(s));
         if (s == WebRtcState::Connected) {
             offererReady.store(true);
         }
     };
-    answerer.onStateChange = [&answererReady](WebRtcState s) {
+    answerer->onStateChange = [&answererReady](WebRtcState s) {
         printf("[answerer]  state -> %s\n", webrtcStateString(s));
         if (s == WebRtcState::Connected) {
             answererReady.store(true);
         }
     };
 
-    offerer.onRtpPacket  = [&offererRtp, &rtpPayloadCopy, &rtpPayloadLen]
+    offerer->onRtpPacket  = [&offererRtp, &rtpPayloadCopy, &rtpPayloadLen]
                            (const uint8_t* data, size_t len) {
         ++offererRtp;
          rtpPayloadCopy = rtpPayloadView(data, len);
@@ -161,40 +128,35 @@ int main(int argc, char* argv[]) {
          printf("[offerer]   RTP recv (%zu bytes, payload=%d): %.*s\n",
              len, rtpPayloadLen.load(), rtpPayloadLen.load(), rtpPayloadCopy.c_str());
     };
-    answerer.onRtpPacket = [&answererRtp](const uint8_t* data, size_t len) {
+    answerer->onRtpPacket = [&answererRtp](const uint8_t* data, size_t len) {
         ++answererRtp;
          std::string payload = rtpPayloadView(data, len);
          printf("[answerer]  RTP recv (%zu bytes, payload=%d): %.*s\n",
              len, (int)payload.size(), (int)payload.size(), payload.c_str());
     };
 
-    offerer.onLocalCandidate  = [&answerer](const std::string& sdp, const std::string& mid) {
-        answerer.addRemoteCandidate(sdp, mid);
+    offerer->onLocalCandidate  = [answerer](const std::string& sdp, const std::string& mid) {
+        answerer->addRemoteCandidate(sdp, mid);
     };
-    answerer.onLocalCandidate = [&offerer](const std::string& sdp, const std::string& mid) {
-        offerer.addRemoteCandidate(sdp, mid);
+    answerer->onLocalCandidate = [offerer](const std::string& sdp, const std::string& mid) {
+        offerer->addRemoteCandidate(sdp, mid);
     };
 
     // ---------- SDP exchange (mimics signaling channel) ----------
     printf("\n[step 1] offerer creates SDP offer\n");
-    std::string offerSdp = offerer.createOffer();
-    printf("[step 2] answerer sets remote description and creates answer\n");
-    if (!answerer.setRemoteDescription(offerSdp)) {
-        fprintf(stderr, "answerer.setRemoteDescription() failed\n");
-        return -1;
-    }
-    std::string answerSdp = answerer.createAnswer();
+    std::string offerSdp = offerer->createOffer();
+    std::string answerSdp = answerer->getAnswerSdp(offerSdp);
 
     printf("[step 3] offerer sets remote description (answer)\n");
-    if (!offerer.setRemoteDescription(answerSdp)) {
+    if (!offerer->setAnswerSdp(answerSdp)) {
         fprintf(stderr, "offerer.setRemoteDescription() failed\n");
         return -1;
     }
 
     // ---------- Start ICE + DTLS ----------
     printf("\n[step 4] start both endpoints\n");
-    offerer.start();
-    answerer.start();
+    offerer->start();
+    answerer->start();
 
     // ---------- Wait for DTLS handshake to complete ----------
     auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
@@ -206,8 +168,8 @@ int main(int argc, char* argv[]) {
     if (!offererReady.load() || !answererReady.load()) {
         fprintf(stderr, "\n[FAIL] endpoints did not reach Connected within timeout\n");
         fprintf(stderr, "  offerer=%s  answerer=%s\n",
-                webrtcStateString(offerer.state()),
-                webrtcStateString(answerer.state()));
+                webrtcStateString(offerer->state()),
+                webrtcStateString(answerer->state()));
         return -1;
     }
     printf("\n[OK] both endpoints Connected\n");
@@ -217,9 +179,9 @@ int main(int argc, char* argv[]) {
     const std::string msg = "Hello WebRTC from libhv!";
     auto offererPacket = makeRtpPacket(msg, 111, 1, 160, 0x10203040);
     auto answererPacket = makeRtpPacket(msg, 111, 2, 320, 0x50607080);
-    offerer.sendRtp(offererPacket.data(), offererPacket.size());
+    offerer->sendRtp(offererPacket.data(), offererPacket.size());
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
-    answerer.sendRtp(answererPacket.data(), answererPacket.size());
+    answerer->sendRtp(answererPacket.data(), answererPacket.size());
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
     // ---------- Result ----------
@@ -243,7 +205,8 @@ int main(int argc, char* argv[]) {
         printf("[OK] RTP round-trip verified\n");
     }
 
-    offerer.close();
-    answerer.close();
+    offerer->close();
+    answerer->close();
+    agent.stop();
     return ret;
 }

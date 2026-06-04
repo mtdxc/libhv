@@ -36,10 +36,8 @@ void RtcHttpServer::start(int port) {
         WebRtcOptions opt;
         opt.iceMode = IceMode::Lite;
         auto transport = std::make_shared<WebRtcTransport>(opt, agent_.get());
-        transport->setRemoteDescription(sdp);
-        // delay free
-        setTimeout(10000, [transport](TimerID) {});
-        return ctx->send(transport->createAnswer());
+        ctx->setHeader("Content-Type", "application/sdp");
+        return ctx->sendString(transport->getAnswerSdp(sdp));
     });
     http.Any("/index/api/whip", [this](const HttpContextPtr& ctx) {
         auto type = ctx->param("type");
@@ -47,10 +45,8 @@ void RtcHttpServer::start(int port) {
         WebRtcOptions opt;
         opt.iceMode = IceMode::Lite;
         auto transport = std::make_shared<WebRtcTransport>(opt, agent_.get());
-        transport->setRemoteDescription(sdp);
-        // delay free
-        setTimeout(10000, [transport](TimerID) {});
-        return ctx->send(transport->createAnswer());
+        ctx->setHeader("Content-Type", "application/sdp");
+        return ctx->sendString(transport->getAnswerSdp(sdp));
     });
     http.Any("/index/api/webrtc", [this](const HttpContextPtr& ctx) {
         auto type = ctx->param("type");
@@ -58,14 +54,27 @@ void RtcHttpServer::start(int port) {
         WebRtcOptions opt;
         opt.iceMode = IceMode::Lite;
         auto transport = std::make_shared<WebRtcTransport>(opt, agent_.get());
-        transport->setRemoteDescription(sdp);
-        // delay free
-        setTimeout(10000, [transport](TimerID) {});
+        if (type == "echo") {
+            std::weak_ptr<WebRtcTransport> weak_transport = transport;
+            transport->onRtpPacket = [weak_transport](const uint8_t* data, size_t len) {
+                if (auto transport = weak_transport.lock()) {
+                    //printf("RTP recv (%zu bytes): %.*s\n", len, (int)len, (const char*)data);
+                    transport->sendRtp(data, len);
+                }
+            };
+            transport->onRtcpPacket = [weak_transport](const uint8_t* data, size_t len) {
+                if (auto transport = weak_transport.lock()) {
+                    //printf("RTCP recv (%zu bytes): %.*s\n", len, (int)len, (const char*)data);
+                    transport->sendRtcp(data, len);
+                }
+            };
+        }
         Json val;
-        val["sdp"] = transport->createAnswer();
+        val["sdp"] = transport->getAnswerSdp(sdp);
         val["id"] = transport->getIdentifier();
         val["token"] = transport->getIdentifier();
         val["type"] = "answer";
+        val["code"] = 0;
         return ctx->sendJson(val);
     });
     static WebSocketService ws;
@@ -84,7 +93,7 @@ void RtcHttpServer::start(int port) {
         // channel->deleteContextPtr();
     };
 
-    http_ = std::make_unique<hv::WebSocketServer>();
+    http_.reset(new hv::WebSocketServer());
     http_->port = port;
 #if TEST_WSS
     http_->https_port = port + 1;
