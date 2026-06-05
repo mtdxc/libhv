@@ -9,7 +9,7 @@
 #include <map>
 #include <functional>
 #include <mutex>
-
+#include <set>
 #include "ice_config.h"
 #include "EventLoop.h"
 #include "../stun/stun_message.h"
@@ -51,7 +51,7 @@ public:
     void stop();
 
     // Create a new ICE session
-    std::shared_ptr<IceSession> createSession(IceMode mode = IceMode::Full);
+    std::shared_ptr<IceSession> createSession();
 
     // Destroy a session
     void destroySession(const std::shared_ptr<IceSession>& session);
@@ -123,7 +123,7 @@ private:
     bool owns_pools_ = false;
     mutable std::recursive_mutex mutex_;
 
-    std::vector<std::shared_ptr<IceSession>> sessions_;
+    std::set<std::shared_ptr<IceSession>> sessions_;
     bool running_ = false;
 
     std::shared_ptr<IceSession> findSessionByAddr(const struct sockaddr* addr);

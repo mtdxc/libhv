@@ -75,8 +75,8 @@ static const IceCandidate* findBestLocalForPrflx(
     return nullptr;
 }
 
-IceSession::IceSession(IceMode mode, IceAgent* agent, hv::EventLoopPtr loop)
-    : mode_(mode), agent_(agent), loop_(loop) {
+IceSession::IceSession(IceAgent* agent, hv::EventLoopPtr loop)
+    : agent_(agent), loop_(loop) {
     local_ufrag_ = randomString(8);
     local_pwd_ = randomString(24);
     tiebreaker_ = ((uint64_t)rand() << 32) | rand();
@@ -86,6 +86,15 @@ IceSession::IceSession(IceMode mode, IceAgent* agent, hv::EventLoopPtr loop)
 IceSession::~IceSession() {
     hlogi("IceSession %s destroyed", id());
     close();
+}
+
+void IceSession::setMode(IceMode mode) { 
+    if (mode_ == mode) return;
+    mode_ = mode; 
+    if (mode == IceMode::Lite) {
+        role_ = IceRole::Controlled;
+    }
+    hlogi("IceSession %s setMode %s, role=%s", id(), mode == IceMode::Full ? "full" : "lite", iceRoleString(role_));
 }
 
 hio_t* IceSession::udpIo() const { 

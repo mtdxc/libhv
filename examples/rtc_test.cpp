@@ -65,20 +65,6 @@ std::string rtpPayloadView(const uint8_t* data, size_t len) {
     return std::string(reinterpret_cast<const char*>(data + headerLen), len - headerLen);
 }
 
-
-WebRtcOptions makeOptions() {
-    WebRtcOptions opts;
-    opts.iceMode = IceMode::Full;
-
-    IceConfig cfg;
-    cfg.udpPort = 0;          // ephemeral
-    cfg.gatherHost = true;
-    cfg.gatherSrflx = false;  // no STUN server in test
-    cfg.gatherTcp = false;
-    opts.iceConfig = cfg;
-    return opts;
-}
-
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -99,13 +85,11 @@ int main(int argc, char* argv[]) {
     printf("=== WebRtcTransport loopback test ===\n");
 
     // ---------- Create two endpoints ----------
-    auto optsA = makeOptions();
-    auto optsB = makeOptions();
 
     IceAgent agent;
     agent.start();
-    auto offerer = std::make_shared<WebRtcTransport>(optsA, &agent);
-    auto answerer = std::make_shared<WebRtcTransport>(optsB, &agent);
+    auto offerer = WebRtcTransport::create(&agent);
+    auto answerer = WebRtcTransport::create(&agent);
     answerer->setRole(WebRtcTransport::Role::CLIENT);
     offerer->onStateChange = [&offererReady](WebRtcState s) {
         printf("[offerer]   state -> %s\n", webrtcStateString(s));

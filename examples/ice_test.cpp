@@ -44,8 +44,8 @@ int main(int argc, char* argv[]) {
     }
 
     // Create two sessions sharing the same port
-    auto session1 = agent.createSession(IceMode::Full);
-    auto session2 = agent.createSession(IceMode::Full);
+    auto session1 = agent.createSession();
+    auto session2 = agent.createSession();
     session1->onStateChange = [](IceState state) {
         printf("  Session1 state changed: %s\n", iceStateString(state));
     };

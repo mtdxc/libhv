@@ -37,7 +37,7 @@ const char* iceStateString(IceState state);
 // ICE Session - one per peer connection component
 class IceSession : public std::enable_shared_from_this<IceSession> {
 public:
-    IceSession(IceMode mode, IceAgent* agent, hv::EventLoopPtr loop);
+    IceSession(IceAgent* agent, hv::EventLoopPtr loop);
     ~IceSession();
 
     // Configuration
@@ -59,6 +59,8 @@ public:
     // State
     IceState state() const { return state_; }
     IceMode mode() const { return mode_; }
+    // must be called before gatherCandidates
+    void setMode(IceMode mode);
     hv::EventLoopPtr loop() const { return loop_; }
 
     // Candidate management
@@ -140,7 +142,7 @@ private:
     void sendKeepalive();
 
     // Members
-    IceMode mode_;
+    IceMode mode_ = IceMode::Full;
     IceState state_ = IceState::New;
     IceRole role_ = IceRole::Controlling;
     NominationMode nomination_ = NominationMode::Regular;

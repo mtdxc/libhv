@@ -515,7 +515,7 @@ TEST_F(IceAgentTest, CreateSession) {
     agent.setConfig(config_);
     agent.start();
 
-    auto session = agent.createSession(IceMode::Full);
+    auto session = agent.createSession();
     ASSERT_TRUE(session != nullptr);
     EXPECT_FALSE(session->localUfrag().empty());
     EXPECT_FALSE(session->localPwd().empty());
@@ -530,8 +530,8 @@ TEST_F(IceAgentTest, MultipleSessions) {
     agent.setConfig(config_);
     agent.start();
 
-    auto s1 = agent.createSession(IceMode::Full);
-    auto s2 = agent.createSession(IceMode::Full);
+    auto s1 = agent.createSession();
+    auto s2 = agent.createSession();
 
     // Sessions should have different ufrags
     EXPECT_NE(s1->localUfrag(), s2->localUfrag());
@@ -547,7 +547,7 @@ TEST_F(IceAgentTest, SessionGathering) {
     agent.setConfig(config_);
     agent.start();
 
-    auto session = agent.createSession(IceMode::Full);
+    auto session = agent.createSession();
 
     std::vector<IceCandidate> gatheredCandidates;
     session->onLocalCandidate = [&gatheredCandidates](const IceCandidate& cand) {
@@ -581,7 +581,7 @@ TEST_F(IceAgentTest, TcpConnectedDoesNotDuplicateActiveLocalCandidate) {
     agent.setConfig(config_);
     ASSERT_EQ(agent.start(), 0);
 
-    auto session = agent.createSession(IceMode::Full);
+    auto session = agent.createSession();
     ASSERT_TRUE(session != nullptr);
 
     std::vector<IceCandidate> gathered;

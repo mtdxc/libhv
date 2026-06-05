@@ -154,7 +154,7 @@ int IceAgent::start() {
 }
 
 void IceAgent::stop() {
-    std::vector<std::shared_ptr<IceSession>> sessions;
+    decltype(sessions_) sessions;
     std::vector<hio_t*> tcp_ios;
     std::shared_ptr<TurnClient> turn_client;
     hio_t* tcp_listen_io = nullptr;
@@ -217,19 +217,17 @@ void IceAgent::stop() {
 
 }
 
-IceSessionPtr IceAgent::createSession(IceMode mode) {
-    auto session = std::make_shared<IceSession>(mode, this, pools_->loop());
+IceSessionPtr IceAgent::createSession() {
+    auto session = std::make_shared<IceSession>(this, pools_->loop());
     std::unique_lock<decltype(mutex_)> lock(mutex_);
-    sessions_.push_back(session);
+    sessions_.insert(session);
     return session;
 }
 
 void IceAgent::destroySession(const IceSessionPtr& session) {
     session->close();
     std::unique_lock<decltype(mutex_)> lock(mutex_);
-    sessions_.erase(
-        std::remove(sessions_.begin(), sessions_.end(), session),
-        sessions_.end());
+    sessions_.erase(session);
 }
 
 std::shared_ptr<TurnClient> IceAgent::getTurnClient() const {
@@ -754,7 +752,7 @@ void IceAgent::allocateTurn() {
 
         // Notify sessions when TURN state changes
         turn_client_->onStateChange = [this](TurnState state) {
-            std::vector<std::shared_ptr<IceSession>> sessions;
+            decltype(sessions_) sessions;
             {
                 std::unique_lock<decltype(mutex_)> lock(mutex_);
                 sessions = sessions_;

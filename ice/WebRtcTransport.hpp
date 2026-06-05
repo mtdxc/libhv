@@ -27,15 +27,6 @@ enum class WebRtcState {
 
 const char* webrtcStateString(WebRtcState state);
 
-// Configuration for WebRtcTransport
-struct WebRtcOptions {
-    // ICE configuration
-    IceConfig iceConfig;
-
-    // ICE mode
-    IceMode iceMode = IceMode::Full;
-};
-
 // WebRtcTransport: Combines ICE + DTLS + SRTP
 // - DtlsTransport for key exchange
 // - SrtpSession for RTP/RTCP encryption/decryption
@@ -43,10 +34,15 @@ struct WebRtcOptions {
 // - SDP offer/answer interface
 // - RTP/RTCP send/receive interface
 class WebRtcTransport : public RTC::DtlsTransport::Listener, public std::enable_shared_from_this<WebRtcTransport> {
+    WebRtcTransport(const IceConfig* options, IceAgent* agent = nullptr);
 public:
     using Ptr = std::shared_ptr<WebRtcTransport>;
-
-    explicit WebRtcTransport(const WebRtcOptions& options, IceAgent* agent = nullptr);
+    static Ptr create(const IceConfig* options){
+        return Ptr(new WebRtcTransport(options, nullptr));
+    }
+    static Ptr create(IceAgent* agent){
+        return Ptr(new WebRtcTransport(nullptr, agent));
+    }
     ~WebRtcTransport();
 
     enum class Role {
@@ -174,9 +170,6 @@ private:
     RTC::DtlsTransport::Ptr dtls_transport_;
     RTC::SrtpSession::Ptr srtp_send_;
     RTC::SrtpSession::Ptr srtp_recv_;
-
-    // Configuration
-    WebRtcOptions options_;
 
     Role _role = Role::PEER;
     RtcSession::Ptr _answer_sdp;

@@ -33,27 +33,21 @@ void RtcHttpServer::start(int port) {
     http.Any("/index/api/whep", [this](const HttpContextPtr& ctx) {
         auto type = ctx->param("type");
         auto sdp = ctx->body();
-        WebRtcOptions opt;
-        opt.iceMode = IceMode::Lite;
-        auto transport = std::make_shared<WebRtcTransport>(opt, agent_.get());
+        auto transport = WebRtcTransport::create(agent_.get());
         ctx->setHeader("Content-Type", "application/sdp");
         return ctx->sendString(transport->getAnswerSdp(sdp));
     });
     http.Any("/index/api/whip", [this](const HttpContextPtr& ctx) {
         auto type = ctx->param("type");
         auto sdp = ctx->body();
-        WebRtcOptions opt;
-        opt.iceMode = IceMode::Lite;
-        auto transport = std::make_shared<WebRtcTransport>(opt, agent_.get());
+        auto transport = WebRtcTransport::create(agent_.get());
         ctx->setHeader("Content-Type", "application/sdp");
         return ctx->sendString(transport->getAnswerSdp(sdp));
     });
     http.Any("/index/api/webrtc", [this](const HttpContextPtr& ctx) {
         auto type = ctx->param("type");
         auto sdp = ctx->body();
-        WebRtcOptions opt;
-        opt.iceMode = IceMode::Lite;
-        auto transport = std::make_shared<WebRtcTransport>(opt, agent_.get());
+        auto transport = WebRtcTransport::create(agent_.get());
         if (type == "echo") {
             std::weak_ptr<WebRtcTransport> weak_transport = transport;
             transport->onRtpPacket = [weak_transport](const uint8_t* data, size_t len) {
@@ -114,6 +108,8 @@ void RtcHttpServer::start(int port) {
         if (!agent_) {
             agent_ = std::make_shared<ice::IceAgent>(http_.get());
             ice::IceConfig config;
+            config.tcpPort = 8000;
+            config.udpPort = 8000;
             config.gatherTcp = true;
             agent_->setConfig(config);
             agent_->start();

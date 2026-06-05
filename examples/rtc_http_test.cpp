@@ -6,6 +6,7 @@ int main(int argc, char* argv[]) {
     if (argc > 1) {
         port = atoi(argv[1]);
     }
+    logger_enable_color(hlog, true);
     hlog_set_handler(stdout_logger);
     RtcHttpServer server;
     server.start(port);

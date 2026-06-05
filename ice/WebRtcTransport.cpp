@@ -26,18 +26,18 @@ static constexpr int kMaxSrtpOverhead = 16;
 // ============================================================================
 // Construction / Destruction
 // ============================================================================
-
-WebRtcTransport::WebRtcTransport(const WebRtcOptions& options, IceAgent* agent)
-    : options_(options), ice_agent_(agent)
-{
+WebRtcTransport::WebRtcTransport(const IceConfig* options, IceAgent* agent) : ice_agent_(agent) {
     if (!ice_agent_) {
         // Create and start ICE agent
         ice_agent_ = new IceAgent();
-        ice_agent_->setConfig(options_.iceConfig);
+        if (options) {
+            ice_agent_->setConfig(*options);
+        }
         ice_agent_->start();
         owner_agent_ = true;
+    } else {
+        ice_agent_->start();
     }
-    ice_agent_->start();
     createIceSession();
 }
 
@@ -176,7 +176,7 @@ bool WebRtcTransport::setAnswerSdp(const std::string &answer) {
 
 void WebRtcTransport::createIceSession() {
     if (!ice_session_) {
-        ice_session_ = ice_agent_->createSession(options_.iceMode);
+        ice_session_ = ice_agent_->createSession();
 
         ice_session_->onStateChange = [this](IceState state) { onIceStateChanged(state); };
         ice_session_->onLocalCandidate = [this](const IceCandidate& candidate) { onIceLocalCandidate(candidate); };
@@ -213,7 +213,7 @@ void WebRtcTransport::start() {
     }
     hlogi("WebRtcTransport %s start", getIdentifier());
     setState(WebRtcState::Connecting);
-
+    ice_session_->setMode(_role == Role::CLIENT ? IceMode::Full : IceMode::Lite);
     // Start ICE connectivity checks
     ice_session_->gatherCandidates(_role == Role::CLIENT);
     last_tick = gettimeofday_ms();
