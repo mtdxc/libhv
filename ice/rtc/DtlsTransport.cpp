@@ -722,9 +722,12 @@ namespace RTC
     {
         MS_TRACE();
 
-        MS_ASSERT(
-          fingerprint.algorithm != FingerprintAlgorithm::NONE, "no fingerprint algorithm provided");
-
+        if (fingerprint.algorithm == FingerprintAlgorithm::NONE) {
+            hlogw("DtlsTransport %s: no fingerprint algorithm provided", getId());
+            return false;
+        }
+        hlogi("DtlsTransport %s SetRemoteFingerprint [algorithm:%s, value:%s]", getId(), 
+            GetFingerprintAlgorithmString(fingerprint.algorithm).c_str(), fingerprint.value.c_str());
         this->remoteFingerprint = fingerprint;
 
         // The remote fingerpring may have been set after DTLS handshake was done,
