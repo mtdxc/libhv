@@ -163,6 +163,9 @@
     #ifndef WIN32_LEAN_AND_MEAN
     #define WIN32_LEAN_AND_MEAN
     #endif
+    #ifndef NOMINMAX
+    #define NOMINMAX
+    #endif
     #ifndef _CRT_NONSTDC_NO_DEPRECATE
     #define _CRT_NONSTDC_NO_DEPRECATE
     #endif
@@ -245,12 +248,15 @@
 // ENDIAN
 #ifndef BIG_ENDIAN
 #define BIG_ENDIAN      4321
+#define __BIG_ENDIAN BIG_ENDIAN
 #endif
 #ifndef LITTLE_ENDIAN
 #define LITTLE_ENDIAN   1234
+#define __LITTLE_ENDIAN LITTLE_ENDIAN
 #endif
 #ifndef NET_ENDIAN
 #define NET_ENDIAN      BIG_ENDIAN
+#define __NET_ENDIAN      NET_ENDIAN
 #endif
 
 // BYTE_ORDER
@@ -272,6 +278,9 @@
 #else
     #warning "Unknown byte order!"
 #endif
+#endif
+#ifndef __BYTE_ORDER
+#define __BYTE_ORDER BYTE_ORDER
 #endif
 
 // ANSI C

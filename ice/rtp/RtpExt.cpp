@@ -9,6 +9,7 @@
  */
 
 #include "RtpExt.h"
+#include "RtpPacket.h"
 #include "sdp/Sdp.h"
 #include <sstream>
 #include <exception>
@@ -566,8 +567,9 @@ string RtpExtContext::getRid(uint32_t ssrc) const{
 void RtpExtContext::setRid(uint32_t ssrc, const string &rid) {
     _ssrc_to_rid[ssrc] = rid;
 }
-#if 0
+
 map<uint8_t/*id*/, RtpExt/*data*/> RtpExt::getExtValue(const RtpHeader *header) {
+
     map<uint8_t, RtpExt> ret;
     assert(header);
     auto ext_size = header->getExtSize();
@@ -649,7 +651,7 @@ int RtpExtContext::parseRtpExtId(RtpPacket *rtp) {
     rtp->rid = rid;
     return ret;
 }
-#endif
+
 void RtpExtContext::setOnGetRtp(OnGetRtp cb) {
     _cb = std::move(cb);
 }
