@@ -3,7 +3,7 @@
 using namespace hv;
 using namespace ice;
 
-RtcHttpServer::RtcHttpServer() {
+RtcHttpServer::RtcHttpServer(const RtcHttpConfig& config) : config_(config) {
 }
 
 RtcHttpServer::~RtcHttpServer() {
@@ -26,7 +26,7 @@ public:
     }
 };
 
-void RtcHttpServer::start(int port) {
+void RtcHttpServer::start() {
 
     static HttpService http;
     http.document_root = "html";
@@ -88,13 +88,13 @@ void RtcHttpServer::start(int port) {
     };
 
     http_.reset(new hv::WebSocketServer());
-    http_->port = port;
+    http_->port = config_.http_port;
 #if TEST_WSS
-    http_->https_port = port + 1;
+    http_->https_port = config_.https_port;
     hssl_ctx_opt_t param;
     memset(&param, 0, sizeof(param));
-    param.crt_file = "cert/server.crt";
-    param.key_file = "cert/server.key";
+    param.crt_file = config_.cert_file;
+    param.key_file = config_.key_file;
     param.endpoint = HSSL_SERVER;
     if (http_->newSslCtx(&param) != 0) {
         fprintf(stderr, "new SSL_CTX failed!\n");
@@ -107,11 +107,7 @@ void RtcHttpServer::start(int port) {
     http_->onWorkerStart = [this]() {
         if (!agent_) {
             agent_ = std::make_shared<ice::IceAgent>(http_.get());
-            ice::IceConfig config;
-            config.tcpPort = 8000;
-            config.udpPort = 8000;
-            config.gatherTcp = true;
-            agent_->setConfig(config);
+            agent_->setConfig(config_.ice);
             agent_->start();
         }
     };

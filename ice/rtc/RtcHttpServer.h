@@ -4,15 +4,24 @@
 
 #include "agent/ice_agent.h"
 #include "http/server/WebSocketServer.h"
+struct RtcHttpConfig {
+  ice::IceConfig ice;
+  int16_t http_port;
+  int16_t https_port;
+  std::string cert_file;
+  std::string key_file;
+};
+
 class RtcHttpServer
 {
     std::shared_ptr<ice::IceAgent> agent_;
     std::unique_ptr<hv::WebSocketServer> http_;
+    RtcHttpConfig config_;
 public:
-    RtcHttpServer();
+    RtcHttpServer(const RtcHttpConfig& config);
     ~RtcHttpServer();
 
-    void start(int port);
+    void start();
     void stop();
 };
 
