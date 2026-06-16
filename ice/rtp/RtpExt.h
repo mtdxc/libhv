@@ -19,8 +19,10 @@
 #include <unordered_map>
 
 namespace ice {
-class RtpHeader;
+struct RtpHeader;
 class RtpPacket;
+class RtcMedia;
+
 #define RTP_EXT_MAP(XX) \
     XX(ssrc_audio_level,            "urn:ietf:params:rtp-hdrext:ssrc-audio-level") \
     XX(abs_send_time,               "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time") \
@@ -47,7 +49,6 @@ enum class RtpExtType : uint8_t {
     reserved = 15,
 };
 
-class RtcMedia;
 struct FrameMarking
 {
 #if BYTE_ORDER == LITTLE_ENDIAN
@@ -135,7 +136,6 @@ private:
     RtpExtType _type = RtpExtType::padding;
 };
 
-class RtcMedia;
 class RtpExtContext {
 public:
     using Ptr = std::shared_ptr<RtpExtContext>;

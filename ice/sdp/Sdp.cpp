@@ -13,6 +13,8 @@
 #include <sstream>
 #include <unordered_set> 
 #include "hstring.h"
+#include "config.h"
+#include "onceToken.h"
 #include "rtp/RtpMap.h"
 #include <mutex>
 #include <random>
@@ -88,12 +90,16 @@ namespace Rtc {
 #define RTC_FIELD "rtc."
 const string kPreferredCodecA = RTC_FIELD "preferredCodecA";
 const string kPreferredCodecV = RTC_FIELD "preferredCodecV";
-#if 0
+const string kH264Profile = RTC_FIELD "h264Profile";
+const string kH265Profile = RTC_FIELD "h265Profile";
+const string kH264StapA = RTC_FIELD "h264StapA";
 static onceToken token([]() {
     mINI::Instance()[kPreferredCodecA] = "PCMA,PCMU,opus,mpeg4-generic";
     mINI::Instance()[kPreferredCodecV] = "H264,H265,AV1,VP9,VP8";
+    mINI::Instance()[kH264StapA] = 1;
+    mINI::Instance()[kH264Profile] = "42";
+    mINI::Instance()[kH265Profile] = "";
 });
-#endif
 } // namespace Rtc
 
 using onCreateSdpItem = function<SdpItem::Ptr(const string &key, const string &value)>;
@@ -1510,8 +1516,7 @@ void RtcConfigure::RtcTrackConfigure::setDefaultSetting(TrackType type) {
     switch (type) {
         case TrackAudio: {
             // 此处调整偏好的音频编码格式优先级
-            //GET_CONFIG_FUNC(vector<CodecId>, s_preferred_codec, Rtc::kPreferredCodecA, toCodecArray);
-            vector<CodecId> s_preferred_codec = {CodecOpus, CodecG711A, CodecG711U};
+            GET_CONFIG_FUNC(vector<CodecId>, s_preferred_codec, Rtc::kPreferredCodecA, toCodecArray);
             CHECK(!s_preferred_codec.empty(), "rtc音频偏好codec不能为空");
             preferred_codec = s_preferred_codec;
 
@@ -1528,16 +1533,14 @@ void RtcConfigure::RtcTrackConfigure::setDefaultSetting(TrackType type) {
         }
         case TrackVideo: {
             // 此处调整偏好的视频编码格式优先级
-            // GET_CONFIG_FUNC(vector<CodecId>, s_preferred_codec, Rtc::kPreferredCodecV, toCodecArray);
-            vector<CodecId> s_preferred_codec = {CodecVP8, CodecH264, CodecVP9};
+            GET_CONFIG_FUNC(vector<CodecId>, s_preferred_codec, Rtc::kPreferredCodecV, toCodecArray);
             CHECK(!s_preferred_codec.empty(), "rtc视频偏好codec不能为空");
             preferred_codec = s_preferred_codec;
 
             rtcp_fb = { SdpConst::kTWCCRtcpFb, SdpConst::kRembRtcpFb, "nack", "ccm fir", "nack pli" };
             extmap = { { RtpExtType::abs_send_time, RtpDirection::sendrecv },
                        { RtpExtType::transport_cc, RtpDirection::sendrecv },
-                       // rtx重传rtp时，忽略sdes_mid类型的rtp ext,实测发现Firefox在接收rtx时，如果存在sdes_mid的ext,将导致无法播放  [AUTO-TRANSLATED:221df025]
-                       // When rtx retransmits rtp, ignore the rtp ext of sdes_mid type. It is found that Firefox cannot play when receiving rtx if there is an ext of sdes_mid
+                       // rtx重传rtp时，忽略sdes_mid类型的rtp ext,实测发现Firefox在接收rtx时，如果存在sdes_mid的ext,将导致无法播放
                        //{RtpExtType::sdes_mid,RtpDirection::sendrecv},
                        { RtpExtType::sdes_rtp_stream_id, RtpDirection::sendrecv },
                        { RtpExtType::sdes_repaired_rtp_stream_id, RtpDirection::sendrecv },
@@ -1642,8 +1645,7 @@ shared_ptr<RtcSession> RtcConfigure::createOffer() const {
     ret->session_name = "-";
 
     createMediaOffer(ret);
-    // 设置音视频端口复用  [AUTO-TRANSLATED:ffe27d17]
-    // Set audio and video port multiplexing
+    // 设置音视频端口复用
     for (auto &m : ret->media) {
         // The remote end has rejected (port 0) the m-section, so it should not be putting its mid in the group attribute.
         if (m.port) {
@@ -1775,7 +1777,7 @@ void RtcConfigure::createMediaOfferEach(const std::shared_ptr<RtcSession> &ret, 
         media.candidate = configure.candidate;
 #else
         media.port = 9; //占位符，表示后续协商分配
-        //WarnL << "answer sdp忽略application mline, 请安装usrsctp后再测试datachannel功能";
+        //hlogw("answer sdp忽略application mline, 请安装usrsctp后再测试datachannel功能");
 #endif
         ret->media.emplace_back(media);
         return;
@@ -1920,8 +1922,7 @@ RETRY:
             break;
         }
         if (!selected_plan) {
-            // offer中该媒体的所有的codec都不支持  [AUTO-TRANSLATED:3b57b86f]
-            // All codecs for this media in the offer are not supported
+            // offer中该媒体的所有的codec都不支持
             continue;
         }
         RtcMedia answer_media;
@@ -2081,9 +2082,8 @@ bool RtcConfigure::onCheckCodecProfile(const RtcCodecPlan &plan, CodecId codec) 
         return true;
     }
     if (codec == CodecH264 || codec == CodecH265) {
-        //GET_CONFIG(string, profileH264, Rtp::kH264Profile);
-        //GET_CONFIG(string, profileH265, Rtp::kH265Profile);
-        string profileH264, profileH265;
+        GET_CONFIG(string, profileH264, Rtc::kH264Profile);
+        GET_CONFIG(string, profileH265, Rtc::kH265Profile);
         const string& profile = codec == CodecH264 ? profileH264 : profileH265;
         const string& key = codec == CodecH264 ? kH264Profile : kH265Profile;
         if (_rtsp_video_plan && getCodecId(_rtsp_video_plan->codec) == codec) {
@@ -2117,8 +2117,7 @@ void RtcConfigure::onSelectPlan(RtcCodecPlan &plan, CodecId codec) const {
     if (_rtsp_video_plan && codec == CodecH264 && getCodecId(_rtsp_video_plan->codec) == CodecH264) {
         // When h264, set packetization-mod to be consistent
         auto mode = _rtsp_video_plan->fmtp[kMode];
-        //GET_CONFIG(bool, h264_stap_a, Rtp::kH264StapA);
-        bool h264_stap_a;
+        GET_CONFIG(bool, h264_stap_a, Rtc::kH264StapA);
         plan.fmtp[kMode] = mode.empty() ? std::to_string(h264_stap_a) : mode;
     }
 }

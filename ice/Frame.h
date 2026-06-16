@@ -2,7 +2,6 @@
 #define SRC_ICE_FRAME_H_
 
 #include <string>
-#include <map>
 #include "hplatform.h"
 struct StrCaseCompare {
     bool operator()(const std::string &__x, const std::string &__y) const { return strcasecmp(__x.data(), __y.data()) < 0; }

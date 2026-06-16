@@ -1,11 +1,12 @@
 #ifndef ICE_CANDIDATE_PAIR_H_
 #define ICE_CANDIDATE_PAIR_H_
 
+#include <cstdint>
+#include <memory>
+
 #include "ice_candidate.h"
 // for TransactionId
 #include "../stun/stun_message.h"
-#include <cstdint>
-#include <memory>
 
 namespace ice {
 

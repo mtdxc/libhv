@@ -2,8 +2,12 @@
 #ifndef RTC_HTTP_SERVER_H_
 #define RTC_HTTP_SERVER_H_
 
+#include <memory>
+#include <string>
+
 #include "agent/ice_agent.h"
 #include "http/server/WebSocketServer.h"
+
 struct RtcHttpConfig {
   ice::IceConfig ice;
   int16_t http_port;

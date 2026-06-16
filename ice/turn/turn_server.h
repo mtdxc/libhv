@@ -1,13 +1,12 @@
 #ifndef ICE_TURN_SERVER_H_
 #define ICE_TURN_SERVER_H_
 
-#include <string>
-#include <memory>
-#include <functional>
-#include <unordered_map>
-#include <map>
-#include <vector>
 #include <cstdint>
+#include <functional>
+#include <map>
+#include <memory>
+#include <string>
+#include <unordered_map>
 
 #include "EventLoopThread.h"
 #include "hsocket.h"

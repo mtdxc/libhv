@@ -1,10 +1,9 @@
 ﻿#ifndef ICE_TURN_CLIENT_H_
 #define ICE_TURN_CLIENT_H_
 
-#include <string>
-#include <memory>
 #include <functional>
-#include <vector>
+#include <memory>
+#include <string>
 #include <unordered_map>
 
 #include "EventLoop.h"
