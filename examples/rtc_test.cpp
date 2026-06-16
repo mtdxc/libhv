@@ -88,8 +88,8 @@ int main(int argc, char* argv[]) {
 
     IceAgent agent;
     agent.start();
-    auto offerer = WebRtcTransport::create(&agent);
-    auto answerer = WebRtcTransport::create(&agent);
+    auto offerer = WebRtcTransport::create(RTC_CLASS_ECHO, &agent);
+    auto answerer = WebRtcTransport::create(RTC_CLASS_ECHO, &agent);
     answerer->setRole(WebRtcTransport::Role::CLIENT);
     offerer->onStateChange = [&offererReady](WebRtcState s) {
         printf("[offerer]   state -> %s\n", webrtcStateString(s));
@@ -102,21 +102,6 @@ int main(int argc, char* argv[]) {
         if (s == WebRtcState::Connected) {
             answererReady.store(true);
         }
-    };
-
-    offerer->onRtpPacket  = [&offererRtp, &rtpPayloadCopy, &rtpPayloadLen]
-                           (const uint8_t* data, size_t len) {
-        ++offererRtp;
-         rtpPayloadCopy = rtpPayloadView(data, len);
-         rtpPayloadLen.store((int)rtpPayloadCopy.size());
-         printf("[offerer]   RTP recv (%zu bytes, payload=%d): %.*s\n",
-             len, rtpPayloadLen.load(), rtpPayloadLen.load(), rtpPayloadCopy.c_str());
-    };
-    answerer->onRtpPacket = [&answererRtp](const uint8_t* data, size_t len) {
-        ++answererRtp;
-         std::string payload = rtpPayloadView(data, len);
-         printf("[answerer]  RTP recv (%zu bytes, payload=%d): %.*s\n",
-             len, (int)payload.size(), (int)payload.size(), payload.c_str());
     };
 
     offerer->onLocalCandidate  = [answerer](const std::string& sdp, const std::string& mid) {

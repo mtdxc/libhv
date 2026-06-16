@@ -42,7 +42,7 @@ WebRtcTransport::WebRtcTransport(const IceConfig* options, IceAgent* agent) : ic
 }
 
 WebRtcTransport::~WebRtcTransport() {
-    close();
+    hlogi("~WebRtcTransport");
     if (owner_agent_) {
         delete ice_agent_;
     }
@@ -92,11 +92,6 @@ void WebRtcTransport::onRtcConfigure(RtcConfigure &configure) const {
             configure.addCandidate(*candidate);
         }
     }
-    // for echo
-    configure.audio.direction = configure.video.direction = RtpDirection::sendrecv;
-    configure.audio.extmap.emplace(RtpExtType::sdes_mid, RtpDirection::sendrecv);
-    configure.video.extmap.emplace(RtpExtType::sdes_mid, RtpDirection::sendrecv);
-
 }
 
 
@@ -106,9 +101,11 @@ std::string WebRtcTransport::createOffer() {
         RtcConfigure configure;
         onRtcConfigure(configure);
         _offer_sdp = configure.createOffer();
-        return _offer_sdp->toString();
+        auto ret = _offer_sdp->toString();
+        hlogi("WebRtcTransport %s createOffer=%s", getIdentifier(), ret.c_str());
+        return ret;
     } catch (exception &ex) {
-        //onShutdown(SockException(Err_shutdown, ex.what()));
+        close(ex.what());
         throw;
     }
 }
@@ -127,7 +124,9 @@ std::string WebRtcTransport::createAnswer() {
     onCheckSdp(SdpType::answer, *_answer_sdp);
     //setSdpBitrate(*_answer_sdp);
     _answer_sdp->checkValid();
-    return _answer_sdp->toString();
+    auto ret = _answer_sdp->toString();
+    hlogi("WebRtcTransport %s createAnswer=%s", getIdentifier(), ret.c_str());
+    return ret;
 }
 
 bool WebRtcTransport::setRemoteDescription(SdpType type, const std::string& sdp) {
@@ -140,9 +139,11 @@ bool WebRtcTransport::setRemoteDescription(SdpType type, const std::string& sdp)
         {
         case SdpType::offer:
             _offer_sdp = sdpSession;
+            hlogi("WebRtcTransport %s setRemoteDescription offer=\n%s", getIdentifier(), sdp.c_str());
             break;
         case SdpType::answer:
             _answer_sdp = sdpSession;
+            hlogi("WebRtcTransport %s setRemoteDescription answer=\n%s", getIdentifier(), sdp.c_str());
             break;
         default:
             break;
@@ -156,18 +157,15 @@ bool WebRtcTransport::setRemoteDescription(SdpType type, const std::string& sdp)
         ice_session_->setRemoteCredentials(media.ice_ufrag, media.ice_pwd);
         return true;
     } catch (exception &ex) {
-        //onShutdown(SockException(Err_shutdown, ex.what()));
+        close(ex.what());
         throw;
     }
     return false;
 }
 
 std::string WebRtcTransport::getAnswerSdp(const string &offer) {
-    hlogi("WebRtcTransport %s offer=\n%s", getIdentifier(), offer.c_str());
     setRemoteDescription(SdpType::offer, offer);
-    auto ret = createAnswer();
-    hlogi("WebRtcTransport %s answer=\n%s", getIdentifier(), ret.c_str());
-    return ret;
+    return createAnswer();
 }
 
 bool WebRtcTransport::setAnswerSdp(const std::string &answer) {
@@ -207,6 +205,7 @@ void WebRtcTransport::setRemoteCandidatesDone() {
 // ============================================================================
 
 void WebRtcTransport::start() {
+    _self = shared_from_this();
     if (!ice_session_) {
         hloge("WebRtcTransport::start() - ICE session not created. Call createOffer/createAnswer first.");
         return;
@@ -216,29 +215,33 @@ void WebRtcTransport::start() {
     ice_session_->setMode(_role == Role::CLIENT ? IceMode::Full : IceMode::Lite);
     // Start ICE connectivity checks
     ice_session_->gatherCandidates(_role == Role::CLIENT);
-    last_tick = gettimeofday_ms();
-    auto self = shared_from_this();
-    ice_session_->loop()->setInterval(5000, [self](hv::TimerID id) {
-        if (self->state_ == WebRtcState::Closed) {
-            hv::killTimer(id);
-            return;
-        }
-        uint64_t now = gettimeofday_ms();
-        if (now - self->last_tick > 10000) {
-            hlogw("WebRtcTransport %s connectivity check timeout", self->getIdentifier());
-            self->setState(WebRtcState::Failed);
-            hv::killTimer(id);
-        }
-    });
     // If remote_setup_ is empty (we're the offerer), DTLS will start
     // in onIceStateChanged(Connected) after ICE completes.
+
+    if (timeout_sec_ > 0) {
+        _ticker.resetTime();
+        std::weak_ptr<WebRtcTransport> weak_self = shared_from_this();
+        loop()->setInterval(timeout_sec_ * 500, [weak_self](hv::TimerID id) {
+            auto self = weak_self.lock();
+            if (!self || self->state() == WebRtcState::Closed) {
+                hv::killTimer(id);
+                return;
+            }
+            if (self->_ticker.elapsedTime() > (uint64_t)self->timeout_sec_ * 1000) {
+                self->close("rtp/rtcp timeout");
+                hv::killTimer(id);
+            }
+        });
+    }
 }
 
-void WebRtcTransport::close() {
-    if (state_ == WebRtcState::Closed) return;
-
+void WebRtcTransport::close(const char* resson) {
+    if (state_ == WebRtcState::Closed) {
+        return;
+    }
+    hlogi("WebRtcTransport %s close %s", getIdentifier(), resson ? resson : "");
+    onClose();
     setState(WebRtcState::Closed);
-    hlogi("WebRtcTransport %s close", getIdentifier());
     srtp_send_.reset();
     srtp_recv_.reset();
     dtls_transport_.reset();
@@ -247,13 +250,14 @@ void WebRtcTransport::close() {
         ice_agent_->destroySession(ice_session_);
         ice_session_.reset();
     }
+    _self = nullptr;
 }
 
 // ============================================================================
 // RTP/RTCP Send Interface
 // ============================================================================
 
-bool WebRtcTransport::sendRtp(const uint8_t* data, size_t len) {
+bool WebRtcTransport::sendRtp(const void* data, size_t len, void *ctx) {
     if (!srtp_send_ || !ice_session_) return false;
     if (ice_session_->state() != IceState::Connected &&
         ice_session_->state() != IceState::Completed) {
@@ -261,10 +265,11 @@ bool WebRtcTransport::sendRtp(const uint8_t* data, size_t len) {
     }
 
     // Copy to writable buffer with extra space for SRTP auth tag
-    std::vector<uint8_t> buf(data, data + len);
+    std::vector<uint8_t> buf((const uint8_t*)data, (const uint8_t*)data + len);
     buf.resize(len + kMaxSrtpOverhead);
 
     int pktLen = static_cast<int>(len);
+    onBeforeEncryptRtp((char*)buf.data(), pktLen, ctx);
     if (!srtp_send_->EncryptRtp(buf.data(), &pktLen)) {
         hlogw("WebRtcTransport %s SRTP encrypt failed", getIdentifier());
         return false;
@@ -273,7 +278,7 @@ bool WebRtcTransport::sendRtp(const uint8_t* data, size_t len) {
     return ice_session_->send(buf.data(), pktLen) > 0;
 }
 
-bool WebRtcTransport::sendRtcp(const uint8_t* data, size_t len) {
+bool WebRtcTransport::sendRtcp(const void* data, size_t len, void* ctx) {
     if (!srtp_send_ || !ice_session_) return false;
     if (ice_session_->state() != IceState::Connected &&
         ice_session_->state() != IceState::Completed) {
@@ -281,10 +286,11 @@ bool WebRtcTransport::sendRtcp(const uint8_t* data, size_t len) {
     }
 
     // SRTCP can add up to 28 bytes (auth tag + index)
-    std::vector<uint8_t> buf(data, data + len);
+    std::vector<uint8_t> buf((const uint8_t*)data, (const uint8_t*)data + len);
     buf.resize(len + kMaxSrtpOverhead + 4);
 
     int pktLen = static_cast<int>(len);
+    onBeforeEncryptRtcp((char*)buf.data(), pktLen, ctx);
     if (!srtp_send_->EncryptRtcp(buf.data(), &pktLen)) {
         hlogw("WebRtcTransport %s SRTCP encrypt failed", getIdentifier());
         return false;
@@ -363,7 +369,7 @@ void WebRtcTransport::processRtpOrRtcp(const uint8_t* data, size_t len) {
         hlogw("WebRtcTransport %s SRTP recv session not ready, dropping packet", getIdentifier());
         return;
     }
-    last_tick = gettimeofday_ms();
+    _ticker.resetTime();
 
     // Copy to writable buffer (decrypt modifies in-place)
     std::vector<uint8_t> buf(data, data + len);
@@ -371,17 +377,13 @@ void WebRtcTransport::processRtpOrRtcp(const uint8_t* data, size_t len) {
 
     if (isRtcpPacket(data, len)) {
         if (srtp_recv_->DecryptSrtcp(buf.data(), &pktLen)) {
-            if (onRtcpPacket) {
-                onRtcpPacket(buf.data(), pktLen);
-            }
+            onRtcp((const char*)buf.data(), pktLen);
         } else {
             hlogw("WebRtcTransport %s SRTCP decrypt failed", getIdentifier());
         }
     } else {
         if (srtp_recv_->DecryptSrtp(buf.data(), &pktLen)) {
-            if (onRtpPacket) {
-                onRtpPacket(buf.data(), pktLen);
-            }
+            onRtp((const char*)buf.data(), pktLen, _ticker.createdTime());
         } else {
             hlogw("WebRtcTransport %s SRTP decrypt failed", getIdentifier());
         }
@@ -409,10 +411,10 @@ void WebRtcTransport::onIceStateChanged(IceState state) {
         case IceState::Connected: 
             break;
         case IceState::Failed:
-            setState(WebRtcState::Failed);
+            close("ice session failed");
             break;
         case IceState::Closed:
-            setState(WebRtcState::Closed);
+            close("ice session closed");
             break;
         default:
             break;
@@ -455,20 +457,21 @@ void WebRtcTransport::OnDtlsTransportConnected(
               srtpRemoteKey, srtpRemoteKeyLen);
 
     setState(WebRtcState::Connected);
+    onStartWebRTC();
 }
 
 void WebRtcTransport::OnDtlsTransportFailed(
     const RTC::DtlsTransport* /*dtlsTransport*/)
 {
     hloge("WebRtcTransport %s DTLS failed", getIdentifier());
-    setState(WebRtcState::Failed);
+    close("dtls transport failed");
 }
 
 void WebRtcTransport::OnDtlsTransportClosed(
     const RTC::DtlsTransport* /*dtlsTransport*/)
 {
     hlogi("WebRtcTransport %s DTLS closed", getIdentifier());
-    setState(WebRtcState::Closed);
+    close("dtls transport closed");
 }
 
 void WebRtcTransport::OnDtlsTransportSendData(

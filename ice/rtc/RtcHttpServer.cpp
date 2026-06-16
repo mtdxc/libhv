@@ -31,38 +31,21 @@ void RtcHttpServer::start() {
     static HttpService http;
     http.document_root = "html";
     http.Any("/index/api/whep", [this](const HttpContextPtr& ctx) {
-        auto type = ctx->param("type");
         auto sdp = ctx->body();
-        auto transport = WebRtcTransport::create(agent_.get());
+        auto transport = WebRtcTransport::create(RTC_CLASS_PLAY, agent_.get());
         ctx->setHeader("Content-Type", "application/sdp");
         return ctx->sendString(transport->getAnswerSdp(sdp));
     });
     http.Any("/index/api/whip", [this](const HttpContextPtr& ctx) {
-        auto type = ctx->param("type");
         auto sdp = ctx->body();
-        auto transport = WebRtcTransport::create(agent_.get());
+        auto transport = WebRtcTransport::create(RTC_CLASS_PUSH, agent_.get());
         ctx->setHeader("Content-Type", "application/sdp");
         return ctx->sendString(transport->getAnswerSdp(sdp));
     });
     http.Any("/index/api/webrtc", [this](const HttpContextPtr& ctx) {
         auto type = ctx->param("type");
         auto sdp = ctx->body();
-        auto transport = WebRtcTransport::create(agent_.get());
-        if (type == "echo") {
-            std::weak_ptr<WebRtcTransport> weak_transport = transport;
-            transport->onRtpPacket = [weak_transport](const uint8_t* data, size_t len) {
-                if (auto transport = weak_transport.lock()) {
-                    //printf("RTP recv (%zu bytes): %.*s\n", len, (int)len, (const char*)data);
-                    transport->sendRtp(data, len);
-                }
-            };
-            transport->onRtcpPacket = [weak_transport](const uint8_t* data, size_t len) {
-                if (auto transport = weak_transport.lock()) {
-                    //printf("RTCP recv (%zu bytes): %.*s\n", len, (int)len, (const char*)data);
-                    transport->sendRtcp(data, len);
-                }
-            };
-        }
+        auto transport = WebRtcTransport::create(type.c_str(), agent_.get());
         Json val;
         val["sdp"] = transport->getAnswerSdp(sdp);
         val["id"] = transport->getIdentifier();

@@ -14,6 +14,8 @@
 #include "agent/ice_agent.h"
 #include "session/ice_session.h"
 #include "sdp/Sdp.h"
+#include "TimeTicker.h"
+
 namespace ice {
 
 // WebRTC Transport state
@@ -24,7 +26,10 @@ enum class WebRtcState {
     Failed,
     Closed
 };
-
+#define RTC_CLASS_ECHO "echo"
+#define RTC_CLASS_PLAY "play"
+#define RTC_CLASS_PUSH "push"
+#define RTC_CLASS_TALK "talk"
 const char* webrtcStateString(WebRtcState state);
 
 // WebRtcTransport: Combines ICE + DTLS + SRTP
@@ -34,15 +39,11 @@ const char* webrtcStateString(WebRtcState state);
 // - SDP offer/answer interface
 // - RTP/RTCP send/receive interface
 class WebRtcTransport : public RTC::DtlsTransport::Listener, public std::enable_shared_from_this<WebRtcTransport> {
-    WebRtcTransport(const IceConfig* options, IceAgent* agent = nullptr);
 public:
     using Ptr = std::shared_ptr<WebRtcTransport>;
-    static Ptr create(const IceConfig* options){
-        return Ptr(new WebRtcTransport(options, nullptr));
-    }
-    static Ptr create(IceAgent* agent){
-        return Ptr(new WebRtcTransport(nullptr, agent));
-    }
+    static Ptr create(const char* type, const IceConfig* options);
+    static Ptr create(const char* type, IceAgent* agent);
+
     ~WebRtcTransport();
 
     enum class Role {
@@ -69,7 +70,7 @@ public:
     // Extracts ICE credentials, candidates, DTLS fingerprint, and setup role
     bool setAnswerSdp(const std::string& sdp);
     std::string getAnswerSdp(const std::string &offer);
-    virtual void onCheckSdp(SdpType type, const RtcSession& sdp) const {}
+
     // Add a remote ICE candidate (trickle ICE)
     // candidate: SDP candidate string (after "a=candidate:")
     // mid: media ID (unused in single-stream, pass "")
@@ -82,24 +83,38 @@ public:
 
     // Start ICE connectivity checks and DTLS handshake.
     // Call after setRemoteDescription().
-    void start();
+    virtual void start();
 
     // Close the transport
-    void close();
-
+    void close(const char* reason = "closed");
+    void safeClose(std::string reason = "closed") {
+        auto loop = this->loop();
+        if (!loop) {
+            close(reason.c_str());
+        }
+        else {
+            std::weak_ptr<WebRtcTransport> weak_self = shared_from_this();
+            loop->runInLoop([weak_self, reason]() {
+                auto self = weak_self.lock();
+                if (self) {
+                    self->close(reason.c_str());
+                }
+            });
+        }
+    }
     // Current state
     WebRtcState state() const { return state_; }
 
     // ===================== RTP/RTCP Interface =====================
 
     // Send RTP packet (encrypts with SRTP, sends via ICE)
-    bool sendRtp(const uint8_t* data, size_t len);
+    bool sendRtp(const void* data, size_t len, void* ctx = nullptr);
 
     // Send RTCP packet (encrypts with SRTCP, sends via ICE)
-    bool sendRtcp(const uint8_t* data, size_t len);
+    bool sendRtcp(const void* data, size_t len, void *ctx = nullptr);
 
     // ===================== Accessors =====================
-
+    hv::EventLoopPtr loop() const { return ice_session_ ? ice_session_->loop() : nullptr; } 
     IceSessionPtr iceSession() const { return ice_session_; }
     IceAgent* iceAgent() const { return ice_agent_; }
     RTC::DtlsTransport::Ptr dtlsTransport() const { return dtls_transport_; }
@@ -111,17 +126,24 @@ public:
     // State change notification
     std::function<void(WebRtcState)> onStateChange;
 
-    // Decrypted RTP packet received
-    std::function<void(const uint8_t* data, size_t len)> onRtpPacket;
+    virtual void onStartWebRTC() {}
+    virtual void onRtcConfigure(RtcConfigure &configure) const;
+    virtual void onCheckSdp(SdpType type, RtcSession &sdp) {}
 
-    // Decrypted RTCP packet received
-    std::function<void(const uint8_t* data, size_t len)> onRtcpPacket;
+    virtual void onRtp(const char *buf, size_t len, uint64_t stamp_ms) = 0;
+    virtual void onRtcp(const char *buf, size_t len) = 0;
 
+    virtual void onBeforeEncryptRtp(const char *buf, int &len, void *ctx) {}
+    virtual void onBeforeEncryptRtcp(const char *buf, int &len, void *ctx) {}
+    virtual void onRtcpBye() {}
+    virtual void onClose() {}
     // New local ICE candidate discovered (trickle ICE)
     // sdp: full "a=candidate:..." line
     std::function<void(const std::string& sdp, const std::string& mid)> onLocalCandidate;
 
-private:
+protected:
+    WebRtcTransport(const IceConfig* options, IceAgent* agent = nullptr);
+
     void createIceSession();
 
     // Packet classification (RFC 5764 Section 5.1.4 demultiplexing)
@@ -162,8 +184,8 @@ private:
                    uint8_t* localKey, size_t localKeyLen,
                    uint8_t* remoteKey, size_t remoteKeyLen);
     void setState(WebRtcState state);
-    int64_t last_tick = 0;
-    
+    Ticker _ticker;
+    int timeout_sec_ = 10;
     bool owner_agent_ = false;
     IceAgent* ice_agent_;
     IceSessionPtr ice_session_;
@@ -174,8 +196,8 @@ private:
     Role _role = Role::PEER;
     RtcSession::Ptr _answer_sdp;
     RtcSession::Ptr _offer_sdp;
-    void onRtcConfigure(RtcConfigure &configure) const;
-
+    // Keep self strong reference
+    Ptr _self;
     // State
     WebRtcState state_ = WebRtcState::New;
 };
