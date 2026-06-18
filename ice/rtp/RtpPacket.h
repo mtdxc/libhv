@@ -175,12 +175,12 @@ public:
     bool parse(const uint8_t *data, size_t size);
 
     // Create a new RTP packet with given parameters
-    static RtpPacket::Ptr create(uint8_t pt, uint32_t ssrc, uint16_t seq,
-                                 uint32_t timestamp, bool mark = false);
+    static RtpPacket::Ptr create(CodecId codec, uint8_t pt, uint32_t ssrc, uint16_t seq,
+                                 uint64_t timestamp, bool mark = false);
 
     // Create a new RTP packet with payload
-    static RtpPacket::Ptr create(uint8_t pt, uint32_t ssrc, uint16_t seq,
-                                 uint32_t timestamp, bool mark,
+    static RtpPacket::Ptr create(CodecId codec, uint8_t pt, uint32_t ssrc, uint16_t seq,
+                                 uint64_t timestamp, bool mark,
                                  const uint8_t *payload, size_t payloadSize);
 
     // Accessors
@@ -230,7 +230,12 @@ public:
     // Extension map (populated by RtpExtContext::parseRtpExtId)
     std::map<uint8_t, RtpExt> extMap;
     std::string rid;
-
+    CodecId codec;
+    uint64_t ntp_stamp;
+    int sample_rate;
+    TrackType getType() const { return getTrackType(codec); }
+    bool IsKeyFrame() const;
+    std::string toString() const;
 private:
     std::vector<uint8_t> buffer_;
 };

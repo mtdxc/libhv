@@ -2,7 +2,10 @@
 #define SRC_ICE_FRAME_H_
 
 #include <string>
+#include <vector>
+#include <memory>
 #include "hplatform.h"
+
 struct StrCaseCompare {
     bool operator()(const std::string &__x, const std::string &__y) const { return strcasecmp(__x.data(), __y.data()) < 0; }
 };
@@ -150,4 +153,58 @@ private:
     RtpPayload() = delete;
     ~RtpPayload() = delete;
 };
+
+namespace ice {
+class RtpPacket;
+}
+// Assembled video frame (multiple RTP packets merged into one frame)
+struct Frame {
+public:
+    using Ptr = std::shared_ptr<Frame>;
+    using RtpPacketPtr = std::shared_ptr<ice::RtpPacket>;
+    using RtpPackets = std::vector<RtpPacketPtr>;
+
+    uint64_t timestamp = 0;       // NTP timestamp in ms
+    CodecId codec = CodecInvalid; // Codec type
+    bool is_key = false;          // Is this a keyframe
+
+    std::string toString() const;
+
+    // 分帧：将完整视频帧拆分为RTP包序列
+    // pt: RTP payload type
+    // ssrc: RTP SSRC
+    // seq: 序号计数器（输入当前seq，输出最后一个包的seq+1）
+    // mtu: 每个RTP包的最大payload字节数（默认1200）
+    RtpPackets splitToRtp(uint8_t pt, uint32_t ssrc, uint16_t &seq, uint16_t mtu = 1200);
+
+    // rtp追帧，将排序好的rtp包追加到帧中
+    bool appendRtp(const RtpPacketPtr &rtp);
+
+    void appendNal(const uint8_t *data, size_t len);
+    void appendData(const void* d, int size) {
+        data_.insert(data_.end(), static_cast<const uint8_t*>(d), static_cast<const uint8_t*>(d) + size);
+    }
+    int size() const { return data_.size(); }
+    const uint8_t* data() const {return data_.data();}
+    void setSize(int sz) { data_.resize(sz); }
+    uint8_t* data() { return data_.data(); }
+private:
+    std::vector<uint8_t> data_;
+
+    // 从RTP包中提取视频数据到帧缓冲区（组帧时使用）
+    bool extractH264Nal(const RtpPacketPtr &rtp);
+    bool extractH265Nal(const RtpPacketPtr &rtp);
+    bool extractVp8Data(const RtpPacketPtr &rtp);
+    bool extractVp9Data(const RtpPacketPtr &rtp);
+    bool extractAv1Data(const RtpPacketPtr &rtp);
+    bool extractAacData(const RtpPacketPtr &rtp);
+    // 分帧函数
+    RtpPackets packetizeH264(uint8_t pt, uint32_t ssrc, uint16_t &seq, uint16_t mtu);
+    RtpPackets packetizeH265(uint8_t pt, uint32_t ssrc, uint16_t &seq, uint16_t mtu);
+    RtpPackets packetizeVp8(uint8_t pt, uint32_t ssrc, uint16_t &seq, uint16_t mtu);
+    RtpPackets packetizeVp9(uint8_t pt, uint32_t ssrc, uint16_t &seq, uint16_t mtu);
+    RtpPackets packetizeAv1(uint8_t pt, uint32_t ssrc, uint16_t &seq, uint16_t mtu);
+    RtpPackets packetizeAac(uint8_t pt, uint32_t ssrc, uint16_t &seq, uint16_t mtu);
+};
+
 #endif // SRC_ICE_FRAME_H_

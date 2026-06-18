@@ -2,7 +2,7 @@
 #include <cstring>
 #include <algorithm>
 #include <stdexcept>
-
+#include <cinttypes>
 namespace ice {
 
 // ============================================================================
@@ -46,19 +46,23 @@ bool RtpPacket::parse(const uint8_t *data, size_t size) {
     return true;
 }
 
-RtpPacket::Ptr RtpPacket::create(uint8_t pt, uint32_t ssrc, uint16_t seq,
-                                  uint32_t timestamp, bool mark) {
-    return create(pt, ssrc, seq, timestamp, mark, nullptr, 0);
+RtpPacket::Ptr RtpPacket::create(CodecId codec, uint8_t pt, uint32_t ssrc, uint16_t seq,
+                                  uint64_t timestamp, bool mark) {
+    return create(codec, pt, ssrc, seq, timestamp, mark, nullptr, 0);
 }
 
-RtpPacket::Ptr RtpPacket::create(uint8_t pt, uint32_t ssrc, uint16_t seq,
-                                  uint32_t timestamp, bool mark,
+RtpPacket::Ptr RtpPacket::create(CodecId codec, uint8_t pt, uint32_t ssrc, uint16_t seq,
+                                  uint64_t timestamp, bool mark,
                                   const uint8_t *payload, size_t payloadSize) {
     auto pkt = std::make_shared<RtpPacket>();
+    pkt->codec = codec;
+    pkt->ntp_stamp = timestamp;
+    pkt->sample_rate = RtpPayload::getClockRateByCodec(codec);
+    uint32_t rtp_stamp = timestamp * pkt->sample_rate / 1000;
 
     size_t totalSize = 12 + payloadSize;
     pkt->buffer_.resize(totalSize);
-
+    
     RtpHeader *hdr = reinterpret_cast<RtpHeader *>(pkt->buffer_.data());
     memset(hdr, 0, 12);
     hdr->version = 2;
@@ -68,7 +72,7 @@ RtpPacket::Ptr RtpPacket::create(uint8_t pt, uint32_t ssrc, uint16_t seq,
     hdr->mark = mark ? 1 : 0;
     hdr->pt = pt;
     hdr->setSeq(seq);
-    hdr->setTimestamp(timestamp);
+    hdr->setTimestamp(rtp_stamp);
     hdr->setSsrc(ssrc);
 
     if (payload && payloadSize > 0) {
@@ -164,9 +168,9 @@ void RtpPacket::removePadding() {
     if (!buffer_.empty()) {
         RtpHeader *hdr = getHeader();
         if (hdr->padding) {
+            hdr->padding = 0;
             uint8_t padLen = buffer_[buffer_.size() - 1];
             buffer_.resize(buffer_.size() - padLen);
-            getHeader()->padding = 0;
         }
     }
 }
@@ -212,17 +216,26 @@ bool RtpPacket::RtxDecode(uint8_t payloadType, uint32_t ssrc) {
     std::memcpy(&hdr->seq, payload, 2);
     std::memmove(payload, payload + 2, payloadSize - 2);
 
-    if (hdr->padding) {
-        removePadding();
-        hdr = getHeader();
-    }
-
-    buffer_.resize(buffer_.size() - 2);
-    hdr = getHeader();
-
     hdr->pt = payloadType;
     hdr->setSsrc(ssrc);
+
+    if (hdr->padding) {
+        hdr->padding = 0;
+        uint8_t padLen = buffer_[buffer_.size() - 1];
+        buffer_.resize(buffer_.size() - 2 - padLen);
+    } else {
+        buffer_.resize(buffer_.size() - 2);
+    }
     return true;
+}
+
+std::string RtpPacket::toString() const {
+    auto hdr = getHeader();
+    char line[256];
+    snprintf(line, sizeof(line), 
+      "ssrc=%" PRIu32 ", pt=%d, seq=%" PRIu16 ", stamp=%" PRIu32 ", size=%d,%d", 
+        hdr->getSsrc(), (int)hdr->pt, hdr->getSeq(), hdr->getTimestamp(), (int)size(), (int)hdr->mark);
+    return line;
 }
 
 } // namespace ice

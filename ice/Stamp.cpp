@@ -1,0 +1,394 @@
+﻿/*
+ * Copyright (c) 2016-present The ZLMediaKit project authors. All Rights Reserved.
+ *
+ * This file is part of ZLMediaKit(https://github.com/ZLMediaKit/ZLMediaKit).
+ *
+ * Use of this source code is governed by MIT-like license that can be found in the
+ * LICENSE file in the root of the source tree. All contributing project authors
+ * may be found in the AUTHORS file in the root of the source tree.
+ */
+
+#include "Stamp.h"
+
+// 时间戳最大允许跳变3秒，主要是防止网络抖动导致的跳变  [AUTO-TRANSLATED:144154de]
+// Timestamp maximum allowable jump is 3 seconds, mainly to prevent network jitter caused by the jump
+#define MAX_DELTA_STAMP (3 * 1000)
+#define STAMP_LOOP_DELTA (60 * 1000)
+#define MAX_CTS 500
+#define ABS(x) ((x) > 0 ? (x) : (-x))
+
+namespace ice {
+
+DeltaStamp::DeltaStamp() {
+    // Timestamp maximum allowable jump is 300ms
+    _max_delta = 300;
+}
+
+void DeltaStamp::reset() {
+    _last_stamp = 0;
+    _relative_stamp = 0;
+    _last_delta = 1;
+}
+
+int64_t DeltaStamp::relativeStamp(int64_t stamp, bool enable_rollback) {
+    _relative_stamp += deltaStamp(stamp, enable_rollback);
+    return _relative_stamp;
+}
+
+int64_t DeltaStamp::relativeStamp() {
+    return _relative_stamp;
+}
+
+int64_t DeltaStamp::deltaStamp(int64_t stamp, bool enable_rollback) {
+    if (!_last_stamp) {
+        // 第一次计算时间戳增量,时间戳增量为0
+        if (stamp) {
+            _last_stamp = stamp;
+        }
+        return 0;
+    }
+
+    int64_t ret = stamp - _last_stamp;
+    if (ret >= 0) {
+        // 时间戳增量为正，返回之
+        _last_stamp = stamp;
+        // 在直播情况下，时间戳增量不得大于MAX_DELTA_STAMP，否则强制相对时间戳加1
+        if (ret > _max_delta) {
+            needSync();
+            hlogd("reset delta %lld to %lld", ret, _last_delta);
+            return _last_delta;
+        }
+        _last_delta = ret;
+        return ret;
+    }
+
+    // 时间戳增量为负，说明时间戳回环了或回退了
+    _last_stamp = stamp;
+    if (!enable_rollback || -ret > _max_delta) {
+        // 不允许回退或者回退太多了, 强制时间戳加1
+        needSync();
+        hlogd("reset delta %lld to %lld", ret, _last_delta);
+        return _last_delta;
+    }
+    return ret;
+}
+
+void DeltaStamp::setMaxDelta(size_t max_delta) {
+    _max_delta = max_delta;
+}
+
+void Stamp::setPlayBack(bool playback) {
+    _playback = playback;
+}
+
+void Stamp::syncTo(Stamp &other, int count) {
+    _need_sync += count;
+    _sync_master = &other;
+}
+
+void Stamp::needSync() {
+    ++_need_sync;
+}
+
+void Stamp::enableRollback(bool flag) {
+    _enable_rollback = flag;
+}
+
+void Stamp::reset() {
+    DeltaStamp::reset();
+    _relative_stamp = 0;
+    _last_dts_in = 0;
+    _last_dts_out = 0;
+    _last_pts_out = 0;
+}
+
+// 限制dts回退
+void Stamp::revise(int64_t dts, int64_t pts, int64_t &dts_out, int64_t &pts_out, bool modifyStamp) {
+    revise_l(dts, pts, dts_out, pts_out, modifyStamp);
+    if (_playback) {
+        // Playback allows timestamp rollback
+        return;
+    }
+
+    if (dts_out < _last_dts_out) {
+        // WarnL << "dts rollback:" << dts_out << " < " << _last_dts_out;
+        dts_out = _last_dts_out;
+        pts_out = _last_pts_out;
+        return;
+    }
+    _last_dts_out = dts_out;
+    _last_pts_out = pts_out;
+}
+
+// 音视频时间戳同步
+void Stamp::revise_l(int64_t dts, int64_t pts, int64_t &dts_out, int64_t &pts_out, bool modifyStamp) {
+    if (!_last_dts_in && _sync_master && _sync_master->_last_dts_in && !modifyStamp) {
+        _relative_stamp = _sync_master->getRelativeStamp();
+    }
+    revise_l2(dts, pts, dts_out, pts_out, modifyStamp);
+    if (!_sync_master || modifyStamp || _playback) {
+        // 自动生成时间戳或回放或同步完毕
+        return;
+    }
+
+    // Need to synchronize timestamps
+    if (_sync_master && _sync_master->_last_dts_in && (_need_sync || _sync_master->_need_sync)) {
+        // 音视频dts当前时间差  [AUTO-TRANSLATED:716468a6]
+        // Audio and video dts current time difference
+        int64_t dts_diff = _last_dts_in - _sync_master->_last_dts_in;
+        if (ABS(dts_diff) < 5000 || _need_sync > 0) {
+            // 两种时间戳相差不得大于300ms
+            dts_diff = _relative_stamp - _sync_master->_relative_stamp;
+            // 强制同步音视频
+            if (dts_diff > 300) {
+                dts_diff = 0;
+            } else if (dts_diff < -300) {
+                dts_diff = 0;
+            }
+            // 如果绝对时间戳小于5秒，那么说明他们的起始时间戳是一致的，那么强制同步
+            auto target_stamp = _sync_master->_relative_stamp + dts_diff;
+            if (target_stamp > _relative_stamp || _enable_rollback) {
+                // 强制同步后，时间戳增加跳跃了，或允许回退
+                if (_relative_stamp == target_stamp) {
+                    return;
+                }
+                hlogd("self Relative stamp changed: %lld -> %lld", _relative_stamp, target_stamp);
+                _relative_stamp = target_stamp;
+                revise_l2(dts, pts, dts_out, pts_out, modifyStamp);
+            } else {
+                // 不允许回退, 则让另外一个Track的时间戳增长
+                target_stamp = _relative_stamp - dts_diff;
+                if (_sync_master->_relative_stamp == target_stamp) {
+                    return;
+                }
+                hlogd("target Relative stamp changed: %lld -> %lld", _sync_master->_relative_stamp, target_stamp);
+                _sync_master->_relative_stamp = target_stamp;
+            }
+        }
+        if (_need_sync) {
+            --_need_sync;
+        }
+        if (_sync_master->_need_sync) {
+            --_sync_master->_need_sync;
+        }
+    }
+}
+
+// 求取相对时间戳
+void Stamp::revise_l2(int64_t dts, int64_t pts, int64_t &dts_out, int64_t &pts_out, bool modifyStamp) {
+    if (!pts) {
+        // 没有播放时间戳,使其赋为解码时间戳
+        pts = dts;
+    }
+
+    if (_playback) {
+        // 这是点播
+        dts_out = dts;
+        pts_out = pts;
+        _relative_stamp = dts_out;
+        _last_dts_in = dts;
+        return;
+    }
+
+    // 记录pts和dts的差值
+    int64_t pts_dts_diff = pts - dts;
+
+    if (_last_dts_in != dts) {
+        // 时间戳发生变更
+        if (modifyStamp) {
+            // 内部自己生产时间戳
+            _relative_stamp = _ticker.elapsedTime();
+        } else {
+            _relative_stamp += deltaStamp(dts, _enable_rollback);
+        }
+        _last_dts_in = dts;
+    }
+    dts_out = _relative_stamp;
+
+    // 还原pts
+    if (ABS(pts_dts_diff) > MAX_CTS) {
+        // 如果差值太大，则认为由于回环导致时间戳错乱了
+        pts_dts_diff = 0;
+    }
+
+    pts_out = dts_out + pts_dts_diff;
+}
+
+void Stamp::setRelativeStamp(int64_t relativeStamp) {
+    _relative_stamp = relativeStamp;
+}
+
+int64_t Stamp::getRelativeStamp() const {
+    return _relative_stamp;
+}
+
+bool DtsGenerator::getDts(uint64_t pts, uint64_t &dts) {
+    bool ret = false;
+    if (pts == _last_pts) {
+        // pts未变，说明dts也不会变，返回上次dts
+        if (_last_dts) {
+            dts = _last_dts;
+            ret = true;
+        }
+    } else {
+        // pts变了，尝试计算dts
+        ret = getDts_l(pts, dts);
+        if (ret) {
+            // 获取到了dts，保存本次结果
+            _last_dts = dts;
+        }
+    }
+
+    if (!ret) {
+        // pts排序列队长度还不知道，也就是不知道有没有B帧，
+        // 那么先强制dts == pts，这样可能导致有B帧的情况下，起始画面有几帧回退
+        dts = pts;
+    }
+
+    // Record the last pts
+    _last_pts = pts;
+    return ret;
+}
+
+// 该算法核心思想是对pts进行排序，排序好的pts就是dts。
+// 排序有一定的滞后性，那么需要加上排序导致的时间戳偏移量
+bool DtsGenerator::getDts_l(uint64_t pts, uint64_t &dts) {
+    if (_sorter_max_size == 1) {
+        // 没有B帧，dts就等于pts
+        dts = pts;
+        return true;
+    }
+
+    if (!_sorter_max_size) {
+        // 尚未计算出pts排序列队长度(也就是P帧间B帧个数)
+        if (pts > _last_max_pts) {
+            // pts时间戳增加了，那么说明这帧画面不是B帧(说明是P帧或关键帧) 
+            if (_frames_since_last_max_pts && _count_sorter_max_size++ > 0) {
+                // 已经出现多次非B帧的情况，那么我们就能知道P帧间B帧的个数
+                _sorter_max_size = _frames_since_last_max_pts;
+                // 我们记录P帧间时间间隔(也就是多个B帧时间戳增量累计)
+                _dts_pts_offset = (pts - _last_max_pts);
+                // 除以2，防止dts大于pts
+                _dts_pts_offset /= 2;
+            }
+            // 遇到P帧或关键帧，连续B帧计数清零
+            _frames_since_last_max_pts = 0;
+            // 记录上次非B帧的pts时间戳(同时也是dts)，用于统计连续B帧时间戳增量
+            _last_max_pts = pts;
+        }
+        // 如果pts时间戳小于上一个P帧，那么断定这个是B帧,我们记录B帧连续个数
+        ++_frames_since_last_max_pts;
+    }
+
+    // pts放入排序缓存列队，缓存列队最大等于连续B帧个数
+    _pts_sorter.emplace(pts);
+
+    if (_sorter_max_size > 1 && _pts_sorter.size() > _sorter_max_size) {
+        // 如果启用了pts排序(意味着存在B帧)，并且pts排序缓存列队长度大于连续B帧个数，
+        // 意味着后续的pts都会比最早的pts大，那么说明可以取出最早的pts了，这个pts将当做该帧的dts基准
+        auto it = _pts_sorter.begin();
+
+        // 由于该pts是前面偏移了个_sorter_max_size帧的pts(也就是那帧画面的dts),
+        // 那么我们加上时间戳偏移量，基本等于该帧的dts
+        dts = *it + _dts_pts_offset;
+        if (dts > pts) {
+            // dts不能大于pts(基本不可能到达这个逻辑)
+            dts = pts;
+        }
+
+        // pts排序缓存出列
+        _pts_sorter.erase(it);
+        return true;
+    }
+
+    // 排序缓存尚未满
+    return false;
+}
+
+int NtpStamp::setNtpStamp(uint32_t rtp_stamp, uint64_t ntp_stamp_ms) {
+    int diff = 0;
+    if (!ntp_stamp_ms || !rtp_stamp) {
+        // 实测发现有些rtsp服务器发送的rtp时间戳和ntp时间戳一直为0
+        hlogw("Invalid sender report rtcp, ntp_stamp_ms = %llu, rtp_stamp = %u", ntp_stamp_ms, rtp_stamp);
+        return diff;
+    }
+    if (_last_sample_rate) {
+        diff = (int64_t)(ntp_stamp_ms - _last_ntp_stamp_us/1000) - (rtp_stamp - _last_rtp_stamp) * 1000 / _last_sample_rate;
+        if (ABS(diff) > 100) {
+            hlogi("%llu rtp=%u, ntp=%llu with delta %d", _last_ssrc, rtp_stamp, ntp_stamp_ms, diff);
+        }
+    } else {
+        hlogi("%llu rtp=%u, ntp=%llu", _last_ssrc, rtp_stamp, ntp_stamp_ms);
+    }
+    update(rtp_stamp, ntp_stamp_ms * 1000);
+    return diff;
+}
+
+void NtpStamp::update(uint32_t rtp_stamp, uint64_t ntp_stamp_us) {
+    _last_rtp_stamp = rtp_stamp;
+    _last_ntp_stamp_us = ntp_stamp_us;
+}
+
+uint64_t NtpStamp::getNtpStamp(uint32_t rtp_stamp, uint32_t sample_rate, uint32_t ssrc) {
+    if (ssrc!=_last_ssrc || _last_sample_rate != sample_rate) {
+        hlogi("ssrc change %llu->%llu, samplerate %u->%u", _last_ssrc, ssrc, _last_sample_rate, sample_rate);
+        _last_sample_rate = sample_rate;
+        _last_ssrc = ssrc;
+    }
+    if (rtp_stamp == _last_rtp_stamp) {
+        return _last_ntp_stamp_us / 1000;
+    }
+    return getNtpStampUS(rtp_stamp, sample_rate) / 1000;
+}
+
+uint64_t NtpStamp::getNtpStampUS(uint32_t rtp_stamp, uint32_t sample_rate) {
+    if (!_last_ntp_stamp_us) {
+        // 尚未收到sender report rtcp包，那么赋值为本地系统时间戳吧
+        int64_t sys_ntp = gettimeofday_us();
+        hlogi("%llu rtp=%u, use sys=%lld", _last_ssrc, rtp_stamp, sys_ntp / 1000);
+        update(rtp_stamp, sys_ntp);
+    }
+    // The rtp timestamp is increasing
+    if (rtp_stamp >= _last_rtp_stamp) {
+        auto diff_us = static_cast<int64_t>((rtp_stamp - _last_rtp_stamp) / (sample_rate / 1000000.0f));
+        if (diff_us < MAX_DELTA_STAMP * 1000) {
+            // 时间戳正常增长
+            update(rtp_stamp, _last_ntp_stamp_us + diff_us);
+            return _last_ntp_stamp_us;
+        }
+
+        // 时间戳大幅跳跃
+        uint64_t loop_delta_hz = STAMP_LOOP_DELTA * sample_rate / 1000;
+        if (_last_rtp_stamp < loop_delta_hz && rtp_stamp > UINT32_MAX - loop_delta_hz) {
+            // 应该是rtp时间戳溢出+乱序
+            uint64_t max_rtp_us = uint64_t(UINT32_MAX) * 1000000 / sample_rate;
+            return _last_ntp_stamp_us + diff_us - max_rtp_us;
+        }
+        // 不明原因的时间戳大幅跳跃，直接返回上次值
+        hlogw("%llu rtp stamp abnormal increased: %u -> %u", _last_ssrc, _last_rtp_stamp, rtp_stamp);
+        update(rtp_stamp, _last_ntp_stamp_us);
+        return _last_ntp_stamp_us;
+    }
+
+    // The rtp timestamp is decreasing
+    auto diff_us = static_cast<int64_t>((_last_rtp_stamp - rtp_stamp) / (sample_rate / 1000000.0f));
+    if (diff_us < MAX_DELTA_STAMP * 1000) {
+        // 正常范围的时间戳回退，说明收到rtp乱序了
+        return _last_ntp_stamp_us - diff_us;
+    }
+
+    // 时间戳大幅度回退
+    uint64_t loop_delta_hz = STAMP_LOOP_DELTA * sample_rate / 1000;
+    if (rtp_stamp < loop_delta_hz && _last_rtp_stamp > UINT32_MAX - loop_delta_hz) {
+        // 确定是时间戳溢出
+        uint64_t max_rtp_us = uint64_t(UINT32_MAX) * 1000000 / sample_rate;
+        update(rtp_stamp, _last_ntp_stamp_us + (max_rtp_us - diff_us));
+        return _last_ntp_stamp_us;
+    }
+    // 不明原因的时间戳回退，直接返回上次值
+    hlogw("%llu rtp stamp abnormal reduced: %u -> %u", _last_ssrc, _last_rtp_stamp, rtp_stamp);
+    update(rtp_stamp, _last_ntp_stamp_us);
+    return _last_ntp_stamp_us;
+}
+
+} // namespace mediakit
