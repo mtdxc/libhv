@@ -81,6 +81,22 @@ public:
     }
 };
 
+class WebRtcEcho2 : public WebRtcTransportImp {
+public:
+    using Ptr = std::shared_ptr<WebRtcEcho2>;
+    WebRtcEcho2(const IceConfig *options, IceAgent *agent) : WebRtcTransportImp(options, agent) {}
+    void onRtcConfigure(RtcConfigure &configure) const override{
+        WebRtcTransportImp::onRtcConfigure(configure);
+        configure.audio.direction = configure.video.direction = RtpDirection::sendrecv;
+        configure.audio.extmap.emplace(RtpExtType::sdes_mid, RtpDirection::sendrecv);
+        configure.video.extmap.emplace(RtpExtType::sdes_mid, RtpDirection::sendrecv);
+    }
+    void onRecvFrame(MediaTrack &track, const std::string &rid, Frame::Ptr rtp) override {
+        hlogi("%s onRecvFrame %s", rid.c_str(), rtp->toString().c_str());
+        sendFrame(rtp);
+    }
+};
+
 class WebRtcPusher : public WebRtcTransportImp {
 public:
     using Ptr = std::shared_ptr<WebRtcPusher>;
@@ -89,8 +105,8 @@ public:
         WebRtcTransportImp::onRtcConfigure(configure);
         configure.audio.direction = configure.video.direction = RtpDirection::recvonly;
     }
-    void onRecvRtp(MediaTrack &track, const std::string &rid, RtpPacket::Ptr rtp) override {
-        hlogi("WebRtcPusher onRecvRtp %d %s %s", track.media->type, rid.c_str(), rtp->toString().c_str());
+    void onRecvFrame(MediaTrack &track, const std::string &rid, Frame::Ptr rtp) override {
+        hlogi("%s onRecvFrame %s", rid.c_str(), rtp->toString().c_str());
     }
 };
 
@@ -112,6 +128,8 @@ WebRtcTransport::Ptr WebRtcTransport::create(const char* type, const IceConfig *
         return Ptr(new WebRtcPusher(options, nullptr));
     else if (strcmp(type, RTC_CLASS_PLAY) == 0)
         return Ptr(new WebRtcPlayer(options, nullptr));
+    else if (strcasecmp(type, RTC_CLASS_TALK) == 0)
+        return Ptr(new WebRtcEcho2(options, nullptr));
     else
         return Ptr(new WebRtcTransportImp(options, nullptr));
 }
@@ -123,6 +141,8 @@ WebRtcTransport::Ptr WebRtcTransport::create(const char* type, IceAgent *agent) 
         return Ptr(new WebRtcPusher(nullptr, agent));
     else if (strcmp(type, RTC_CLASS_PLAY) == 0)
         return Ptr(new WebRtcPlayer(nullptr, agent));
+    else if (strcasecmp(type, RTC_CLASS_TALK) == 0)
+        return Ptr(new WebRtcEcho2(nullptr, agent));
     else
         return Ptr(new WebRtcTransportImp(nullptr, agent));
 }
@@ -178,13 +198,26 @@ bool WebRtcTransportImp::canRecvRtp() const {
 }
 
 
-class RtpChannel : public std::enable_shared_from_this<RtpChannel> {
+class RtpChannel : public std::enable_shared_from_this<RtpChannel>, public RtpJitter {
 public:
-    using OnSorted = std::function<void(RtpPacket::Ptr)>;
-    virtual uint32_t getSSRC() const = 0;
-    virtual int getJitterMs() const { return 0; }
-    virtual void UpdateRTT(int rtt) {}
-    virtual void inputRtp(RtpPacket::Ptr rtp, bool is_rtx) {
+    RtpChannel(hv::EventLoopPtr poller, uint32_t ssrc) {
+        ssrc_ = ssrc;
+        _poller = std::move(poller);
+
+        // Set jitter buffer parameters
+        GET_CONFIG(uint32_t, nack_maxms, Rtc::kNackMaxMS);
+        GET_CONFIG(uint32_t, nack_max_rtp, Rtc::kNackMaxSize);
+        GET_CONFIG(float, nack_ratio, Rtc::kNackIntervalRatio);
+        GET_CONFIG(unsigned int, nackDelay, Rtc::kNackDelayMS);
+        GET_CONFIG(uint32_t, nack_retry, Rtc::kNackMaxCount);
+        setParams(nack_max_rtp, nack_maxms, nack_retry, nack_ratio, nackDelay);
+    }
+    
+    void inputRtp(RtpPacket::Ptr rtp, bool is_rtx) {
+        updateStamp(rtp.get());
+        // input rtp and sort
+        input(rtp, is_rtx);
+
         if (_on_req_key && rtp->getType() == TrackVideo) {
             RequestKeyFrame(true);
         }
@@ -193,7 +226,11 @@ public:
             _rtcp_context.onRtp(rtp->getSeq(), rtp->getTimestamp(), rtp->ntp_stamp, rtp->sample_rate, rtp->size());
         }
     }
-    virtual void setOnReqKeyFrame(function<void()> cb) { _on_req_key = std::move(cb); }
+
+    void setOnReqKeyFrame(function<void()> cb) {
+        _on_req_key = std::move(cb);
+        enableKeyframeReq(_on_req_key!=nullptr);
+    }
 
     void RequestKeyFrame(bool max) {
         GET_CONFIG(int, keyframeMin, Rtc::kMinKeyFrameMS);
@@ -203,6 +240,7 @@ public:
             if (_on_req_key) _on_req_key();
         }
     }
+
     void onRtcp(RtcpHeader *rtcp) {
         _rtcp_context.onRtcp(rtcp);
     }
@@ -239,6 +277,7 @@ public:
         _dlrr_map[key] = now;
         return RtcpHeader::toBuffer(rrtr);
     }
+
     void onGotDlrrItem(RtcpXRDLRRReportItem *item) {
         auto it = _dlrr_map.find(item->lrr);
         if (it != _dlrr_map.end()) {
@@ -247,7 +286,10 @@ public:
             _dlrr_map.erase(it);
         }
     }
+
     void enableRTTR(bool v) { enable_rrtr = v; }
+
+    void setOnNack(function<void(const FCI_NACK &nack)> on_nack) { _on_nack = std::move(on_nack); }
 
 protected:
     bool enable_rrtr = false;
@@ -271,41 +313,8 @@ protected:
     std::function<void()> _on_req_key;
     // pli rtcp timer
     Ticker _pli_ticker;
-};
 
-class RtpChannel2 : public RtpChannel, public RtpJitter {
-public:
-    RtpChannel2(hv::EventLoopPtr poller, RtpChannel::OnSorted cb, function<void(const FCI_NACK &nack)> on_nack, uint32_t ssrc) {
-        ssrc_ = ssrc;
-        _on_nack = std::move(on_nack);
-        _poller = std::move(poller);
-        _on_rtp = std::move(cb);
-
-        // Set jitter buffer parameters
-        GET_CONFIG(uint32_t, nack_maxms, Rtc::kNackMaxMS);
-        GET_CONFIG(uint32_t, nack_max_rtp, Rtc::kNackMaxSize);
-        GET_CONFIG(float, nack_ratio, Rtc::kNackIntervalRatio);
-        GET_CONFIG(unsigned int, nackDelay, Rtc::kNackDelayMS);
-        GET_CONFIG(uint32_t, nack_retry, Rtc::kNackMaxCount);
-        setParams(nack_max_rtp, nack_maxms, nack_retry, nack_ratio, nackDelay);
-    }
-    virtual uint32_t getSSRC() const { return ssrc_; }
-    virtual int getJitterMs() const { return RtpJitter::getJitterMs(); }
-    virtual void UpdateRTT(int val) { RtpJitter::UpdateRTT(val); }
-
-    void setOnReqKeyFrame(function<void()> cb) {
-        _on_req_key = std::move(cb);
-        enableKeyframeReq(_on_req_key!=nullptr);
-    }
-
-    void inputRtp(RtpPacket::Ptr rtp, bool is_rtx) {
-        updateStamp(rtp.get());
-        // input rtp and sort
-        input(rtp, is_rtx);
-        RtpChannel::inputRtp(rtp, is_rtx);
-    }
 private:
-    void onOutput(RtpPacket::Ptr pkt) override { _on_rtp(pkt); }
     void onRequestKeyframe() override { RequestKeyFrame(false); }
     void onLostPacket(const LostList &nack_rtp) override {
         NackContext::sendNack(nack_rtp, _on_nack);
@@ -313,7 +322,6 @@ private:
 private:
     hv::EventLoopPtr _poller;
     std::function<void(const FCI_NACK &nack)> _on_nack;
-    RtpChannel::OnSorted _on_rtp;
 };
 
 std::shared_ptr<RtpChannel> MediaTrack::getRtpChannel(uint32_t ssrc) const {
@@ -454,18 +462,33 @@ void WebRtcTransportImp::onStartWebRTC() {
     }
 }
 
+
+void WebRtcTransportImp::sendFrame(const Frame::Ptr &frame) {
+    auto track = _type_to_track[frame->getTrackType()];
+    if (!track) return;
+    auto pkts = frame->splitToRtp(track->plan_rtp->pt, track->answer_ssrc_rtp, track->seq);
+    hlogd("%s sendFrame %d rtp frame, %s", getIdentifier(), pkts.size(), frame->toString().c_str());
+    for (auto pkt : pkts) {
+        onSendRtp(pkt, false);
+    }
+}
+
 void WebRtcTransportImp::createRtpChannel(const std::string &rid, uint32_t ssrc, MediaTrack &track) {
     // rid --> RtpReceiverImp
     auto &ref = track.rtp_channel[rid];
     weak_ptr<WebRtcTransportImp> weak_self = static_pointer_cast<WebRtcTransportImp>(shared_from_this());
-    ref = std::make_shared<RtpChannel2>(loop(), 
-        [&track, this, rid](RtpPacket::Ptr rtp) mutable { onSortedRtp(track, rid, std::move(rtp)); },
-        [&track, weak_self, ssrc](const FCI_NACK &nack) mutable {
-            // nack发送可能由定时器异步触发
-            if (auto strong_self = weak_self.lock()) {
-                strong_self->onSendNack(track, nack, ssrc);
-            }
-        }, ssrc);
+    ref = std::make_shared<RtpChannel>(loop(), ssrc);
+    ref->setOnFrame([&track, this, rid](Frame::Ptr rtp) mutable { onRecvFrame(track, rid, std::move(rtp)); });
+    //ref->setOnSort([&track, this, rid](RtpPacket::Ptr rtp) mutable { onSortedRtp(track, rid, std::move(rtp)); });
+    if (track.media->type == TrackVideo) {
+        ref->setOnReqKeyFrame([this, ssrc]() { sendRtcpPli(ssrc); });
+    }
+    ref->setOnNack([&track, weak_self, ssrc](const FCI_NACK &nack) mutable {
+        // nack发送可能由定时器异步触发
+        if (auto strong_self = weak_self.lock()) {
+            strong_self->onSendNack(track, nack, ssrc);
+        }
+    });
     hlogi("create rtp receiver of ssrc: %u, rid: %s, codec: %s", ssrc, rid.c_str(), track.plan_rtp->codec.c_str());
 }
 
@@ -526,10 +549,23 @@ void WebRtcTransportImp::onRtcp(const char *buf, size_t len) {
             break;
         }
         case RtcpType::RTCP_PSFB:
-        case RtcpType::RTCP_RTPFB: {
-            if ((RtcpType)rtcp->pt == RtcpType::RTCP_PSFB) {
+            switch ((PSFBType)rtcp->report_count) { 
+            case PSFBType::RTCP_PSFB_FIR:
+            case PSFBType::RTCP_PSFB_PLI: {
+                RtcpFB *fb = (RtcpFB *)rtcp;
+                auto it = _ssrc_to_track.find(fb->ssrc_media);
+                if (it == _ssrc_to_track.end()) {
+                    hlogw("未识别的 rtcp包: %s", rtcp->dumpString().c_str());
+                    break;
+                }
+                hlogi("onKeyFrameReq: %s, ssrc: %u", getIdentifier(), fb->ssrc_media);
+                onKeyFrameReq(*it->second, fb->ssrc_media);
                 break;
             }
+            default: break;
+            }
+            break;
+        case RtcpType::RTCP_RTPFB: {
             // RTPFB
             switch ((RTPFBType)rtcp->report_count) {
             case RTPFBType::RTCP_RTPFB_NACK: {
@@ -591,6 +627,7 @@ void WebRtcTransportImp::onRtp(const char *buf, size_t len, uint64_t stamp_ms) {
         track->rtp_ext_ctx->parseRtpExtId(rtp.get());
         it->second->inputRtp(rtp, stamp_ms);
     }
+
     // send rr
     if (_rtcp_rr_send_ticker.elapsedTime() > 5000) {
         _rtcp_rr_send_ticker.resetTime();
@@ -604,6 +641,10 @@ void WebRtcTransportImp::onRtp(const char *buf, size_t len, uint64_t stamp_ms) {
                     sendRtcp(rr->data(), rr->size());
                 }
             }
+        }
+        // 开启remb，则发送remb包调节比特率
+        if (_remb_bitrate && _answer_sdp->supportRtcpFb(SdpConst::kRembRtcpFb)) {
+            sendRtcpRemb(rtp->getSSRC(), _remb_bitrate);
         }
     }
 }
@@ -639,18 +680,7 @@ void WebRtcTransportImp::sendRtcpPli(uint32_t ssrc) {
 ///////////////////////////////////////////////////////////////////
 
 void WebRtcTransportImp::onSortedRtp(MediaTrack &track, const string &rid, RtpPacket::Ptr rtp) {
-    if (track.media->type == TrackVideo && _pli_ticker.elapsedTime() > 2000) {
-        // 定期发送pli请求关键帧，方便非rtc等协议
-        _pli_ticker.resetTime();
-        sendRtcpPli(rtp->getSSRC());
-
-        // 开启remb，则发送remb包调节比特率
-        if (_remb_bitrate && _answer_sdp->supportRtcpFb(SdpConst::kRembRtcpFb)) {
-            sendRtcpRemb(rtp->getSSRC(), _remb_bitrate);
-        }
-    }
-
-    onRecvRtp(track, rid, std::move(rtp));
+    //onRecvRtp(track, rid, std::move(rtp));
 }
 
 ///////////////////////////////////////////////////////////////////
@@ -716,8 +746,7 @@ void WebRtcTransportImp::onBeforeEncryptRtp(const char *buf, int &len, void *ctx
 
         auto origin_seq = ntohs(header->seq);
         // seq跟原来的不一样
-        header->seq = htons(_rtx_seq[pr->second->media->type]);
-        ++_rtx_seq[pr->second->media->type];
+        header->seq = htons(pr->second->rtx_seq++);
 
         auto payload = header->getPayload();
         auto payload_size = header->getPayloadSize(len);

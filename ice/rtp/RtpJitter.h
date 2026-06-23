@@ -7,7 +7,8 @@
 #include <map>
 #include <set>
 #include <string>
-
+#include <vector>
+#include "Frame.h"
 //#include "rtc/Stamp.h"
 #include "RtpPacket.h"
 
@@ -36,6 +37,8 @@ struct SeqLowerThan {
 };
 using RtpMap = std::map<uint16_t, NackStatus, SeqLowerThan>;
 using LostList = std::list<uint16_t>;
+using onFrame = std::function<void(Frame::Ptr)>;
+using onSort = std::function<void(RtpPacket::Ptr)>;
 
 /*
 * 将读取和写入放一起，能做到缓存最小化，当没丢包时没缓存
@@ -105,10 +108,19 @@ protected:
     virtual void onLostPacket(const LostList &seq) {}
     // 请求关键帧回调
     virtual void onRequestKeyframe() {}
-    // 包输出回调，系列号为seq的包输出后，就不可能再输出系列号比seq小的包，既包输出是有序的
-    virtual void onOutput(RtpPacket::Ptr pkt) {}
-
+    onFrame frame_cb_;
+    onSort rtp_cb_;
     uint32_t ssrc_ = 0;
+
+    // 视频组帧相关
+    std::vector<RtpPacket::Ptr> frame_pkts_;
+    uint32_t frame_timestamp_ = 0;
+    bool frame_has_loss_ = false;
+
+    // 组帧核心逻辑
+    void assembleFrame(RtpPacket::Ptr rtp);
+    void emitFrame();
+    void clearFrame();
 public:
     RtpJitter() = default;
     virtual ~RtpJitter();
@@ -116,7 +128,8 @@ public:
     uint32_t getIdentifier() const { return ssrc_; }
     uint32_t getSSRC() const { return ssrc_; }
     void enableKeyframeReq(bool v) { has_keyreq_ = v; }
-
+    void setOnFrame(onFrame cb) { frame_cb_ = std::move(cb); }
+    void setOnSort(onSort cb) { rtp_cb_ = std::move(cb); }
     void setParams(size_t max_size, size_t max_ms, int max_retry, float ratio = 1.2f, unsigned int delay_ms = 0);
     int getJitterMs() const;
     std::string sizeStr() const;

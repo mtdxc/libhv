@@ -19,6 +19,7 @@ void RtpJitter::clear() {
     start_ = false;
     seq_map_.clear();
     key_seqs_.clear();
+    clearFrame();
     if (timer_) {
         hv::killTimer(timer_);
         timer_ = 0;
@@ -81,7 +82,13 @@ void RtpJitter::output(RtpPacket::Ptr rtp) {
         hlogw("drop %d->%d, jitter %s", min_seq_, seq, sizeStr().c_str());
     }
     min_seq_ = static_cast<uint16_t>(seq + 1);
-    onOutput(rtp);
+
+    if (frame_cb_) {
+        // 视频包进入组帧逻辑，完整帧由onFrame回调输出
+        assembleFrame(rtp);
+    } else if(rtp_cb_) {
+        rtp_cb_(rtp);
+    }
 }
 
 bool RtpJitter::pop(uint64_t now) {
@@ -295,4 +302,63 @@ int RtpJitter::flush() {
     }
     checkTimer();
     return ret;
+}
+
+// ========================= 视频组帧 =========================
+
+void RtpJitter::clearFrame() {
+    frame_pkts_.clear();
+    frame_timestamp_ = 0;
+    frame_has_loss_ = false;
+}
+
+void RtpJitter::assembleFrame(RtpPacket::Ptr rtp) {
+    uint32_t ts = rtp->getTimestamp();
+
+    // timestamp变化 → 新帧开始，先输出旧帧
+    if (!frame_pkts_.empty() && ts != frame_timestamp_) {
+        emitFrame();
+    }
+
+    // 新帧开始
+    if (frame_pkts_.empty()) {
+        frame_timestamp_ = ts;
+        frame_has_loss_ = false;
+    }
+
+    frame_pkts_.push_back(rtp);
+
+    // Marker bit = 1 → 帧的最后一个包，输出完整帧
+    if (rtp->getMarker()) {
+        emitFrame();
+    }
+}
+
+void RtpJitter::emitFrame() {
+    if (frame_pkts_.empty()) return;
+
+    Frame::Ptr frame = std::make_shared<Frame>();
+    frame->timestamp = frame_timestamp_;
+    frame->timestamp = frame_pkts_[0]->ntp_stamp;
+    frame->codec = frame_pkts_[0]->codec;
+
+    bool ok = false;
+    for (auto &pkt : frame_pkts_) {
+        if (!frame->appendRtp(pkt)) {
+            hlogw("Rtp extract failed, seq=%d", pkt->getSeq());
+            ok = false;
+            break;
+        }
+        ok = true;
+    }
+
+    if (ok && frame->size()) {
+        hlogd("video frame: %s, ts=%u, %zu bytes, %zu pkts",
+              frame->is_key ? "key" : "delta",
+              frame->timestamp, 
+              frame->size(), frame_pkts_.size());
+        if (frame_cb_) frame_cb_(frame);
+    }
+
+    clearFrame();
 }

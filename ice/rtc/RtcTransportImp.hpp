@@ -15,6 +15,7 @@ public:
     uint32_t offer_ssrc_rtx = 0;
     uint32_t answer_ssrc_rtp = 0;
     uint32_t answer_ssrc_rtx = 0;
+    uint16_t seq = 0, rtx_seq = 0;
     const RtcMedia *media;
     RtpExtContext::Ptr rtp_ext_ctx;
 
@@ -62,14 +63,18 @@ public:
     bool canSendRtp(const RtcMedia& media) const;
     bool canRecvRtp(const RtcMedia& media) const;
 
+    void sendFrame(const Frame::Ptr &frame);
+    virtual void onRecvFrame(MediaTrack &track, const std::string &rid, Frame::Ptr rtp) {}
+    virtual void onKeyFrameReq(MediaTrack &track, uint32_t ssrc) {}
+    friend class WrappedRtpTrack;
+protected:
     void start() override;
     void onClose() override;
+
     void onStartWebRTC() override;
     void onRtp(const char *buf, size_t len, uint64_t stamp_ms) override;
     void onRtcp(const char *buf, size_t len) override;
     void onBeforeEncryptRtp(const char *buf, int &len, void *ctx) override;
-
-    virtual void onRecvRtp(MediaTrack &track, const std::string &rid, RtpPacket::Ptr rtp) {}
 
     void onSendNack(MediaTrack &track, const FCI_NACK &nack, uint32_t ssrc);
     void onSendTwcc(uint32_t ssrc, const std::string &twcc_fci);
@@ -77,15 +82,12 @@ public:
     void onSendRtp(const RtpPacket::Ptr &rtp, bool rtx);
 
     void createRtpChannel(const std::string &rid, uint32_t ssrc, MediaTrack &track);
-protected:
+
     void sendRtcpRemb(uint32_t ssrc, size_t bit_rate);
     void sendRtcpPli(uint32_t ssrc);
 
-    uint16_t _rtx_seq[2] = {0, 0};
     uint64_t _bytes_usage = 0;
     uint32_t _remb_bitrate = 0;
-    // pli rtcp timer
-    Ticker _pli_ticker;
 
     Ticker _rtcp_sr_send_ticker;
     Ticker _rtcp_rr_send_ticker;
