@@ -133,7 +133,6 @@ bool WebRtcTransport::setRemoteDescription(SdpType type, const std::string& sdp)
     try {
         auto sdpSession = std::make_shared<RtcSession>();
         sdpSession->loadFrom(sdp);
-        onCheckSdp(type, *sdpSession);
         sdpSession->checkValid();
         switch (type)
         {
@@ -148,6 +147,7 @@ bool WebRtcTransport::setRemoteDescription(SdpType type, const std::string& sdp)
         default:
             break;
         }
+        onCheckSdp(type, *sdpSession);
         // 设置远端dtls签名
         auto& media = sdpSession->media[0];
         RTC::DtlsTransport::Fingerprint remote_fingerprint;

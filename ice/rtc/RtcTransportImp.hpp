@@ -92,6 +92,8 @@ protected:
     void onClose() override;
 
     void onStartWebRTC() override;
+    void onCheckSdp(SdpType type, RtcSession &sdp) override;
+
     void onRtp(const char *buf, size_t len, uint64_t stamp_ms) override;
     void onRtcp(const char *buf, size_t len) override;
     void onBeforeEncryptRtp(const char *buf, int &len, void *ctx) override;

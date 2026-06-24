@@ -796,4 +796,62 @@ void WebRtcTransportImp::onBeforeEncryptRtp(const char *buf, int &len, void *ctx
         len += 2;
     }
 }
+
+#define RTP_SSRC_OFFSET 1
+#define RTX_SSRC_OFFSET 2
+#define RTP_CNAME "zlmediakit-rtp"
+#define RTP_LABEL "zlmediakit-label"
+#define RTP_MSLABEL "zlmediakit-mslabel"
+
+ void WebRtcTransportImp::onCheckSdp(SdpType type, RtcSession &sdp) {
+    if (type != SdpType::answer) return;
+    /*
+    auto extern_ips = GetExternIPS();
+    // 修改answer sdp的ip、端口信息
+    for (auto &m : sdp.media) {
+        m.addr.reset();
+        m.addr.address = extern_ips.empty() ? _local_ip.empty() ? SockUtil::get_local_ip() : _local_ip : extern_ips[0];
+        m.rtcp_addr.reset();
+        m.rtcp_addr.address = m.addr.address;
+
+        GET_CONFIG(uint16_t, udp_port, Rtc::kPort);
+        GET_CONFIG(uint16_t, tcp_port, Rtc::kTcpPort);
+        m.port = m.port ? (udp_port ? udp_port : tcp_port) : 0;
+        if (m.type != TrackApplication) {
+            m.rtcp_addr.port = m.port;
+        }
+        sdp.origin.address = m.addr.address;
+    }
+    */
+    if (!canSendRtp()) {
+        return;
+    }
+
+    for (auto &m : sdp.media) {
+        if (m.type == TrackApplication) {
+            continue;
+        }
+        if (!m.rtp_rtx_ssrc.empty()) {
+            // The ssrc has been generated
+            continue;
+        }
+        // Add the ssrc information to answer sdp
+        m.rtp_rtx_ssrc.emplace_back();
+        auto &ssrc = m.rtp_rtx_ssrc.back();
+
+        // 发送的ssrc我们随便定义，因为发送rtp时会修改为此值
+        // We can define the ssrc we send at will, because it will be modified to this value when sending rtp
+        ssrc.ssrc = m.type + RTP_SSRC_OFFSET;
+        ssrc.cname = RTP_CNAME;
+        ssrc.label = std::string(RTP_LABEL) + '-' + m.mid;
+        ssrc.mslabel = RTP_MSLABEL;
+        ssrc.msid = ssrc.mslabel + ' ' + ssrc.label;
+
+        if (m.getRelatedRtxPlan(m.plan[0].pt)) {
+            // rtx ssrc
+            ssrc.rtx_ssrc = ssrc.ssrc + RTX_SSRC_OFFSET;
+        }
+    }
+}
+
 } // namespace ice
