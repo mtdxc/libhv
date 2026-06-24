@@ -141,7 +141,9 @@ public:
     // sdp: full "a=candidate:..." line
     std::function<void(const std::string& sdp, const std::string& mid)> onLocalCandidate;
 
+    void setStream(const std::string& stream) { stream_ = stream; }
 protected:
+    std::string stream_;
     WebRtcTransport(const IceConfig* options, IceAgent* agent = nullptr);
 
     void createIceSession();

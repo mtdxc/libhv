@@ -3,6 +3,26 @@
 using namespace hv;
 using namespace ice;
 
+std::mutex g_stream_map_mtx;
+std::map<std::string, FrameDispatcher::Ptr> g_stream_map;
+FrameDispatcher::Ptr RtcHttpServer::getDispatcher(const std::string &stream) {
+    std::lock_guard<std::mutex> lck(g_stream_map_mtx);
+    auto it = g_stream_map.find(stream);
+    if (it != g_stream_map.end()) {
+        return it->second;
+    }
+    return nullptr;
+}
+
+void RtcHttpServer::setDispatcher(std::string name, FrameDispatcher::Ptr dispatcher){
+    std::lock_guard<std::mutex> lck(g_stream_map_mtx);
+    if (dispatcher == nullptr) {
+        g_stream_map.erase(name);
+    } else {
+        g_stream_map[name] = dispatcher;
+    }
+}
+
 RtcHttpServer::RtcHttpServer(const RtcHttpConfig& config) : config_(config) {
 }
 
@@ -33,12 +53,14 @@ void RtcHttpServer::start() {
     http.Any("/index/api/whep", [this](const HttpContextPtr& ctx) {
         auto sdp = ctx->body();
         auto transport = WebRtcTransport::create(RTC_CLASS_PLAY, agent_.get());
+        transport->setStream(ctx->param("stream"));
         ctx->setHeader("Content-Type", "application/sdp");
         return ctx->sendString(transport->getAnswerSdp(sdp));
     });
     http.Any("/index/api/whip", [this](const HttpContextPtr& ctx) {
         auto sdp = ctx->body();
         auto transport = WebRtcTransport::create(RTC_CLASS_PUSH, agent_.get());
+        transport->setStream(ctx->param("stream"));
         ctx->setHeader("Content-Type", "application/sdp");
         return ctx->sendString(transport->getAnswerSdp(sdp));
     });
@@ -46,6 +68,7 @@ void RtcHttpServer::start() {
         auto type = ctx->param("type");
         auto sdp = ctx->body();
         auto transport = WebRtcTransport::create(type.c_str(), agent_.get());
+        transport->setStream(ctx->param("stream"));
         Json val;
         val["sdp"] = transport->getAnswerSdp(sdp);
         val["id"] = transport->getIdentifier();

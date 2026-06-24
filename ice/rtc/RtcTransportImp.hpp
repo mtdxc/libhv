@@ -1,8 +1,11 @@
-#include "WebRtcTransport.hpp"
+#include <memory>
+#include <functional>
 #include <unordered_map>
+#include "WebRtcTransport.hpp"
 #include "rtp/TwccContext.h"
 #include "rtp/RtcpContext.h"
 #include "rtp/Nack.h"
+#include "Frame.h"
 
 namespace ice {
 class RtpChannel;
@@ -18,7 +21,8 @@ public:
     uint16_t seq = 0, rtx_seq = 0;
     const RtcMedia *media;
     RtpExtContext::Ptr rtp_ext_ctx;
-
+    CodecId getCodec() const { return plan_rtp ? getCodecId(plan_rtp->codec) : CodecId::CodecInvalid; }
+    TrackType getTrackType() const { return media ? media->type : TrackInvalid; }
     //for send rtp
     NackList nack_list;
     RtcpContext::Ptr rtcp_context_send;
@@ -53,7 +57,7 @@ struct WrappedRtpTrack : public WrappedMediaTrack {
     void inputRtp(RtpPacket::Ptr rtp, uint64_t stamp_ms) override;
 };
 
-class WebRtcTransportImp : public WebRtcTransport {
+class WebRtcTransportImp : public WebRtcTransport, public FrameWriterInterface {
 public:
     using Ptr = std::shared_ptr<WebRtcTransportImp>;
     WebRtcTransportImp(const IceConfig* options, IceAgent* agent = nullptr) : WebRtcTransport(options, agent) {}
@@ -63,10 +67,26 @@ public:
     bool canSendRtp(const RtcMedia& media) const;
     bool canRecvRtp(const RtcMedia& media) const;
 
-    void sendFrame(const Frame::Ptr &frame);
-    virtual void onRecvFrame(MediaTrack &track, const std::string &rid, Frame::Ptr rtp) {}
-    virtual void onKeyFrameReq(MediaTrack &track, uint32_t ssrc) {}
+    bool inputFrame(const Frame::Ptr &frame) override {return sendFrame(frame);}
+    bool sendFrame(const Frame::Ptr &frame);
+
+    using FrameCallback = std::function<void(Frame::Ptr)>;
+    FrameCallback onFrame;
+    virtual void onRecvFrame(MediaTrack &track, const std::string &rid, Frame::Ptr rtp) {
+        if (onFrame) {
+            onFrame(rtp);
+        }
+    }
+    using KeyFrameReqCallback = std::function<void(uint32_t)>;
+    KeyFrameReqCallback onKeyFrame;
+    virtual void onKeyFrameReq(MediaTrack &track, uint32_t ssrc) {
+        if (onKeyFrame) {
+            onKeyFrame(ssrc);
+        }
+    }
+
     friend class WrappedRtpTrack;
+    MediaTrack::Ptr getTrack(TrackType type) const;
 protected:
     void start() override;
     void onClose() override;

@@ -4,7 +4,7 @@
 
 #include <memory>
 #include <string>
-
+#include "Frame.h"
 #include "agent/ice_agent.h"
 #include "http/server/WebSocketServer.h"
 
@@ -24,6 +24,9 @@ class RtcHttpServer
 public:
     RtcHttpServer(const RtcHttpConfig& config);
     ~RtcHttpServer();
+
+    static FrameDispatcher::Ptr getDispatcher(const std::string &stream);
+    static void setDispatcher(std::string name, FrameDispatcher::Ptr dispatcher);
 
     void start();
     void stop();

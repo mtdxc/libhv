@@ -4,7 +4,7 @@
 #include "rtp/Rtcp.h"
 #include "rtp/RtpJitter.h"
 #include "RtcTransportImp.hpp"
-
+#include "RtcHttpServer.h"
 using namespace std;
 namespace ice {
 // RTC配置项
@@ -92,10 +92,11 @@ public:
         configure.video.extmap.emplace(RtpExtType::sdes_mid, RtpDirection::sendrecv);
     }
     void onRecvFrame(MediaTrack &track, const std::string &rid, Frame::Ptr rtp) override {
-        hlogi("%s onRecvFrame %s", rid.c_str(), rtp->toString().c_str());
+        // hlogi("%s onRecvFrame %s", rid.c_str(), rtp->toString().c_str());
         sendFrame(rtp);
     }
 };
+
 
 class WebRtcPusher : public WebRtcTransportImp {
 public:
@@ -106,7 +107,18 @@ public:
         configure.audio.direction = configure.video.direction = RtpDirection::recvonly;
     }
     void onRecvFrame(MediaTrack &track, const std::string &rid, Frame::Ptr rtp) override {
-        hlogi("%s onRecvFrame %s", rid.c_str(), rtp->toString().c_str());
+        // hlogi("%s onRecvFrame %s", rid.c_str(), rtp->toString().c_str());
+        auto dispatcher = RtcHttpServer::getDispatcher(stream_);
+        if (!dispatcher) {
+            dispatcher = std::make_shared<FrameDispatcher>();
+            dispatcher->setGopCache(true);
+            RtcHttpServer::setDispatcher(stream_, dispatcher);
+        }
+        dispatcher->inputFrame(rtp);
+    }
+    void onClose() override {
+        WebRtcTransportImp::onClose();
+        RtcHttpServer::setDispatcher(stream_, nullptr);
     }
 };
 
@@ -118,7 +130,21 @@ public:
         WebRtcTransportImp::onRtcConfigure(configure);
         configure.audio.direction = configure.video.direction = RtpDirection::sendonly;
     }
-    // call onSendRtp
+    void onStartWebRTC() override {
+        WebRtcTransportImp::onStartWebRTC();
+        auto dispatcher = RtcHttpServer::getDispatcher(stream_);
+        if (dispatcher) {
+            dispatcher->addDelegate(std::dynamic_pointer_cast<FrameWriterInterface>(shared_from_this()));
+        }
+    }
+
+    void onClose() override {
+        WebRtcTransportImp::onClose();
+        auto dispatcher = RtcHttpServer::getDispatcher(stream_);
+        if (dispatcher) {
+            dispatcher->delDelegate(this);
+        }
+    }
 };
 
 WebRtcTransport::Ptr WebRtcTransport::create(const char* type, const IceConfig *options) {
@@ -392,6 +418,15 @@ void WrappedRtxTrack::inputRtp(RtpPacket::Ptr rtp, uint64_t stamp_ms) {
     ref->inputRtp(rtp, true);
 }
 
+MediaTrack::Ptr WebRtcTransportImp::getTrack(TrackType type) const {
+    for (auto it : _ssrc_to_track) {
+        if (it.second->getTrackType() == type) {
+            return it.second;
+        }
+    }
+    return nullptr;
+}
+
 void WebRtcTransportImp::onStartWebRTC() {
     // 获取ssrc和pt相关信息,届时收到rtp和rtcp时分别可以根据pt和ssrc找到相关的信息
     for (auto &m_answer : _answer_sdp->media) {
@@ -463,14 +498,15 @@ void WebRtcTransportImp::onStartWebRTC() {
 }
 
 
-void WebRtcTransportImp::sendFrame(const Frame::Ptr &frame) {
+bool WebRtcTransportImp::sendFrame(const Frame::Ptr &frame) {
     auto track = _type_to_track[frame->getTrackType()];
-    if (!track) return;
+    if (!track) return false;
     auto pkts = frame->splitToRtp(track->plan_rtp->pt, track->answer_ssrc_rtp, track->seq);
     hlogd("%s sendFrame %d rtp frame, %s", getIdentifier(), pkts.size(), frame->toString().c_str());
     for (auto pkt : pkts) {
         onSendRtp(pkt, false);
     }
+    return true;
 }
 
 void WebRtcTransportImp::createRtpChannel(const std::string &rid, uint32_t ssrc, MediaTrack &track) {
