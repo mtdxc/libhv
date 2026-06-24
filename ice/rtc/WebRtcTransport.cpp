@@ -155,6 +155,15 @@ bool WebRtcTransport::setRemoteDescription(SdpType type, const std::string& sdp)
         remote_fingerprint.value = media.fingerprint.hash;
         dtls_transport_->SetRemoteFingerprint(remote_fingerprint);
         ice_session_->setRemoteCredentials(media.ice_ufrag, media.ice_pwd);
+        if (type == SdpType::answer && ice_session_->mode() == IceMode::Full) {
+            for (auto& m : sdpSession->media) {
+                for (auto& item : m.candidate) {
+                    IceCandidate cand;
+                    if (cand.fromSdp(item.toString())) 
+                        ice_session_->addRemoteCandidate(cand);
+                }
+            }
+        }
         return true;
     } catch (exception &ex) {
         close(ex.what());
