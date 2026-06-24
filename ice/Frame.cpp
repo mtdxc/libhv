@@ -53,6 +53,17 @@ const char* getTrackString(TrackType type){
     }
 }
 
+const char *CodecInfo::getCodecName() const {
+    return ::getCodecName(getCodecId());
+}
+
+TrackType CodecInfo::getTrackType() const {
+    return ::getTrackType(getCodecId());
+}
+
+std::string CodecInfo::getTrackTypeStr() const {
+    return getTrackString(getTrackType());
+}
 
 int RtpPayload::getClockRate(int pt) {
     switch (pt) {
@@ -1031,6 +1042,105 @@ bool Frame::appendRtp(const RtpPacket::Ptr &rtp) {
 
 std::string Frame::toString() const {
     char line[64];
-    snprintf(line, sizeof(line), "%s size %d tsp %lld%s", getCodecName(codec), size(), timestamp, is_key ? " key" : "");
+    snprintf(line, sizeof(line), "%s size %d tsp %lld%s", getCodecName(), size(), timestamp, is_key ? " key" : "");
     return line;
+}
+
+
+class FrameWriterInterfaceHelper : public FrameWriterInterface {
+public:
+    using Ptr = std::shared_ptr<FrameWriterInterfaceHelper>;
+    using onWriteFrame = std::function<bool(const Frame::Ptr &frame)>;
+
+    /**
+     * inputFrame后触发onWriteFrame回调
+     */
+    FrameWriterInterfaceHelper(onWriteFrame cb) { _callback = std::move(cb); }
+
+    /**
+     * 写入帧数据
+     */
+    bool inputFrame(const Frame::Ptr &frame) override { return _callback(frame); }
+
+private:
+    onWriteFrame _callback;
+};
+
+FrameWriterInterface *FrameDispatcher::addDelegate(FrameWriterInterface::Ptr delegate) {
+    FrameWriterInterface *ret = delegate.get();
+    std::lock_guard<std::recursive_mutex> lck(_mtx);
+    if (_delegates.find(ret) == _delegates.end()) {
+        _delegates[ret] = delegate;
+        onSizeChange(_delegates.size());
+    } else {
+        _delegates[ret] = delegate;
+    }
+    if (_enable_gop_cache) {
+        flushGop(delegate.get());
+    }
+    return ret;
+}
+
+FrameWriterInterface *FrameDispatcher::addDelegate(std::function<bool(const Frame::Ptr &frame)> cb) {
+    return addDelegate(std::make_shared<FrameWriterInterfaceHelper>(std::move(cb)));
+}
+
+void FrameDispatcher::delDelegate(FrameWriterInterface *ptr) {
+    std::lock_guard<std::recursive_mutex> lck(_mtx);
+    _delegates.erase(ptr);
+    onSizeChange(_delegates.size());
+}
+
+int FrameDispatcher::flushGop(FrameWriterInterface* delegate) {
+    std::lock_guard<std::recursive_mutex> lck(_mtx);
+    int ret = _gop_cache.size();
+    for (auto frame : _gop_cache) {
+        delegate->inputFrame(frame);
+    }
+    return ret;
+}    
+
+bool FrameDispatcher::inputFrame(const Frame::Ptr &frame) {
+    bool ret = false;
+    doStatistics(frame);
+    std::lock_guard<std::recursive_mutex> lck(_mtx);
+    if (_enable_gop_cache) {
+        bool is_key = frame->is_key;
+        if (is_key && _video_key_frames && frame->getTrackType() == TrackAudio) {
+            is_key = false;
+        }
+        if (is_key || _gop_cache.size() > 300) {
+            _gop_cache.clear();
+        }
+        _gop_cache.push_back(frame);
+    }
+    for (auto &pr : _delegates) {
+        if (pr.second->inputFrame(frame)) {
+            ret = true;
+        }
+    }
+    return ret;
+}
+
+float FrameDispatcher::getFps() const {
+    float fps = 0.0f;
+    std::lock_guard<std::recursive_mutex> lck(_mtx);
+    if (_gop_interval_ms) {
+        fps = _gop_size * 1000.0f / _gop_interval_ms;
+    }
+    return fps;
+}
+
+void FrameDispatcher::doStatistics(const Frame::Ptr &frame) {
+    _last_pts = frame->timestamp;
+    ++_frames;
+    if (frame->is_key && frame->getTrackType() == TrackVideo) {
+        // do statistics when got keyframes
+        ++_video_key_frames;
+        _gop_size = _frames - _last_frames;
+        _gop_interval_ms = _ticker.elapsedTime();
+
+        _last_frames = _frames;
+        _ticker.resetTime();
+    }
 }

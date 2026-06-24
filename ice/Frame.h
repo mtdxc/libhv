@@ -3,8 +3,12 @@
 
 #include <string>
 #include <vector>
+#include <list>
 #include <memory>
 #include "hplatform.h"
+#include <mutex>
+#include <functional>
+#include "TimeTicker.h"
 
 struct StrCaseCompare {
     bool operator()(const std::string &__x, const std::string &__y) const { return strcasecmp(__x.data(), __y.data()) < 0; }
@@ -154,11 +158,52 @@ private:
     ~RtpPayload() = delete;
 };
 
+class CodecInfo {
+public:
+    using Ptr = std::shared_ptr<CodecInfo>;
+
+    virtual ~CodecInfo() = default;
+
+    /**
+     * 获取编解码器类型
+     */
+    virtual CodecId getCodecId() const = 0;
+
+    /**
+     * 获取编码器名称
+     */
+    const char *getCodecName() const;
+
+    /**
+     * 获取音视频类型
+     */
+    TrackType getTrackType() const;
+
+    /**
+     * 获取音视频类型描述
+     * Get audio/video type description
+     */
+    std::string getTrackTypeStr() const;
+
+    /**
+     * 设置track index, 用于支持多track
+     */
+    void setIndex(int index) { _index = index; }
+
+    /**
+     * 获取track index, 用于支持多track
+     */
+    int getIndex() const { return _index < 0 ? (int)getTrackType() : _index; }
+
+private:
+    int _index = -1;
+};
+
 namespace ice {
 class RtpPacket;
 }
 // Assembled video frame (multiple RTP packets merged into one frame)
-struct Frame {
+struct Frame : public CodecInfo {
 public:
     using Ptr = std::shared_ptr<Frame>;
     using RtpPacketPtr = std::shared_ptr<ice::RtpPacket>;
@@ -167,7 +212,7 @@ public:
     uint64_t timestamp = 0;       // NTP timestamp in ms
     CodecId codec = CodecInvalid; // Codec type
     bool is_key = false;          // Is this a keyframe
-
+    CodecId getCodecId() const override { return codec; }
     std::string toString() const;
 
     // 分帧：将完整视频帧拆分为RTP包序列
@@ -205,6 +250,107 @@ private:
     RtpPackets packetizeVp9(uint8_t pt, uint32_t ssrc, uint16_t &seq, uint16_t mtu);
     RtpPackets packetizeAv1(uint8_t pt, uint32_t ssrc, uint16_t &seq, uint16_t mtu);
     RtpPackets packetizeAac(uint8_t pt, uint32_t ssrc, uint16_t &seq, uint16_t mtu);
+};
+
+/**
+ * 写帧接口的抽象接口类
+ */
+class FrameWriterInterface {
+public:
+    using Ptr = std::shared_ptr<FrameWriterInterface>;
+    virtual ~FrameWriterInterface() = default;
+
+    /**
+     * 写入帧数据
+     */
+    virtual bool inputFrame(const Frame::Ptr &frame) = 0;
+
+    /**
+     * 刷新输出所有frame缓存
+     */
+    virtual void flush() {};
+};
+
+/**
+ * 支持代理转发的帧环形缓存
+ */
+class FrameDispatcher : public FrameWriterInterface {
+public:
+    using Ptr = std::shared_ptr<FrameDispatcher>;
+
+    /**
+     * 添加代理
+     */
+    FrameWriterInterface *addDelegate(FrameWriterInterface::Ptr delegate);
+
+    FrameWriterInterface* addDelegate(std::function<bool(const Frame::Ptr &frame)> cb);
+
+    /**
+     * 删除代理
+     */
+    void delDelegate(FrameWriterInterface *ptr);
+
+    /**
+     * 写入帧并派发
+     */
+    bool inputFrame(const Frame::Ptr &frame) override;
+
+    /**
+     * 返回代理个数
+     */
+    size_t size() const {
+        std::lock_guard<std::recursive_mutex> lck(_mtx);
+        return _delegates.size();
+    }
+
+    void clear() {
+        std::lock_guard<std::recursive_mutex> lck(_mtx);
+        _delegates.clear();
+    }
+
+    /**
+     * 获取累计关键帧数
+     */
+    uint64_t getVideoKeyFrames() const {
+        return _video_key_frames;
+    }
+
+    /**
+     *  获取帧数
+     */
+    uint64_t getFrames() const {
+        return _frames;
+    }
+
+    size_t getVideoGopSize() const {
+        return _gop_size;
+    }
+
+    size_t getVideoGopInterval() const {
+        return _gop_interval_ms;
+    }
+
+    float getFps() const;
+    uint64_t getLastPts() const { return _last_pts; }
+    void setGopCache(bool val) {_enable_gop_cache = val;}
+    int flushGop(FrameWriterInterface* delegate);    
+protected:
+    virtual void onSizeChange(size_t size) {}
+private:
+    void doStatistics(const Frame::Ptr &frame);
+
+private:
+    bool _enable_gop_cache = false;
+    std::list<Frame::Ptr> _gop_cache;
+    Ticker _ticker;
+    size_t _gop_interval_ms = 0;
+    size_t _gop_size = 0;
+    uint64_t _last_pts = 0;
+    uint64_t _last_frames = 0;
+    uint64_t _frames = 0;
+    uint64_t _video_key_frames = 0;
+    mutable std::recursive_mutex _mtx;
+    std::map<void *, FrameWriterInterface::Ptr> _delegates;
 };
 
 #endif // SRC_ICE_FRAME_H_
