@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <list>
+#include <map>
 #include <memory>
 #include "hplatform.h"
 #include <mutex>
@@ -229,6 +230,8 @@ public:
     void appendData(const void* d, int size) {
         data_.insert(data_.end(), static_cast<const uint8_t*>(d), static_cast<const uint8_t*>(d) + size);
     }
+    uint64_t dts() const {return timestamp;}
+    uint64_t pts() const {return timestamp;}
     int size() const { return data_.size(); }
     const uint8_t* data() const {return data_.data();}
     void setSize(int sz) { data_.resize(sz); }

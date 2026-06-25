@@ -64,9 +64,11 @@ target_include_directories(ice PUBLIC
 )
 
 if(WITH_OPENSSL)
-    target_include_directories(ice PUBLIC ${SRTP_INCLUDE_DIR})
+    target_include_directories(ice PRIVATE ${SRTP_INCLUDE_DIR})
 endif()
 
 if(MSVC)
     target_compile_options(ice PRIVATE /utf-8)
 endif()
+
+add_subdirectory(SDL3Test)
