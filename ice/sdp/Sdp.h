@@ -753,6 +753,7 @@ public:
     std::shared_ptr<RtcSession> createAnswer(const RtcSession &offer) const;
 
     void setPlayRtspInfo(const std::string &sdp);
+    void setPlayRtspInfo(CodecId audio, CodecId video);
 
     void enableTWCC(bool enable = true, TrackType type = TrackInvalid);
     void enableREMB(bool enable = true, TrackType type = TrackInvalid);

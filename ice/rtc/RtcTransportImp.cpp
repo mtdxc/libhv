@@ -129,6 +129,7 @@ public:
     void onRtcConfigure(RtcConfigure &configure) const override{
         WebRtcTransportImp::onRtcConfigure(configure);
         configure.audio.direction = configure.video.direction = RtpDirection::sendonly;
+        // configure.setPlayRtspInfo(sdp);
     }
     void onStartWebRTC() override {
         WebRtcTransportImp::onStartWebRTC();

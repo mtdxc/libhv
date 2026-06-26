@@ -2041,6 +2041,25 @@ RETRY:
     }
 }
 
+void RtcConfigure::setPlayRtspInfo(CodecId ac, CodecId vc) {
+    audio.preferred_codec.clear();
+    if (ac != CodecInvalid) {
+        audio.preferred_codec.push_back(ac);
+        auto plan = std::make_shared<RtcCodecPlan>();
+        plan->codec = getCodecName(ac);
+        plan->sample_rate = RtpPayload::getClockRateByCodec(ac);
+        _rtsp_audio_plan = plan;
+    }
+    video.preferred_codec.clear();
+    if (vc != CodecInvalid) {
+        video.preferred_codec.push_back(vc);
+        auto plan = std::make_shared<RtcCodecPlan>();
+        plan->codec = getCodecName(vc);
+        plan->sample_rate = RtpPayload::getClockRateByCodec(vc);
+        _rtsp_video_plan = plan;
+    }
+}
+
 void RtcConfigure::setPlayRtspInfo(const string &sdp) {
     RtcSession session;
     video.direction = RtpDirection::inactive;

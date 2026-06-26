@@ -48,11 +48,18 @@ public:
 };
 
 class WhipClient : public RtcClient {
+protected:
+    CodecId acodec_ = CodecInvalid;
+    CodecId vcodec_ = CodecInvalid;
 public:
     WhipClient(const IceConfig* options) : RtcClient(options) {}
-    void onRtcConfigure(RtcConfigure &configure) const override {
+    void setVideoCodec(CodecId c) { vcodec_ = c;}
+    void setAudioCodec(CodecId c) { acodec_ = c; }
+    void onRtcConfigure(RtcConfigure& configure) const override {
         RtcClient::onRtcConfigure(configure);
         configure.audio.direction = configure.video.direction = RtpDirection::sendonly;
+        // configure.setPlayRtspInfo(sdp);
+        configure.setPlayRtspInfo(acodec_, vcodec_);
     }
 };
 
