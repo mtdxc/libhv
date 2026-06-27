@@ -20,9 +20,9 @@ class SdlPusher : public WhipClient {
 public:
     SdlPusher(IceConfig* config) : WhipClient(config) {}
     void open(const char* url) {
-        setAudioCodec(CodecOpus);
+        setAudioCodec(CodecAAC);
         setVideoCodec(CodecH264);
-        cap.setupAudio(acodec_, 48000, 1);
+        cap.setupAudio(acodec_, 44100, 2);
         cap.setupVideo(vcodec_, 640, 480, 30);
         WhipClient::open(url);
     }

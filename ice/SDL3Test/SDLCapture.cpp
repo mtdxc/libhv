@@ -222,19 +222,100 @@ void SDLCapture::captureFrame() {
         if (frame->format != SDL_PIXELFORMAT_IYUV) {
             hlogw("unkonwn format %s", SDL_GetPixelFormatName(frame->format));
         } else {
-            onYuv((uint8_t*)frame->pixels, frame->w, frame->h);
-#if YUV_DUMP
-            static int count = 0;
-            if (count++ < 10) {
-                char path[64];
-                sprintf(path, "%dx%d_%d.yuv", frame->w, frame->h, count);
-                if (FILE *fp = fopen(path, "wb")) {
-                    fwrite(frame->pixels, 1, size * 3 / 2, fp);
-                    fclose(fp);
-                }
+            if (_preview) {
+                _preview->display(frame);
             }
-#endif
+            onYuv((uint8_t*)frame->pixels, frame->w, frame->h);
         }
         SDL_ReleaseCameraFrame(_camera, frame);
     }
+}
+
+///////////////////////////////////
+// YuvDisplayer
+YuvDisplayer::~YuvDisplayer() {
+    if (_texture) {
+        SDL_DestroyTexture(_texture);
+        _texture = nullptr;
+    }
+    if (_render) {
+        SDL_DestroyRenderer(_render);
+        _render = nullptr;
+    }
+    if (_win) {
+        SDL_DestroyWindow(_win);
+        _win = nullptr;
+    }
+}
+
+void YuvDisplayer::checkWind(int width, int height) {
+    if (!_win) {
+        if (_hwnd) {
+            SDL_PropertiesID props = SDL_CreateProperties();
+            // 根据平台设置正确的属性
+            const char *platform = SDL_GetPlatform();
+
+            if (strcmp(platform, "Windows") == 0) {
+                SDL_SetPointerProperty(props, SDL_PROP_WINDOW_CREATE_WIN32_HWND_POINTER, _hwnd);
+            }
+            else if (strcmp(platform, "Linux") == 0) {
+                // 尝试 X11
+                // SDL_SetPointerProperty(props, SDL_PROP_WINDOW_CREATE_X11_WINDOW_POINTER, _hwnd);
+            }
+            else if (strcmp(platform, "macOS") == 0) {
+                SDL_SetPointerProperty(props, SDL_PROP_WINDOW_CREATE_COCOA_WINDOW_POINTER, _hwnd);
+            }
+            _win = SDL_CreateWindowWithProperties(props);
+            SDL_DestroyProperties(props);
+        }
+        else {
+            _win = SDL_CreateWindow(_title.data(), width, height, SDL_WINDOW_OPENGL);
+        }
+    }
+    if (_win && !_render) {
+        _render = SDL_CreateRenderer(_win, "direct3d,opengl,software"); // "direct3d", "metal", "software", "opengl"
+    }
+    if (_render && (!_texture || _texture->w != width || _texture->h != height)) {
+        if (_texture) {
+            SDL_DestroyTexture(_texture);
+            _texture = nullptr;
+        }
+        _texture = SDL_CreateTexture(_render, SDL_PIXELFORMAT_IYUV, SDL_TEXTUREACCESS_STREAMING, width, height);
+    }
+}
+
+bool YuvDisplayer::display(SDL_Surface *frame) {
+    checkWind(frame->w, frame->h);
+    if (_texture && frame->format == SDL_PIXELFORMAT_IYUV) {
+        int stride = frame->pitch ? frame->pitch : frame->w;
+        int size = stride * frame->h;
+        uint8_t *pixels = (uint8_t *)frame->pixels;
+        SDL_UpdateYUVTexture(_texture, nullptr, pixels, stride, pixels + size, stride / 2, pixels + size * 5 / 4, stride / 2);
+        SDL_RenderClear(_render);
+        SDL_RenderTexture(_render, _texture, nullptr, nullptr);
+        SDL_RenderPresent(_render);
+        return true;
+    }
+    return false;
+}
+
+#ifdef ENABLE_FFMPEG
+#include "libavutil/frame.h"
+#endif
+
+bool YuvDisplayer::displayYUV(AVFrame *pFrame) {
+#ifdef ENABLE_FFMPEG
+    checkWind(pFrame->width, pFrame->height);
+    if (_texture) {
+        SDL_UpdateYUVTexture(_texture, nullptr, pFrame->data[0], pFrame->linesize[0], pFrame->data[1], pFrame->linesize[1], pFrame->data[2],
+                             pFrame->linesize[2]);
+
+        // SDL_UpdateTexture(_texture, nullptr, pFrame->data[0], pFrame->linesize[0]);
+        SDL_RenderClear(_render);
+        SDL_RenderTexture(_render, _texture, nullptr, nullptr);
+        SDL_RenderPresent(_render);
+        return true;
+    }
+    return false;
+#endif // ENABLE_FFMPEG
 }

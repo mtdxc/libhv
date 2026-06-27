@@ -1040,6 +1040,77 @@ bool Frame::appendRtp(const RtpPacket::Ptr &rtp) {
     }
 }
 
+static const int aac_sample_rates[] = {
+    96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050,
+    16000, 12000, 11025, 8000, 7350
+};
+
+int Frame::GetAacSampleRate(int index) {
+    if (index < 0 || index >= sizeof(aac_sample_rates)/sizeof(aac_sample_rates[0])) {
+        return 0;
+    }
+    return aac_sample_rates[index];
+}
+
+int Frame::GetAacSampleRateIndex(int sample_rate) {
+    for(int i = 0; i < sizeof(aac_sample_rates)/sizeof(aac_sample_rates[0]); ++i) {
+        if (aac_sample_rates[i] == sample_rate) {
+            return i;
+        }
+    }
+    return -1; // Not found
+}
+
+int Frame::parseAacConfig(const uint8_t* buff, int size, int& sample_rate, int8_t& channel, int8_t& profile) {
+    if (size < 2) return -1;
+    if (buff[0] == 0xFF && (buff[1] & 0xF0) == 0xF0) {
+        // ADTS header
+        if (size < 7) {
+            return 0;
+        }
+        profile = ((buff[2] >> 6) & 0x03) + 1; // profile is stored as profile-1
+        int sample_rate_index = (buff[2] >> 2) & 0x0F;
+        sample_rate = GetAacSampleRate(sample_rate_index);
+        channel = ((buff[2] & 0x01) << 2) | ((buff[3] >> 6) & 0x03);
+        return 7;
+    } else {
+        // AudioSpecificConfig
+        if (size < 2) {
+            return 0;
+        }
+        profile = (buff[0] >> 3) & 0x1F;
+        int sample_rate_index = ((buff[0] & 0x07) << 1) | ((buff[1] >> 7) & 0x01);
+        sample_rate = GetAacSampleRate(sample_rate_index);
+        channel = (buff[1] >> 3) & 0x0F;
+        return 2;
+    }
+    return 0;
+}
+
+int Frame::genAacConfig(uint8_t* buff, int sample_rate, int8_t channel, int8_t profile) {
+    int sample_rate_index = GetAacSampleRateIndex(sample_rate);
+    if (sample_rate_index < 0) {
+        return 0;
+    }
+    buff[0] = (uint8_t)((profile << 3) | (sample_rate_index >> 1));
+    buff[1] = (uint8_t)(((sample_rate_index & 1) << 7) | (channel << 3));
+    return 2;
+}
+
+int Frame::genAdtsHeader(uint8_t* buff, int size, int sample_rate, int8_t channel, int8_t profile) {
+    int freqIdx = Frame::GetAacSampleRateIndex(sample_rate); // 44100 Hz
+    int chanCfg = channel; // CPE
+    int frameLen = size + 7;
+    buff[0] = 0xFF;
+    buff[1] = 0xF1;
+    buff[2] = ((profile - 1) << 6) | (freqIdx << 2) | (chanCfg >> 2);
+    buff[3] = ((chanCfg & 3) << 6) | (frameLen >> 11);
+    buff[4] = (frameLen >> 3) & 0xFF;
+    buff[5] = ((frameLen & 7) << 5) | 0x1F;
+    buff[6] = 0xFC;
+    return 7;
+}
+
 std::string Frame::toString() const {
     char line[64];
     snprintf(line, sizeof(line), "%s size %d tsp %lld%s", getCodecName(), size(), timestamp, is_key ? " key" : "");

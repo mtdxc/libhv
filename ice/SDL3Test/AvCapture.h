@@ -10,7 +10,7 @@ class AvCapture : public SDLCapture, public FrameDispatcher {
     bool start_ = false;
     volatile bool req_key_ = true;
     Ticker ticker_;
-
+    bool file_dump = false;
     FFmpegEncoder::Ptr audio_enc, video_enc;
     AudioInfo ainfo;
     VideoInfo vinfo;
@@ -25,13 +25,29 @@ class AvCapture : public SDLCapture, public FrameDispatcher {
             frame->linesize[0] = samples * 2 * channel;
             frame->nb_samples = samples;
             frame->pts = ticker_.createdTime();
-            audio_enc->inputFrame(frame, false);      
+            audio_enc->inputFrame(frame, false);
         }
     }
     void onYuv(uint8_t* yuv, int width, int height) override {
         if (video_enc) {
             auto frame = FFmpegFrame::allocPicture(AV_PIX_FMT_YUV420P, width, height);
-            memcpy(frame->data[0], yuv, width * height * 3 / 2);
+            // 源数据按紧凑排列: Y(width*height) + U(width/2*height/2) + V(width/2*height/2)
+            // 目标 linesize 可能有对齐填充(linesize >= width)，需按平面分别拷贝
+            const uint8_t* src_y = yuv;
+            if(frame->linesize[0] == width && frame->linesize[1] == width / 2 && frame->linesize[2] == width / 2) {
+                memcpy(frame->data[0], src_y, width * height);
+                memcpy(frame->data[1], src_y + width * height, (width / 2) * (height / 2));
+                memcpy(frame->data[2], src_y + width * height + (width / 2) * (height / 2), (width / 2) * (height / 2));
+            } else {
+                const uint8_t* src_u = yuv + width * height;
+                const uint8_t* src_v = src_u + (width / 2) * (height / 2);
+                for (int i = 0; i < height; i++)
+                    memcpy(frame->data[0] + i * frame->linesize[0], src_y + i * width, width);
+                for (int i = 0; i < height / 2; i++)
+                    memcpy(frame->data[1] + i * frame->linesize[1], src_u + i * (width / 2), width / 2);
+                for (int i = 0; i < height / 2; i++)
+                    memcpy(frame->data[2] + i * frame->linesize[2], src_v + i * (width / 2), width / 2);
+            }
             frame->pts = ticker_.createdTime();
             if (req_key_) {
                 req_key_ = false;
@@ -77,6 +93,9 @@ public:
         ainfo.codecId = id;
         ainfo.bitrate = 64000;
         audio_device_ = deviceId;
+        if (file_dump && ainfo.codecId == CodecAAC) {
+            remove("out.aac");
+        }
         return true;
     }
     bool setupVideo(CodecId id, int width, int height, int fps) {
@@ -85,6 +104,9 @@ public:
         vinfo.frameRate = fps;
         vinfo.codecId = id;
         vinfo.bitRate = 512000;
+        if (file_dump && vinfo.codecId == CodecH264) {
+            remove("out.h264");
+        }
         std::vector<Device> devs;
         if (getVideoCaptureDevice(devs)) {
             video_device_ = devs[0].id;
@@ -94,13 +116,24 @@ public:
     bool start() {
         if (ainfo.codecId != CodecInvalid && startAudioRecord(ainfo.sampleRate, ainfo.channel, audio_device_)) {
             ainfo.sampleBit = 16;
+            /*
             auto& aspec = getRecordSpec();
             ainfo.sampleRate = aspec.freq;
             ainfo.channel = aspec.channels;
+            */
             TrackInfo info;
             info.audio = ainfo;
             audio_enc = std::make_shared<FFmpegEncoder>(info);
             audio_enc->setOnEncode([this](const Frame::Ptr &frame) {
+                if (file_dump && frame->codec == CodecAAC) {
+                    FILE* fp = fopen("out.aac", "ab+");
+                    // fwrite ADTS header
+                    uint8_t adts[7];
+                    Frame::genAdtsHeader(adts, frame->size(), ainfo.sampleRate, ainfo.channel, 2);
+                    fwrite(adts, 1, 7, fp);
+                    fwrite(frame->data(), frame->size(), 1, fp);
+                    fclose(fp);
+                }
                 inputFrame(frame);
             });
             start_ = true;
@@ -115,6 +148,11 @@ public:
             info.video = vinfo;
             video_enc = std::make_shared<FFmpegEncoder>(info);
             video_enc->setOnEncode([this](const Frame::Ptr &frame) {
+                if (file_dump && frame->codec == CodecH264) {
+                    FILE* fp = fopen("out.h264", "ab+");
+                    fwrite(frame->data(), frame->size(), 1, fp);
+                    fclose(fp);
+                }
                 inputFrame(frame);
             });
             start_ = true;

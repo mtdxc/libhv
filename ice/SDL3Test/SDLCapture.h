@@ -9,13 +9,88 @@
 #include <deque>
 #include <mutex>
 #define REFRESH_EVENT   (SDL_EVENT_USER + 1)
+
+template <class T>
+class PcmBuffer {
+    std::vector<T> buffer_;
+    std::mutex lock_;
+    int max_size_ = 0;
+
+public:
+    PcmBuffer(int max_size = 40960)
+        : max_size_(max_size) {}
+    void clear() {
+        std::unique_lock<decltype(lock_)> l(lock_);
+        buffer_.clear();
+    }
+    T* data() const {
+        std::unique_lock<decltype(lock_)> l(lock_);
+        return buffer_.data();
+    }
+    int size() const {
+        std::unique_lock<decltype(lock_)> l(lock_);
+        return buffer_.size();
+    }
+    int Read(T *p, int samples, bool zero = true) {
+        std::unique_lock<decltype(lock_)> l(lock_);
+        const int ElemSize = sizeof(T);
+        int new_size = buffer_.size() - samples;
+        if (new_size < 0) {
+            memcpy(p, buffer_.data(), ElemSize * buffer_.size());
+            if (zero) {
+                memset(p + buffer_.size(), 0, -ElemSize * new_size);
+            }
+            buffer_.clear();
+        } else {
+            memcpy(p, buffer_.data(), ElemSize * samples);
+            if (new_size) {
+                memmove(buffer_.data(), &buffer_[samples], ElemSize * new_size);
+            }
+            buffer_.resize(new_size);
+        }
+        return samples;
+    }
+    int Write(const T *p, int samples) {
+        std::unique_lock<decltype(lock_)> l(lock_);
+        if (buffer_.size() > max_size_) {
+            buffer_.clear();
+        }
+        buffer_.insert(buffer_.end(), p, p + samples);
+        return samples;
+    }
+};
+
+struct AVFrame;
+class YuvDisplayer {
+public:
+    using Ptr = std::shared_ptr<YuvDisplayer>;
+
+    YuvDisplayer(void *hwnd = nullptr, const char *title = "untitled") {
+        _title = title;
+        _hwnd = hwnd;
+    }
+
+    virtual ~YuvDisplayer();
+
+    bool display(SDL_Surface* frame);
+    bool displayYUV(AVFrame* pFrame);
+
+private:
+    void checkWind(int width, int height);
+    
+    std::string _title;
+    void *_hwnd = nullptr;
+    SDL_Window *_win = nullptr;
+    SDL_Renderer *_render = nullptr;
+    SDL_Texture *_texture = nullptr;
+};
+
 struct Device {
     uint32_t id;
     std::string name;
 };
 
-class SDLCapture
-{
+class SDLCapture {
 public:
     static int getAudioCaputreDevice(std::vector<Device> &devList);
     static int getAudioPlayDevice(std::vector<Device> &devList);
@@ -50,6 +125,14 @@ public:
     bool startCamera(int width, int height, int fps, uint32_t id);
     void stopCamera();
     void captureFrame();
+    void setPreview(bool preview) {
+        if (preview) {
+            _preview = std::make_shared<YuvDisplayer>(nullptr, "preview");
+        }
+        else{
+            _preview = nullptr;
+        }
+    }
     virtual void onYuv(uint8_t* yuv, int width, int height) {
         if (_yuvCallback) _yuvCallback(yuv, width, height);
     }
@@ -71,6 +154,7 @@ public:
         stopAudioRecord();
         stopAudioPlay();
         stopCamera();
+        setPreview(false);
         shutdown();
     }
 
@@ -119,6 +203,7 @@ private:
     std::deque<std::function<bool ()> > _taskList;
     std::mutex _mtxTask;
 
+    YuvDisplayer::Ptr _preview;
     YuvCallback _yuvCallback;
     SDL_Camera* _camera = nullptr;
     SDL_CameraSpec _cameraSpec;
@@ -134,53 +219,4 @@ private:
     SDL_AudioSpec _playSpec;
 };
 
-template <class T>
-class PcmBuffer {
-    std::vector<T> buffer_;
-    std::mutex lock_;
-    int max_size_ = 0;
-
-public:
-    PcmBuffer(int max_size = 8192)
-        : max_size_(max_size) {}
-    void clear() {
-        std::unique_lock<decltype(lock_)> l(lock_);
-        buffer_.clear();
-    }
-    T* data() const {
-        std::unique_lock<decltype(lock_)> l(lock_);
-        return buffer_.data();
-    }
-    int size() const {
-        std::unique_lock<decltype(lock_)> l(lock_);
-        return buffer_.size();
-    }
-    int Read(T *p, int samples, bool zero = true) {
-        std::unique_lock<decltype(lock_)> l(lock_);
-        const int ElemSize = sizeof(T);
-        int new_size = buffer_.size() - samples;
-        if (new_size < 0) {
-            memcpy(p, buffer_.data(), ElemSize * buffer_.size());
-            if (zero) {
-                memset(p + buffer_.size(), 0, -ElemSize * new_size);
-            }
-            buffer_.clear();
-        } else {
-            memcpy(p, buffer_.data(), ElemSize * samples);
-            if (new_size) {
-                memmove(buffer_.data(), &buffer_[samples], ElemSize * new_size);
-            }
-            buffer_.resize(new_size);
-        }
-        return samples;
-    }
-    int Write(const T *p, int samples) {
-        std::unique_lock<decltype(lock_)> l(lock_);
-        if (buffer_.size() > max_size_) {
-            buffer_.clear();
-        }
-        buffer_.insert(buffer_.end(), p, p + samples);
-        return samples;
-    }
-};
 #endif //TESTS_SDLCAPTURE_H

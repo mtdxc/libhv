@@ -236,6 +236,11 @@ public:
     const uint8_t* data() const {return data_.data();}
     void setSize(int sz) { data_.resize(sz); }
     uint8_t* data() { return data_.data(); }
+    static int genAacConfig(uint8_t* buff, int sample_rate, int8_t channel, int8_t profile = 2);
+    static int genAdtsHeader(uint8_t* buff, int size, int sample_rate, int8_t channel, int8_t profile = 2);
+    static int parseAacConfig(const uint8_t* buff, int size, int& sample_rate, int8_t& channel, int8_t& profile);
+    static int GetAacSampleRate(int index);
+    static int GetAacSampleRateIndex(int sample_rate);
 private:
     std::vector<uint8_t> data_;
 
