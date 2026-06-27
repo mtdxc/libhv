@@ -1205,6 +1205,11 @@ float FrameDispatcher::getFps() const {
 void FrameDispatcher::doStatistics(const Frame::Ptr &frame) {
     _last_pts = frame->timestamp;
     ++_frames;
+    if (frame->getTrackType() == TrackAudio) {
+        aCodec = frame->codec;
+    } else if (frame->getTrackType() == TrackVideo) {
+        vCodec = frame->codec;
+    }
     if (frame->is_key && frame->getTrackType() == TrackVideo) {
         // do statistics when got keyframes
         ++_video_key_frames;

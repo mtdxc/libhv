@@ -341,7 +341,11 @@ public:
     float getFps() const;
     uint64_t getLastPts() const { return _last_pts; }
     void setGopCache(bool val) {_enable_gop_cache = val;}
-    int flushGop(FrameWriterInterface* delegate);    
+    int flushGop(FrameWriterInterface* delegate); 
+    CodecId aCodec = CodecInvalid;
+    CodecId vCodec = CodecInvalid;
+    std::string sdp;
+
 protected:
     virtual void onSizeChange(size_t size) {}
 private:

@@ -87,6 +87,7 @@ public:
     }
     
     bool setupAudio(CodecId id, int sampleRate, int channels, uint32_t deviceId = SDL_AUDIO_DEVICE_DEFAULT_RECORDING) {
+        aCodec = id;
         ainfo.sampleBit = 16;
         ainfo.sampleRate = sampleRate;
         ainfo.channel = channels;
@@ -99,6 +100,7 @@ public:
         return true;
     }
     bool setupVideo(CodecId id, int width, int height, int fps) {
+        vCodec = id;
         vinfo.width = width;
         vinfo.height = height;
         vinfo.frameRate = fps;

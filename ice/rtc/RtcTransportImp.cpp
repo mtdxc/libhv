@@ -106,15 +106,26 @@ public:
         WebRtcTransportImp::onRtcConfigure(configure);
         configure.audio.direction = configure.video.direction = RtpDirection::recvonly;
     }
+    void onStartWebRTC() override {
+        WebRtcTransportImp::onStartWebRTC();
+        auto dispatcher = std::make_shared<FrameDispatcher>();
+        dispatcher->setGopCache(true);
+        if (auto track = getTrack(TrackAudio)) {
+            dispatcher->aCodec = track->getCodec();
+        }
+        if (auto track = getTrack(TrackVideo)) {
+            dispatcher->vCodec = track->getCodec();
+        }
+        dispatcher->sdp = _answer_sdp ? _answer_sdp->toRtspSdp() : "";
+        RtcHttpServer::setDispatcher(stream_, dispatcher);
+    }
+
     void onRecvFrame(MediaTrack &track, const std::string &rid, Frame::Ptr rtp) override {
         // hlogi("%s onRecvFrame %s", rid.c_str(), rtp->toString().c_str());
         auto dispatcher = RtcHttpServer::getDispatcher(stream_);
-        if (!dispatcher) {
-            dispatcher = std::make_shared<FrameDispatcher>();
-            dispatcher->setGopCache(true);
-            RtcHttpServer::setDispatcher(stream_, dispatcher);
+        if (dispatcher) {
+            dispatcher->inputFrame(rtp);
         }
-        dispatcher->inputFrame(rtp);
     }
     void onClose() override {
         WebRtcTransportImp::onClose();
@@ -130,6 +141,13 @@ public:
         WebRtcTransportImp::onRtcConfigure(configure);
         configure.audio.direction = configure.video.direction = RtpDirection::sendonly;
         // configure.setPlayRtspInfo(sdp);
+        auto dispatcher = RtcHttpServer::getDispatcher(stream_);
+        if (dispatcher) {
+            if (dispatcher->sdp.empty())
+               configure.setPlayRtspInfo(dispatcher->aCodec, dispatcher->vCodec);
+            else
+               configure.setPlayRtspInfo(dispatcher->sdp);
+        }
     }
     void onStartWebRTC() override {
         WebRtcTransportImp::onStartWebRTC();
