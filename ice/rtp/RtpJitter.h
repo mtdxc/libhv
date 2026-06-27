@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 #include "Frame.h"
-//#include "rtc/Stamp.h"
+#include "Stamp.h"
 #include "RtpPacket.h"
 
 namespace ice {
@@ -75,6 +75,7 @@ class RtpJitter {
       - 并在compact时，启用关键帧丢包RemoveNackItemsUntilKeyFrame
     */ 
     bool has_keyreq_ = false;
+    DtsGenerator dts_gen_;
     // 关键帧序列列表
     std::set<uint16_t, SeqLowerThan> key_seqs_;
 protected:

@@ -338,8 +338,13 @@ void RtpJitter::emitFrame() {
     if (frame_pkts_.empty()) return;
 
     Frame::Ptr frame = std::make_shared<Frame>();
-    frame->timestamp = frame_timestamp_;
-    frame->timestamp = frame_pkts_[0]->ntp_stamp;
+    auto rtp = frame_pkts_[0];
+    if (rtp->ntp_stamp) {
+        frame->pts = rtp->ntp_stamp;
+    } else if (rtp->sample_rate) {
+        frame->pts = rtp->getTimestamp() * uint64_t(1000) / rtp->sample_rate;
+    }
+    dts_gen_.getDts(frame->pts, frame->dts);
     frame->codec = frame_pkts_[0]->codec;
 
     bool ok = false;
@@ -353,9 +358,9 @@ void RtpJitter::emitFrame() {
     }
 
     if (ok && frame->size()) {
-        hlogd("video frame: %s, ts=%u, %zu bytes, %zu pkts",
+        hlogd("video frame: %s, ts=%u,%u %zu bytes, %zu pkts",
               frame->is_key ? "key" : "delta",
-              frame->timestamp, 
+              frame->dts, frame->pts, 
               frame->size(), frame_pkts_.size());
         if (frame_cb_) frame_cb_(frame);
     }

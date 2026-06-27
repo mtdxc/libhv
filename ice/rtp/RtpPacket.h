@@ -231,8 +231,13 @@ public:
     std::map<uint8_t, RtpExt> extMap;
     std::string rid;
     CodecId codec;
-    uint64_t ntp_stamp;
-    int sample_rate;
+    // ms级的ntp时间戳
+    uint64_t ntp_stamp = 0;
+    int sample_rate = 0;
+    uint64_t getStampMS() {
+        if (!sample_rate) sample_rate = RtpPayload::getClockRateByCodec(codec);
+        return getTimestamp() * uint64_t(1000) / sample_rate;
+    }
     TrackType getType() const { return getTrackType(codec); }
     bool IsKeyFrame() const;
     std::string toString() const;

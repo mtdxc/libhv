@@ -345,7 +345,7 @@ Frame::RtpPackets Frame::packetizeH264(uint8_t pt, uint32_t ssrc,
 
     auto emitStap = [&](bool is_last_nal_group) {
         if (stap_count > 0 && !stap.empty()) {
-            pkts.push_back(RtpPacket::create(codec, pt, ssrc, seq++, timestamp, is_last_nal_group, stap.data(), stap.size()));
+            pkts.push_back(RtpPacket::create(codec, pt, ssrc, seq++, pts, is_last_nal_group, stap.data(), stap.size()));
         }
         stap.clear();
         stap_count = 0;
@@ -404,7 +404,7 @@ Frame::RtpPackets Frame::packetizeH264(uint8_t pt, uint32_t ssrc,
                 memcpy(payload.data() + 2, nal_body, frag);
 
                 bool mark = last && last_frag;
-                pkts.push_back(RtpPacket::create(codec, pt, ssrc, seq++, timestamp, mark, payload.data(), payload.size()));
+                pkts.push_back(RtpPacket::create(codec, pt, ssrc, seq++, pts, mark, payload.data(), payload.size()));
 
                 nal_body += frag;
                 remaining -= frag;
@@ -488,7 +488,7 @@ Frame::RtpPackets Frame::packetizeH265(uint8_t pt, uint32_t ssrc,
 
     auto emitAp = [&](bool is_last_nal_group) {
         if (ap_count > 0 && !ap.empty()) {
-            pkts.push_back(RtpPacket::create(codec, pt, ssrc, seq++, timestamp, is_last_nal_group, ap.data(), ap.size()));
+            pkts.push_back(RtpPacket::create(codec, pt, ssrc, seq++, pts, is_last_nal_group, ap.data(), ap.size()));
         }
         ap.clear();
         ap_count = 0;
@@ -551,7 +551,7 @@ Frame::RtpPackets Frame::packetizeH265(uint8_t pt, uint32_t ssrc,
                 memcpy(payload.data() + 3, nal_body, frag);
 
                 bool mark = last && last_frag;
-                pkts.push_back(RtpPacket::create(codec, pt, ssrc, seq++, timestamp, mark, payload.data(), payload.size()));
+                pkts.push_back(RtpPacket::create(codec, pt, ssrc, seq++, pts, mark, payload.data(), payload.size()));
 
                 nal_body += frag;
                 remaining -= frag;
@@ -657,7 +657,7 @@ Frame::RtpPackets Frame::packetizeVp8(uint8_t pt, uint32_t ssrc,
         payload[0] = first ? 0x10 : 0x00; // S=1 for first packet
         memcpy(payload.data() + 1, data, frag);
 
-        pkts.push_back(RtpPacket::create(codec, pt, ssrc, seq++, timestamp, last, payload.data(), payload.size()));
+        pkts.push_back(RtpPacket::create(codec, pt, ssrc, seq++, pts, last, payload.data(), payload.size()));
 
         data += frag;
         remaining -= frag;
@@ -763,7 +763,7 @@ Frame::RtpPackets Frame::packetizeVp9(uint8_t pt, uint32_t ssrc,
         payload[0] = desc;
         memcpy(payload.data() + 1, data, frag);
 
-        pkts.push_back(RtpPacket::create(codec, pt, ssrc, seq++, timestamp, last, payload.data(), payload.size()));
+        pkts.push_back(RtpPacket::create(codec, pt, ssrc, seq++, pts, last, payload.data(), payload.size()));
 
         data += frag;
         remaining -= frag;
@@ -890,7 +890,7 @@ Frame::RtpPackets Frame::packetizeAv1(uint8_t pt, uint32_t ssrc,
         payload[0] = 0x40; // Z=0, Y=1, N=0(1 element)
         memcpy(payload.data() + 1, data, frag);
 
-        pkts.push_back(RtpPacket::create(codec, pt, ssrc, seq++, timestamp, last, payload.data(), payload.size()));
+        pkts.push_back(RtpPacket::create(codec, pt, ssrc, seq++, pts, last, payload.data(), payload.size()));
 
         data += frag;
         remaining -= frag;
@@ -986,7 +986,7 @@ Frame::RtpPackets Frame::packetizeAac(uint8_t pt, uint32_t ssrc,
         // timestamp is in ms, so rtp_ts = timestamp * clockRate / 1000
         bool mark = (remaining - au_size == 0); // last packet gets marker
 
-        pkts.push_back(RtpPacket::create(codec, pt, ssrc, seq++, timestamp, mark, payload.data(), payload.size()));
+        pkts.push_back(RtpPacket::create(codec, pt, ssrc, seq++, pts, mark, payload.data(), payload.size()));
 
         data += au_size;
         remaining -= au_size;
@@ -1012,7 +1012,7 @@ Frame::RtpPackets Frame::splitToRtp(uint8_t pt, uint32_t ssrc, uint16_t &seq, ui
             hlogw("splitToRtp %d not support size %d", codec, size());
         }
         else {
-            pkts.push_back(RtpPacket::create(codec, pt, ssrc, seq++, timestamp, false, data(), size()));
+            pkts.push_back(RtpPacket::create(codec, pt, ssrc, seq++, pts, false, data(), size()));
 
         }
         return pkts;
@@ -1020,7 +1020,7 @@ Frame::RtpPackets Frame::splitToRtp(uint8_t pt, uint32_t ssrc, uint16_t &seq, ui
 
     hlogd("split frame: %s, ts=%u, %zu bytes -> %zu pkts, seq %d-%d",
           is_key ? "key" : "delta",
-          timestamp, size(), pkts.size(),
+          pts, size(), pkts.size(),
           pkts.empty() ? 0 : pkts.front()->getSeq(),
           pkts.empty() ? 0 : pkts.back()->getSeq());
     return pkts;
@@ -1113,7 +1113,7 @@ int Frame::genAdtsHeader(uint8_t* buff, int size, int sample_rate, int8_t channe
 
 std::string Frame::toString() const {
     char line[64];
-    snprintf(line, sizeof(line), "%s size %d tsp %lld%s", getCodecName(), size(), timestamp, is_key ? " key" : "");
+    snprintf(line, sizeof(line), "%s size %d tsp %lld%s", getCodecName(), size(), pts, is_key ? " key" : "");
     return line;
 }
 
@@ -1203,7 +1203,7 @@ float FrameDispatcher::getFps() const {
 }
 
 void FrameDispatcher::doStatistics(const Frame::Ptr &frame) {
-    _last_pts = frame->timestamp;
+    _last_pts = frame->pts;
     ++_frames;
     if (frame->getTrackType() == TrackAudio) {
         aCodec = frame->codec;

@@ -566,7 +566,7 @@ bool FFmpegDecoder::inputFrame_l(const Frame::Ptr &frame, bool live, bool enable
         });
     }
 #endif
-    return decodeFrame((const char *)frame->data(), frame->size(), frame->dts(), frame->pts(), live, frame->is_key);
+    return decodeFrame((const char *)frame->data(), frame->size(), frame->dts, frame->pts, live, frame->is_key);
 }
 
 bool FFmpegDecoder::inputFrame(const Frame::Ptr &frame, bool live, bool async, bool enable_merge) {
@@ -1126,7 +1126,8 @@ void FFmpegEncoder::onEncode(AVPacket *packet) {
         return;
     auto frame = std::make_shared<Frame>();
     frame->codec = _codecId;
-    frame->timestamp = packet->pts;
+    frame->pts = packet->pts;
+    frame->dts = packet->dts;
     frame->is_key = packet->flags & AV_PKT_FLAG_KEY;
     frame->appendData((const char*)packet->data, packet->size);
     _cb(frame);

@@ -210,7 +210,8 @@ public:
     using RtpPacketPtr = std::shared_ptr<ice::RtpPacket>;
     using RtpPackets = std::vector<RtpPacketPtr>;
 
-    uint64_t timestamp = 0;       // NTP timestamp in ms
+    uint64_t dts = 0;       // NTP timestamp in ms
+    uint64_t pts = 0;
     CodecId codec = CodecInvalid; // Codec type
     bool is_key = false;          // Is this a keyframe
     CodecId getCodecId() const override { return codec; }
@@ -230,8 +231,6 @@ public:
     void appendData(const void* d, int size) {
         data_.insert(data_.end(), static_cast<const uint8_t*>(d), static_cast<const uint8_t*>(d) + size);
     }
-    uint64_t dts() const {return timestamp;}
-    uint64_t pts() const {return timestamp;}
     int size() const { return data_.size(); }
     const uint8_t* data() const {return data_.data();}
     void setSize(int sz) { data_.resize(sz); }
