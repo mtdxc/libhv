@@ -23,12 +23,14 @@ using namespace mediakit;
 #define THEAD_COUNT "general.threads"
 namespace Camera {
 #define CAMERA_FIELD "camera."
+const string kCodec = CAMERA_FIELD"codec";
 const string kWidth = CAMERA_FIELD"width";
 const string kHeight = CAMERA_FIELD"height";
 const string kFramerate = CAMERA_FIELD"framerate";
 const string kBitrate = CAMERA_FIELD"bitrate";
 const string kDevice = CAMERA_FIELD"device";
 onceToken token1([](){
+    mINI::Instance()[kCodec] = CodecH264;
     mINI::Instance()[kDevice] = 0;
     mINI::Instance()[kWidth] = 800;
     mINI::Instance()[kHeight] = 600;
@@ -39,14 +41,16 @@ onceToken token1([](){
 
 namespace Microphone {
 #define MIC_FIELD "mic."
+const string kCodec = MIC_FIELD"codec";
 const string kSamplerate = MIC_FIELD"samplerate";
 const string kChannel = MIC_FIELD"channels";
 const string kBitrate = MIC_FIELD"bitrate";
 const string kDevice = MIC_FIELD"device";
 onceToken token1([](){
+    mINI::Instance()[kCodec] = CodecOpus;
     mINI::Instance()[kDevice] = 0;
-    mINI::Instance()[kSamplerate] = 44100;
-    mINI::Instance()[kChannel] = 1;
+    mINI::Instance()[kSamplerate] = 48000;
+    mINI::Instance()[kChannel] = 2;
     mINI::Instance()[kBitrate] = 64000;
 }, nullptr);
 } // namespace Microphone 
@@ -85,7 +89,7 @@ int main(int argc,char *argv[]) {
     RtcHttpServer server(config);
     server.start();
 
-    std::string stream = "uvc";
+    std::string stream = "test";
     if (argc > 1) {
         stream = argv[1];
     }        
@@ -95,14 +99,17 @@ int main(int argc,char *argv[]) {
     GET_CONFIG(uint32_t, device, Microphone::kDevice);
     GET_CONFIG(int, samplerate, Microphone::kSamplerate);
     GET_CONFIG(int, channel, Microphone::kChannel);
-    capture->setupAudio(CodecAAC, samplerate, channel, device);
+    GET_CONFIG(int, aCodec, Microphone::kCodec);
+    capture->setupAudio((CodecId)aCodec, samplerate, channel);
 
     GET_CONFIG(uint32_t, vbitrate, Camera::kBitrate);
     GET_CONFIG(uint32_t, width, Camera::kWidth);
     GET_CONFIG(uint32_t, height, Camera::kHeight);
-    GET_CONFIG(uint32_t, framerate, Camera::kFramerate);    
-    capture->setupVideo(CodecH264, width, height, framerate);
-
+    GET_CONFIG(uint32_t, framerate, Camera::kFramerate);
+    GET_CONFIG(int, vCodec, Camera::kCodec);
+    capture->setupVideo((CodecId)vCodec, width, height, framerate);
+    capture->setGopCache(true);
+    capture->start();
     server.setDispatcher(stream, capture);
     printf("press q to quit loop\n");
     char line[256];
@@ -112,6 +119,7 @@ int main(int argc,char *argv[]) {
             break;
         }
     }
+    capture->stopAll();
     server.stop();
     return 0;
 }

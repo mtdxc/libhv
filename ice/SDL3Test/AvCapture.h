@@ -57,11 +57,9 @@ class AvCapture : public SDLCapture, public FrameDispatcher {
         }
     }
     void onSizeChange(size_t size) override {
-        if (size == 0) {
-            stopAll();
-        } else if(!start_) {
-            start();
-        }
+        bool val = (size == 0);
+        setAudioRecordPaused(val);
+        setVideoCapturePaused(val);
     }
 public:
     bool RequestKeyFrame() {

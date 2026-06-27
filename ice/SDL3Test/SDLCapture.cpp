@@ -103,14 +103,27 @@ bool SDLCapture::startCamera(int width, int height, int fps, uint32_t cid) {
     SDL_GetCameraFormat(_camera, &_cameraSpec);
     fps = _cameraSpec.framerate_numerator / _cameraSpec.framerate_denominator;
     hlogi("open camera %d with format %s, fps %d", cid, ToString(_cameraSpec).c_str(), fps);
-    _timerID = SDL_AddTimer(1000 / fps, [](void *userdata, SDL_TimerID timerID, Uint32 interval) {
-        auto loop = static_cast<SDLCapture *>(userdata);
-        if (loop) {
-            loop->captureFrame();
-        }
-        return interval;
-    }, this);
+    setVideoCapturePaused(false);
     return true;
+}
+
+void SDLCapture::setVideoCapturePaused(bool paused) {
+    if (!_camera) return ;
+    if (paused) {
+        if (_timerID) {
+            SDL_RemoveTimer(_timerID);
+            _timerID = 0;
+        }
+    } else if(!_timerID) {
+        int fps = _cameraSpec.framerate_numerator / _cameraSpec.framerate_denominator;
+        _timerID = SDL_AddTimer(1000 / fps, [](void *userdata, SDL_TimerID timerID, Uint32 interval) {
+            auto loop = static_cast<SDLCapture *>(userdata);
+            if (loop) {
+                loop->captureFrame();
+            }
+            return interval;
+        }, this);
+    }
 }
 
 bool SDLCapture::startAudioPlay(int sampelrate, int channels, uint32_t id) {
@@ -154,6 +167,19 @@ bool SDLCapture::startAudioPlay(int sampelrate, int channels, uint32_t id) {
         SDL_ResumeAudioStreamDevice(_spkStream);
         return true;
     }
+}
+
+void SDLCapture::setPaused(SDL_AudioStream* stream, bool paused) {
+    if (!stream) return;
+    if (paused)
+        SDL_PauseAudioStreamDevice(stream);
+    else if(SDL_AudioStreamDevicePaused(stream))
+        SDL_ResumeAudioStreamDevice(stream);
+}
+
+bool SDLCapture::isPaused(SDL_AudioStream* stream) {
+    if (stream) return false;
+    return SDL_AudioStreamDevicePaused(stream);
 }
 
 void SDLCapture::stopAudioPlay() {

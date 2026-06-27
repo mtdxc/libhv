@@ -7,6 +7,7 @@ class SdlPusher : public WhipClient {
     AvCapture cap;
     void onStartWebRTC() override {
         WhipClient::onStartWebRTC();
+        cap.start();
         cap.addDelegate(std::dynamic_pointer_cast<FrameWriterInterface>(shared_from_this()));
     }
     void onKeyFrameReq(MediaTrack &track, uint32_t ssrc) override {
@@ -20,9 +21,9 @@ class SdlPusher : public WhipClient {
 public:
     SdlPusher(IceConfig* config) : WhipClient(config) {}
     void open(const char* url) {
-        setAudioCodec(CodecAAC);
+        setAudioCodec(CodecOpus);
         setVideoCodec(CodecH264);
-        cap.setupAudio(acodec_, 44100, 2);
+        cap.setupAudio(acodec_, 48000, 2);
         cap.setupVideo(vcodec_, 640, 480, 30);
         WhipClient::open(url);
     }

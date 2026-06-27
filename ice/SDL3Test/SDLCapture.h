@@ -106,6 +106,26 @@ public:
         _pcmCallback = cb;
     }
 
+    static void setPaused(SDL_AudioStream* stream, bool paused);
+    static bool isPaused(SDL_AudioStream* stream);
+
+    void setAudioRecordPaused(bool paused) {
+        return setPaused(_micStream, paused);
+    }
+    bool isAudioRecordPaused() {
+        return isPaused(_micStream);
+    }
+    void setAudioPlayPaused(bool paused) {
+        return setPaused(_spkStream, paused);
+    }
+    bool isAudioPlayPaused() {
+        return isPaused(_spkStream);
+    }
+    bool isVideoCapturePaused() {
+        return _timerID == 0;
+    }
+    void setVideoCapturePaused(bool paused);
+
     bool startAudioPlay(int sampelrate, int channels, uint32_t id = SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK);
     void stopAudioPlay();
     virtual bool onPcmFill(short* pcm, int samples, int channel) {
