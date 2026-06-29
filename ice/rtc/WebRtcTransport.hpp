@@ -26,10 +26,7 @@ enum class WebRtcState {
     Failed,
     Closed
 };
-#define RTC_CLASS_ECHO "echo"
-#define RTC_CLASS_PLAY "play"
-#define RTC_CLASS_PUSH "push"
-#define RTC_CLASS_TALK "talk"
+
 const char* webrtcStateString(WebRtcState state);
 
 // WebRtcTransport: Combines ICE + DTLS + SRTP
@@ -41,8 +38,6 @@ const char* webrtcStateString(WebRtcState state);
 class WebRtcTransport : public RTC::DtlsTransport::Listener, public std::enable_shared_from_this<WebRtcTransport> {
 public:
     using Ptr = std::shared_ptr<WebRtcTransport>;
-    static Ptr create(const char* type, const IceConfig* options);
-    static Ptr create(const char* type, IceAgent* agent);
 
     ~WebRtcTransport();
 

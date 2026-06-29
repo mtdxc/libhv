@@ -7,7 +7,13 @@
 #include "Frame.h"
 #include "agent/ice_agent.h"
 #include "http/server/WebSocketServer.h"
-
+#define RTC_CLASS_ECHO "echo"
+#define RTC_CLASS_PLAY "play"
+#define RTC_CLASS_PUSH "push"
+#define RTC_CLASS_TALK "talk"
+namespace ice {
+    class WebRtcTransport;
+}
 struct RtcHttpConfig {
   ice::IceConfig ice;
   int16_t http_port;
@@ -24,7 +30,7 @@ class RtcHttpServer
 public:
     RtcHttpServer(const RtcHttpConfig& config);
     ~RtcHttpServer();
-
+    static std::shared_ptr<ice::WebRtcTransport> createSession(const char* type, ice::IceAgent *agent);
     static FrameDispatcher::Ptr getDispatcher(const std::string &stream);
     static void setDispatcher(std::string name, FrameDispatcher::Ptr dispatcher);
 

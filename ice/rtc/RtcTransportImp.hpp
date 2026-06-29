@@ -87,8 +87,9 @@ public:
 
     friend class WrappedRtpTrack;
     MediaTrack::Ptr getTrack(TrackType type) const;
-protected:
+
     void start() override;
+protected:
     void onClose() override;
 
     void onStartWebRTC() override;

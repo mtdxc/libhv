@@ -19,7 +19,7 @@
 #include <vector>
 #include <cstdint>
 
-#include "rtc/WebRtcTransport.hpp"
+#include "rtc/RtcTransportImp.hpp"
 #include "hlog.h"
 #include "hstring.h"
 
@@ -88,8 +88,8 @@ int main(int argc, char* argv[]) {
 
     IceAgent agent;
     agent.start();
-    auto offerer = WebRtcTransport::create(RTC_CLASS_ECHO, &agent);
-    auto answerer = WebRtcTransport::create(RTC_CLASS_ECHO, &agent);
+    auto offerer = std::make_shared<WebRtcTransportImp>(nullptr, &agent);
+    auto answerer = std::make_shared<WebRtcTransportImp>(nullptr, &agent);
     answerer->setRole(WebRtcTransport::Role::CLIENT);
     offerer->onStateChange = [&offererReady](WebRtcState s) {
         printf("[offerer]   state -> %s\n", webrtcStateString(s));
