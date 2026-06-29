@@ -1,5 +1,7 @@
 #include "RtcHttpServer.h"
 #include "RtcTransportImp.hpp"
+#include "http/server/WebSocketServer.h"
+#include "agent/ice_agent.h"
 
 using namespace hv;
 using namespace ice;

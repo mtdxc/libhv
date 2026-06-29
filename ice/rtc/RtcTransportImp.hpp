@@ -2,13 +2,15 @@
 #include <functional>
 #include <unordered_map>
 #include "WebRtcTransport.hpp"
-#include "rtp/TwccContext.h"
-#include "rtp/RtcpContext.h"
-#include "rtp/Nack.h"
 #include "Frame.h"
+#include "rtp/RtpPacket.h"
 
 namespace ice {
 class RtpChannel;
+class RtcpContext;
+class TwccContext;
+class NackList;
+struct FCI_NACK;
 class MediaTrack {
 public:
     using Ptr = std::shared_ptr<MediaTrack>;
@@ -24,8 +26,8 @@ public:
     CodecId getCodec() const { return plan_rtp ? getCodecId(plan_rtp->codec) : CodecId::CodecInvalid; }
     TrackType getTrackType() const { return media ? media->type : TrackInvalid; }
     //for send rtp
-    NackList nack_list;
-    RtcpContext::Ptr rtcp_context_send;
+    std::shared_ptr<NackList> nack_list;
+    std::shared_ptr<RtcpContext> rtcp_context_send;
 
     //for recv rtp
     std::unordered_map<std::string/*rid*/, std::shared_ptr<RtpChannel> > rtp_channel;
@@ -116,7 +118,7 @@ protected:
     Ticker _rtcp_rr_send_ticker;
 
     // twcc rtcp发送上下文对象
-    TwccContext _twcc_ctx;
+    std::shared_ptr<TwccContext> _twcc_ctx;
     // 根据发送rtp的track类型获取相关信息
     MediaTrack::Ptr _type_to_track[2];
     // 根据rtcp的ssrc获取相关信息，收发rtp和rtx的ssrc都会记录

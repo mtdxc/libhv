@@ -1,18 +1,27 @@
 #ifndef __WHEP_CLIENT_H__
 #define __WHEP_CLIENT_H__
 
-#include "hv/requests.h"
+#include "hv/AsyncHttpClient.h"
 #include "RtcTransportImp.hpp"
 
 namespace ice {
+
 class RtcClient : public WebRtcTransportImp {
     std::string url_;
+    std::shared_ptr<hv::AsyncHttpClient> http_;
+
 public:
     RtcClient(const IceConfig* options) : WebRtcTransportImp(options) {
         setRole(Role::CLIENT);
     }
 
     const char* url() const { return url_.c_str(); }
+    void httpRequest(HttpRequestPtr req, HttpResponseCallback cb) {
+        if (!http_) {
+            http_ = std::make_shared<hv::AsyncHttpClient>(loop());
+        }
+        http_->send(std::move(req), std::move(cb));
+    }
     bool open(const char* url) {
         if (!url || !url[0]) return false;
         url_ = url;
@@ -23,7 +32,7 @@ public:
         req->headers["Content-Type"] = "application/sdp";
         req->body = offer;
         std::weak_ptr<WebRtcTransport> weak_self = shared_from_this();
-        requests::async(req, [weak_self](const HttpResponsePtr& res) {
+        httpRequest(req, [weak_self](const HttpResponsePtr& res) {
             auto self = weak_self.lock();
             if (!self) return;
             if (res && res->status_code == 200) {
@@ -31,7 +40,7 @@ public:
                 self->setRemoteDescription(SdpType::answer, res->body);
             }
             else{
-                //self->onError(res->status_code, res->body);
+                self->close("sdp error");
             }
         });
         return true;

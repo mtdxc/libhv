@@ -4,7 +4,10 @@
 #include "rtp/Rtcp.h"
 #include "rtp/RtpJitter.h"
 #include "RtcTransportImp.hpp"
-#include "RtcHttpServer.h"
+#include "rtp/RtcpContext.h"
+#include "rtp/TwccContext.h"
+#include "rtp/Nack.h"
+
 using namespace std;
 namespace ice {
 // RTC配置项
@@ -67,7 +70,8 @@ static onceToken token([]() {
 void WebRtcTransportImp::start() {
     timeout_sec_ = mINI::Instance()[Rtc::kTimeOutSec];
     WebRtcTransport::start();
-    _twcc_ctx.setOnSendTwccCB([this](uint32_t ssrc, std::string fci) {onSendTwcc(ssrc, fci);});
+    _twcc_ctx = std::make_shared<TwccContext>();
+    _twcc_ctx->setOnSendTwccCB([this](uint32_t ssrc, std::string fci) {onSendTwcc(ssrc, fci);});
 }
 
 void WebRtcTransportImp::onClose() {
@@ -333,6 +337,7 @@ void WebRtcTransportImp::onStartWebRTC() {
         track->plan_rtp = &m_answer.plan[0];
         track->plan_rtx = m_answer.getRelatedRtxPlan(track->plan_rtp->pt);
         track->rtcp_context_send = std::make_shared<RtcpContextForSend>();
+        track->nack_list = std::make_shared<NackList>();
 
         // rtp track type --> MediaTrack
         if (canSendRtp(m_answer)) {
@@ -348,7 +353,7 @@ void WebRtcTransportImp::onStartWebRTC() {
         _ssrc_to_track[track->offer_ssrc_rtx] = track;
 
         // rtp pt --> MediaTrack
-        _pt_to_track.emplace(track->plan_rtp->pt, std::unique_ptr<WrappedMediaTrack>(new WrappedRtpTrack(track, _twcc_ctx, *this)));
+        _pt_to_track.emplace(track->plan_rtp->pt, std::unique_ptr<WrappedMediaTrack>(new WrappedRtpTrack(track, *_twcc_ctx, *this)));
         if (track->plan_rtx) {
             // rtx pt --> MediaTrack
             _pt_to_track.emplace(track->plan_rtx->pt, std::unique_ptr<WrappedMediaTrack>(new WrappedRtxTrack(track)));
@@ -502,7 +507,7 @@ void WebRtcTransportImp::onRtcp(const char *buf, size_t len) {
                 }
                 auto &track = it->second;
                 auto &fci = fb->getFci<FCI_NACK>();
-                track->nack_list.forEach(fci, [&](const RtpPacket::Ptr &rtp) {
+                track->nack_list->forEach(fci, [&](const RtpPacket::Ptr &rtp) {
                     // rtp retransmission
                     onSendRtp(rtp, true);
                 });
@@ -619,7 +624,7 @@ void WebRtcTransportImp::onSendRtp(const RtpPacket::Ptr &rtp, bool rtx) {
     if (!rtx) {
         // 统计rtp发送情况，好做sr汇报
         track->rtcp_context_send->onRtp(rtp->getSeq(), rtp->getTimestamp(), rtp->ntp_stamp, rtp->sample_rate, rtp->size());
-        track->nack_list.pushBack(rtp);
+        track->nack_list->pushBack(rtp);
 #if 0
         // 此处模拟发送丢包
         if (rtp->type == TrackVideo && rtp->getSeq() % 100 == 0) {

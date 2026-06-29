@@ -14,6 +14,7 @@
 #include "htime.h"
 #include "hlog.h"
 #include <algorithm>
+#include "RtcpFCI.h"
 
 using namespace std;
 

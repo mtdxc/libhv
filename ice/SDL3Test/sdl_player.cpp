@@ -14,7 +14,6 @@
 #include "rtc/RtcClient.h"
 #include "Transcode.h"
 #include "SDL3/SDL_Main.h"
-#include "libavcodec/avcodec.h"
 #include "SDLCapture.h"
 
 using namespace std;

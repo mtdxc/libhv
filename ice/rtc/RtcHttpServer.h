@@ -5,15 +5,21 @@
 #include <memory>
 #include <string>
 #include "Frame.h"
-#include "agent/ice_agent.h"
-#include "http/server/WebSocketServer.h"
+#include "agent/ice_config.h"
+
 #define RTC_CLASS_ECHO "echo"
 #define RTC_CLASS_PLAY "play"
 #define RTC_CLASS_PUSH "push"
 #define RTC_CLASS_TALK "talk"
+
 namespace ice {
     class WebRtcTransport;
+    class IceAgent;
 }
+namespace hv {
+    class WebSocketServer;
+}
+
 struct RtcHttpConfig {
   ice::IceConfig ice;
   int16_t http_port;

@@ -12,7 +12,6 @@
 #include "config.h"
 #include "onceToken.h"
 #include "rtc/RtcHttpServer.h"
-#include "Frame.h"
 #include "AvCapture.h"
 #include <iostream>
 
