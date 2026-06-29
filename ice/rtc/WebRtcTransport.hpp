@@ -136,9 +136,14 @@ public:
     // sdp: full "a=candidate:..." line
     std::function<void(const std::string& sdp, const std::string& mid)> onLocalCandidate;
 
-    void setStream(const std::string& stream) { stream_ = stream; }
+    std::string getStream() const { return params_.at("stream"); }
+    const char* getParam(const char* key, const char* def = "") const {
+        auto it = params_.find(key);
+        return it != params_.end() ? it->second.c_str() : def;
+    }
+    void setParam(const std::map<std::string, std::string>& args) { params_ = args; }
 protected:
-    std::string stream_;
+    std::map<std::string, std::string> params_;
     WebRtcTransport(const IceConfig* options, IceAgent* agent = nullptr);
 
     void createIceSession();

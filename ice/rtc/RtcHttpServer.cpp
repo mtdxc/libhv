@@ -2,7 +2,9 @@
 #include "RtcTransportImp.hpp"
 #include "http/server/WebSocketServer.h"
 #include "agent/ice_agent.h"
-
+#include "mp4/Mp4Writer.h"
+#include "mp4/Mp4Reader.h"
+#include "EventLoop.h"
 using namespace hv;
 using namespace ice;
 
@@ -41,7 +43,7 @@ public:
     }
 };
 
-
+std::string record_dir = "record";
 class WebRtcPusher : public WebRtcTransportImp {
 public:
     using Ptr = std::shared_ptr<WebRtcPusher>;
@@ -61,20 +63,34 @@ public:
             dispatcher->vCodec = track->getCodec();
         }
         dispatcher->sdp = _answer_sdp ? _answer_sdp->toRtspSdp() : "";
-        hlogi("WebRtcPusher %s onStartWebRTC stream: %s, sdp: %s", getIdentifier(), stream_.c_str(), dispatcher->sdp.c_str());
-        RtcHttpServer::setDispatcher(stream_, dispatcher);
+        auto stream = getStream();
+        hlogi("WebRtcPusher %s onStartWebRTC stream: %s, sdp: %s", getIdentifier(), stream.c_str(), dispatcher->sdp.c_str());
+        RtcHttpServer::setDispatcher(stream, dispatcher);
+        auto it = params_.find("record");
+        if (it!=params_.end() && it->second == "1") {
+            auto writer = std::make_shared<Mp4Writer>();
+            auto now = datetime_now();
+            char path[MAX_PATH] = {0};
+            snprintf(path, sizeof(path), "%s/%s_%02d%02d_%02d%02d%02d.mp4", record_dir.c_str(), stream.c_str(), 
+                now.month, now.day, now.hour, now.min, now.sec);
+            if (writer->Open(path)) {
+                dispatcher->addDelegate(writer);
+                hlogi("WebRtcPusher %s startRecord %s", getIdentifier(), path);
+            }
+
+        }
     }
 
     void onRecvFrame(MediaTrack &track, const std::string &rid, Frame::Ptr rtp) override {
         // hlogi("%s onRecvFrame %s", rid.c_str(), rtp->toString().c_str());
-        auto dispatcher = RtcHttpServer::getDispatcher(stream_);
+        auto dispatcher = RtcHttpServer::getDispatcher(getStream());
         if (dispatcher) {
             dispatcher->inputFrame(rtp);
         }
     }
     void onClose() override {
         WebRtcTransportImp::onClose();
-        RtcHttpServer::setDispatcher(stream_, nullptr);
+        RtcHttpServer::setDispatcher(getStream(), nullptr);
     }
 };
 
@@ -87,7 +103,7 @@ public:
         configure.audio.direction = configure.video.direction = RtpDirection::sendonly;
 
         // configure.setPlayRtspInfo(sdp);
-        auto dispatcher = RtcHttpServer::getDispatcher(stream_);
+        auto dispatcher = RtcHttpServer::getDispatcher(getStream());
         if (dispatcher) {
             if (dispatcher->sdp.empty()) {
                 configure.setPlayRtspInfo(dispatcher->aCodec, dispatcher->vCodec);
@@ -98,7 +114,7 @@ public:
     }
     void onStartWebRTC() override {
         WebRtcTransportImp::onStartWebRTC();
-        auto dispatcher = RtcHttpServer::getDispatcher(stream_);
+        auto dispatcher = RtcHttpServer::getDispatcher(getStream());
         if (dispatcher) {
             dispatcher->addDelegate(std::dynamic_pointer_cast<FrameWriterInterface>(shared_from_this()));
         }
@@ -106,7 +122,7 @@ public:
 
     void onClose() override {
         WebRtcTransportImp::onClose();
-        auto dispatcher = RtcHttpServer::getDispatcher(stream_);
+        auto dispatcher = RtcHttpServer::getDispatcher(getStream());
         if (dispatcher) {
             dispatcher->delDelegate(this);
         }
@@ -133,6 +149,14 @@ FrameDispatcher::Ptr RtcHttpServer::getDispatcher(const std::string &stream) {
     auto it = g_stream_map.find(stream);
     if (it != g_stream_map.end()) {
         return it->second;
+    } else if(hv::endswith(stream, ".mp4")) {
+        auto reader = std::make_shared<Mp4Reader>(currentThreadEventLoop);
+        std::string path = record_dir + "/" + stream;
+        if (reader->Open(path.c_str())) {
+            g_stream_map[stream] = reader;
+            hlogi("Mp4Reader open %s", stream.c_str());
+            return reader;
+        }
     }
     return nullptr;
 }
@@ -147,6 +171,11 @@ void RtcHttpServer::setDispatcher(std::string name, FrameDispatcher::Ptr dispatc
 }
 
 RtcHttpServer::RtcHttpServer(const RtcHttpConfig& config) : config_(config) {
+#if defined(_WIN32)
+    _mkdir(record_dir.c_str());
+#else
+    mkdir(record_dir.c_str(), 0755);
+#endif
 }
 
 RtcHttpServer::~RtcHttpServer() {
@@ -176,14 +205,14 @@ void RtcHttpServer::start() {
     http.Any("/index/api/whep", [this](const HttpContextPtr& ctx) {
         auto sdp = ctx->body();
         auto transport = createSession(RTC_CLASS_PLAY, agent_.get());
-        transport->setStream(ctx->param("stream"));
+        transport->setParam(ctx->params());
         ctx->setHeader("Content-Type", "application/sdp");
         return ctx->sendString(transport->getAnswerSdp(sdp));
     });
     http.Any("/index/api/whip", [this](const HttpContextPtr& ctx) {
         auto sdp = ctx->body();
         auto transport = createSession(RTC_CLASS_PUSH, agent_.get());
-        transport->setStream(ctx->param("stream"));
+        transport->setParam(ctx->params());
         ctx->setHeader("Content-Type", "application/sdp");
         return ctx->sendString(transport->getAnswerSdp(sdp));
     });
@@ -191,7 +220,7 @@ void RtcHttpServer::start() {
         auto type = ctx->param("type");
         auto sdp = ctx->body();
         auto transport = createSession(type.c_str(), agent_.get());
-        transport->setStream(ctx->param("stream"));
+        transport->setParam(ctx->params());
         Json val;
         val["sdp"] = transport->getAnswerSdp(sdp);
         val["id"] = transport->getIdentifier();

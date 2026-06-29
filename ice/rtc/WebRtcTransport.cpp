@@ -68,6 +68,13 @@ void WebRtcTransport::onRtcConfigure(RtcConfigure &configure) const {
     fingerprint.hash = getFingerprint(fingerprint.algorithm, dtls_transport_);
     configure.setDefaultSetting(ice_session_->localUfrag(), ice_session_->localPwd(), RtpDirection::sendrecv, fingerprint);
 
+    if (auto v = getParam("video_codecs", nullptr)) {
+        configure.audio.setCodecs(v);
+    }
+    if (auto v = getParam("video_codecs", nullptr)) {
+        configure.video.setCodecs(v);
+    }
+
     // add local candidate
     if (ice_session_ && !ice_session_->localCandidates().empty()) {
         for(auto c : ice_session_->localCandidates()) {

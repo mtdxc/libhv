@@ -30,7 +30,7 @@
 #include "mov-format.h"
 #include "mpeg4-avc.h"
 #include "mpeg4-hevc.h"
-#define GID_MP4 "Mp4Reader"
+
 #define MP4_INVALID_TRACK_ID 0xFFFFFFFF
 
 #if defined(_WIN32) || defined(_WIN64)
@@ -70,23 +70,21 @@ mov_buffer_t* mov_get_file_buffer() {
 
 static char start_code[4] = {0, 0, 0, 1};
 
-Mp4Reader::Mp4Reader(IReader *reader) : event_(reader) {
+Mp4Reader::Mp4Reader(hv::EventLoop* loop) : loop_(loop) {
   mp4_handle_ = nullptr;
-  video_tracker_ = MP4_INVALID_TRACK_ID;
-  audio_tracker_ = MP4_INVALID_TRACK_ID;
-  video_codec = FLV_CODEC_NONE;
-  audio_codec = FLV_CODEC_NONE;
+  aCodec = vCodec = CodecInvalid;
 }
 
 Mp4Reader::~Mp4Reader() { Close(); }
 
 bool Mp4Reader::Close() {
   bool ret = false;
+  track_map_.clear();
+  aCodec = vCodec = CodecInvalid;
+  StopRead();
   if (mp4_handle_) {
     mov_reader_destroy(mp4_handle_);
     mp4_handle_ = nullptr;
-    audio_tracker_ = MP4_INVALID_TRACK_ID;
-    video_tracker_ = MP4_INVALID_TRACK_ID;
     ret = true;
   }
   if (fp_) {
@@ -97,7 +95,7 @@ bool Mp4Reader::Close() {
 }
 
 bool Mp4Reader::Open(const char *path) {
-  fp_ = Utf8FileOpen(path, "rb");
+  fp_ = fopen(path, "rb");
   if (!fp_) {
     hlogi("unable to open file %s", path);
     return false;
@@ -133,8 +131,7 @@ bool Mp4Reader::Open(mov_buffer_t *provider, void* data) {
     }};
   mov_reader_getinfo(handle, &w_on_track, this);
   
-  if (audio_tracker_ == MP4_INVALID_TRACK_ID &&
-      video_tracker_ == MP4_INVALID_TRACK_ID) {
+  if (!hasVideo() && !hasAudio()) {
     Close();
     return false;
   }
@@ -143,32 +140,63 @@ bool Mp4Reader::Open(mov_buffer_t *provider, void* data) {
   return true;
 }
 
+void Mp4Reader::onSizeChange(size_t size) {
+  if (size == 0) {
+    StopRead();
+  } else if(!timer_) {
+    StartRead();
+  }
+}
+
+bool Mp4Reader::StopRead() {
+  if (timer_) {
+    loop_->killTimer(timer_);
+    timer_ = 0;
+    return true;
+  }
+  return false;
+}
+
+void Mp4Reader::StartRead() {
+  if (timer_ || !loop_) {
+    return ;
+  }
+  timer_ = loop_->setTimeout(10, [this](hv::TimerID id) {
+    int ret = ReadFrame();
+    loop_->resetTimer(id, ret > 0 ? ret : 10);
+    if (eof()) {
+      Seek(0);
+    }
+  });  
+}
+
 int Mp4Reader::ReadFrame() {
+  uint64_t tsp = frame_.dts;
   int ret = mov_reader_read2(
       mp4_handle_,
       [](void* param, uint32_t track, size_t bytes, int64_t pts, int64_t dts,
          int flags) {
         Mp4Reader* thiz = (Mp4Reader*)param;
-        thiz->track_ = track;
-        thiz->pts_ = pts;
-        thiz->dts_ = dts;
-        thiz->key_ = flags & MOV_AV_FLAG_KEYFREAME;
-        thiz->bytes_ = bytes;
-        if (thiz->buffer_.size() < bytes)
-          thiz->buffer_.reserve(bytes);
-        return (void*)thiz->buffer_.data();
+        auto& frame = thiz->frame_;
+        frame.codec = thiz->track_map_[track];
+        frame.pts = pts;
+        frame.dts = dts;
+        frame.is_key = flags & MOV_AV_FLAG_KEYFREAME;
+        frame.setSize(bytes);
+        return (void*)frame.data();
       },
       this);
 
   switch (ret) {
-    case 0: {
-      eof_ = true;
-      return 0;
-    }
+  case 0:
+    eof_ = true;
+    return 0;
 
-    case 1: {
+  case 1:
+    if (frame_.codec == CodecH264 || frame_.codec == CodecH265 || frame_.codec == CodecH266) {
       uint32_t iOffset = 0;
-      uint8_t* pBytes = (uint8_t*)buffer_.data();
+      int bytes_ = frame_.size();
+      uint8_t* pBytes = (uint8_t*)frame_.data();
       while (iOffset < bytes_) {
         int iFrameLen = BytesToUI32(pBytes + iOffset);
         if (iFrameLen + iOffset + 4 > bytes_) {
@@ -177,19 +205,13 @@ int Mp4Reader::ReadFrame() {
         memcpy(pBytes + iOffset, start_code, 4);
         iOffset += (iFrameLen + 4);
       }
-      if (track_ == audio_tracker_) {
-        event_->OnGotAudio(buffer_.data(), bytes_, dts_);
-      } else if (track_ == video_tracker_) {
-        event_->OnGotVideo(buffer_.data(), bytes_, dts_, pts_, key_);
-      }
-      return bytes_;
     }
-
-    default: {
-      eof_ = true;
-      hlogi("Mp4读取失败%d", ret);
-      return 0;
-    }
+    inputFrame(frame_.clone());
+    return frame_.dts - tsp;
+  default:
+    eof_ = true;
+    hlogi("Mp4Reader error %d", ret);
+    return 0;
   }
 }
 
@@ -200,60 +222,74 @@ int Mp4Reader::onAudioTrack(uint32_t track,
                             int sample_rate,
                             const void* extra,
                             size_t bytes) {
-  audio_tracker_ = track;
+
   audio_channels = channel_count;
   audio_samplerate = sample_rate;
   audio_cfg_.clear();
   switch (object) { 
   case MOV_OBJECT_AAC:
-    audio_codec = FLV_CODEC_AAC;
+    aCodec = CodecAAC;
     if (extra && bytes)
       audio_cfg_.assign((const char*)extra, bytes);
     break;
   case MOV_OBJECT_MP3:
   case MOV_OBJECT_MP1A:
-    audio_codec = FLV_CODEC_MP3;
+    aCodec = CodecMP3;
     break;
   case MOV_OBJECT_OPUS:
-    audio_codec = FLV_CODEC_OPUS;
+    aCodec = CodecOpus;
+    break;
+  case MOV_OBJECT_G711a:
+    aCodec = CodecG711A;
+    break;
+  case MOV_OBJECT_G711u:
+    aCodec = CodecG711U;
+    break;
+  default: 
+    aCodec = CodecInvalid; 
     break;
   }
-  if (event_ && extra && bytes)
-    event_->OnGotAudio((const char*)extra, bytes, 0);
+  hlogi("Mp4Reader onAudioTrack %d(%s) %d %d %d", track, getCodecName(aCodec), object, channel_count, sample_rate);
+  track_map_[track] = aCodec;
+  if (extra && bytes){
+    auto frame = std::make_shared<Frame>();
+    frame->codec = aCodec;
+    frame->pts = frame->dts = 0;
+    frame->appendData(extra, bytes);
+    inputFrame(frame);
+  }
   return 0;
 }
 
-bool extra_to_frame(int codec, const void* extra, size_t bytes, std::string& cfg){
+bool extra_to_frame(int codec, const void* extra, size_t bytes, Frame::Ptr cfg){
   if (extra && bytes) {
+    cfg->codec = (CodecId)codec;
     switch (codec) {
-    case FLV_CODEC_H264: {
+    case CodecH264: {
       mpeg4_avc_t avc;
       if (mpeg4_avc_decoder_configuration_record_load((const uint8_t*)extra, bytes, &avc)) {
         for (int i = 0; i < avc.nb_sps; i++) {
-          cfg.append(start_code, 4);
-          cfg.append((char*)avc.sps[i].data, avc.sps[i].bytes);
+          cfg->appendNal(avc.sps[i].data, avc.sps[i].bytes);
         }
         for (int i = 0; i < avc.nb_pps; i++) {
-          cfg.append(start_code, 4);
-          cfg.append((char*)avc.pps[i].data, avc.pps[i].bytes);
+          cfg->appendNal(avc.pps[i].data, avc.pps[i].bytes);
         }
         return true;
       }
       break;
     }
-    case FLV_CODEC_H265: {
+    case CodecH265: {
       mpeg4_hevc_t hevc;
       if (mpeg4_hevc_decoder_configuration_record_load((const uint8_t*)extra, bytes, &hevc)){
         for (size_t i = 0; i < hevc.numOfArrays; i++) {
-          cfg.append(start_code, 4);
-          cfg.append((char*)hevc.nalu[i].data, hevc.nalu[i].bytes);
+          cfg->appendNal(hevc.nalu[i].data, hevc.nalu[i].bytes);
         }
         return true;
       }
       break;
     }
-    case FLV_CODEC_AAC:
-      cfg.assign((const char*)extra, bytes);
+    case CodecAAC:
+      cfg->appendData((const char*)extra, bytes);
       return true;
     default:
       break;
@@ -268,67 +304,53 @@ int Mp4Reader::onVideoTrack(uint32_t track,
                             int height,
                             const void* extra,
                             size_t bytes) {
-  video_tracker_ = track;
   video_width = width;
   video_height = height;
-  video_cfg_.clear();
-
+  video_cfg_ = std::make_shared<Frame>();
   switch (object) {
   case MOV_OBJECT_H264:
-    video_codec = FLV_CODEC_H264;
+    vCodec = CodecH264;
     if (extra && bytes) {
-      extra_to_frame(video_codec, extra, bytes, video_cfg_);
+      extra_to_frame(vCodec, extra, bytes, video_cfg_);
     }
     break;
   case MOV_OBJECT_H265:
-    video_codec = FLV_CODEC_H265;
+    vCodec = CodecH265;
     if (extra && bytes) {
-      extra_to_frame(video_codec, extra, bytes, video_cfg_);
+      extra_to_frame(vCodec, extra, bytes, video_cfg_);
     }
     break;
   case MOV_OBJECT_VP8:
-    video_codec = FLV_CODEC_VP8;
+    vCodec = CodecVP8;
     break;
   case MOV_OBJECT_VP9:
-    video_codec = FLV_CODEC_VP9;
+    vCodec = CodecVP9;
     break;
   case MOV_OBJECT_AV1:
-    video_codec = FLV_CODEC_AV1;
+    vCodec = CodecAV1;
+    break;
+  default: 
+    vCodec = CodecInvalid;
     break;
   }
-  if (video_cfg_.length() && event_) {
-    event_->OnGotVideo(video_cfg_.data(), video_cfg_.length(), 0, 0, true);
+  hlogi("Mp4Reader onVideoTrack %d(%s) %d %dx%d", track, getCodecName(vCodec), object, width, height);
+  track_map_[track] = vCodec;
+  if (video_cfg_ && video_cfg_->size()) {
+    inputFrame(video_cfg_);
   }
   return 0;
 }
 
-uint32_t Mp4Reader::Seek(uint32_t msTime, bool quick) {
-  int64_t tsp = msTime;
+int64_t Mp4Reader::Seek(int64_t tsp, bool quick) {
   mov_reader_seek(mp4_handle_, &tsp);
-  pts_ = tsp;
+  frame_.pts = tsp;
   return tsp;
 }
 
 bool Mp4Reader::hasVideo() const {
-  return video_tracker_ != MP4_INVALID_TRACK_ID;
+  return vCodec != CodecInvalid;
 }
 
 bool Mp4Reader::hasAudio() const {
-  return audio_tracker_ != MP4_INVALID_TRACK_ID;
-}
-
-const char *Mp4Reader::getAacCfg(int &len) {
-  len = audio_cfg_.length();
-  return audio_cfg_.data();
-}
-
-int Mp4Reader::MakeSeqNal(uint8_t *nal, int nalLen) {
-  int ret = video_cfg_.length();
-  if (!nal)
-    return ret;
-  if (nalLen < ret) {
-    return 0;
-  }
-  memcpy(nal, video_cfg_.data(), video_cfg_.length());
-  return ret;
+  return aCodec != CodecInvalid;
 }

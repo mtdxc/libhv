@@ -4,11 +4,10 @@
 #pragma once
 #include <string>
 #include <mutex>
-#include "AvWriter.h"
-class Mutex;
+#include "../Frame.h"
 struct mp4_writer_t;
 
-class FLVWRITE_API Mp4Writer : public IAvWriter {
+class Mp4Writer : public FrameWriterInterface {
  public:
   Mp4Writer();
   ~Mp4Writer();
@@ -20,6 +19,7 @@ class FLVWRITE_API Mp4Writer : public IAvWriter {
   bool opened() const { return writer_ != nullptr; }
   bool Close();
 
+  bool inputFrame(const Frame::Ptr &frame) override;
   /*!
   @brief 写视频包.
 
@@ -30,7 +30,7 @@ class FLVWRITE_API Mp4Writer : public IAvWriter {
   @param diff 时间差值
   @return int
   */
-  int WriteVideo(uint8_t* data, int len, uint32_t timestamp_ms, bool bKeyFrame, int diff = 0);
+  int WriteVideo(uint8_t* data, int len, uint64_t timestamp_ms, bool bKeyFrame, int diff = 0);
   /*!
   @brief 写入音频数据.
 
@@ -40,18 +40,19 @@ class FLVWRITE_API Mp4Writer : public IAvWriter {
   @return int
   @retval
   */
-  int WriteAudio(uint8_t* data, int len, uint32_t timestamp_ms);
+  int WriteAudio(uint8_t* data, int len, uint64_t timestamp_ms);
 
  protected:
+  std::string path_;
   std::mutex lock;
   int audio_samplerate = 0;
   int audio_channels = 0;
   int aac_profile;
-  int audio_codec;
-  int video_codec;
+  CodecId audio_codec = CodecInvalid;
+  CodecId video_codec = CodecInvalid;
   int video_width = 0;
   int video_height = 0;
-  int video_fps = 0;
+  float video_fps = 0;
   std::string _sps, _pps, _vps;
   FILE* fp_ = nullptr;
   mp4_writer_t* writer_;

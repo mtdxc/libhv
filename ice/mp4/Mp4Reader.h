@@ -27,49 +27,47 @@
 #ifndef SRC_MEDIAFILE_MEDIAREADER_H_
 #define SRC_MEDIAFILE_MEDIAREADER_H_
 
+#include <map>
 #include <string>
 #include <vector>
-#include "AvWriter.h"
+#include "../Frame.h"
+#include "EventLoop.h"
+
 struct mov_reader_t;
 struct mov_buffer_t;
 mov_buffer_t* mov_get_file_buffer();
 
 typedef uint32_t MP4TrackId;
-bool extra_to_frame(int codec, const void* extra, size_t bytes, std::string& cfg);
-class FLVWRITE_API IReader {
+bool extra_to_frame(int codec, const void* extra, size_t bytes, Frame::Ptr cfg);
+
+class Mp4Reader : public FrameDispatcher {
  public:
-  virtual ~IReader() {}
-  virtual void OnGotAudio(const char* buff, int len, uint32_t tsp) = 0;
-  virtual void OnGotVideo(const char* buff, int len, uint32_t tsp, uint32_t pts, bool key) = 0;
-};
-class FLVWRITE_API Mp4Reader {
- public:
-  Mp4Reader(IReader* reader);
+  Mp4Reader(hv::EventLoop* loop);
   virtual ~Mp4Reader();
 
   bool Open(const char* path);
   bool Open(mov_buffer_t* provide, void* data);
-  uint32_t Seek(uint32_t msTime, bool quick = false);
+  int64_t Seek(int64_t tsp, bool quick = false);
+
   bool Close();
-
+  // 读取帧数，并返回与前一帧的延迟ms
   int ReadFrame();
+  void StartRead();
+  bool StopRead();
 
-  int duration() const { return duration_; }
-  int timestamp() const { return pts_; }
+  int64_t duration() const { return duration_; }
+  int64_t timestamp() const { return frame_.pts; }
   bool hasVideo() const;
   bool hasAudio() const;
-  const char* getAacCfg(int& len);
-  int MakeSeqNal(uint8_t* nal, int nalLen);
-
+  bool eof() const { return eof_; }
+  void onSizeChange(size_t size) override;
  public:
+  hv::EventLoop* loop_ = nullptr;
+  hv::TimerID timer_ = 0;
   uint32_t video_width = 0;
   uint32_t video_height = 0;
-  int video_codec;
-
   uint32_t audio_samplerate = 0;
   int audio_channels = 0;
-  int audio_codec;
-
  private:
   int onAudioTrack(uint32_t track,
                    uint8_t object,
@@ -84,26 +82,19 @@ class FLVWRITE_API Mp4Reader {
                    int height,
                    const void* extra,
                    size_t bytes);
-  IReader* event_;
 
   FILE* fp_ = nullptr;
   mov_reader_t* mp4_handle_;
-  MP4TrackId video_tracker_;
 
   // for h264 seq header
-  std::string video_cfg_;
+  Frame::Ptr video_cfg_;
 
-  MP4TrackId audio_tracker_;
   std::string audio_cfg_;
+  std::map<MP4TrackId, CodecId> track_map_;
+  int64_t duration_ = 0;
 
-  int duration_ = 0;
   // current read frame
-  MP4TrackId track_;
-  std::vector<char> buffer_;
-  int64_t pts_;
-  int64_t dts_;
-  int64_t bytes_ = 0;
-  bool key_ = false;
+  Frame frame_;
   bool eof_ = false;
 };
 

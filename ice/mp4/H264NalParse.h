@@ -98,8 +98,6 @@ struct AdtsHeader {
                                                // 个原始帧(一个AAC原始帧包含一段时间内1024个采样及相关数据)
 };
 
-bool h264_decode_seq_parameter_set(uint8_t* buf, uint32_t nLen, int &Width, int &Height);
-
 typedef struct PutBitContext
 {
     unsigned int bit_buf; ///< 32bits buffer
