@@ -29,6 +29,11 @@
 #include <sstream>
 #include "hstring.h"
 using hv::trim;
+std::string exePath(bool isExe = true);
+std::string exeDir(bool isExe = true);
+std::string exeName(bool isExe = true);
+bool loadIniConfig(const char *ini_path = nullptr);
+
 template<typename variant>
 class mINI_basic : public std::map<std::string, variant> {
     // Public API : existing map<> interface plus following methods
@@ -64,7 +69,7 @@ public:
         }
     }
 
-    void parseFile(const std::string &fileName) {
+    void parseFile(const std::string &fileName = exePath() + ".ini") {
         std::ifstream in(fileName, std::ios::in | std::ios::binary | std::ios::ate);
         if (!in.good()) {
             throw std::invalid_argument("Invalid ini file: " + fileName);
@@ -95,7 +100,7 @@ public:
         return header + (header.empty() ? "" : "\r\n") + output + "\r\n" + footer + (footer.empty() ? "" : "\r\n");
     }
 
-    void dumpFile(const std::string &fileName) const {
+    void dumpFile(const std::string &fileName = exePath() + ".ini") const {
         std::ofstream out(fileName, std::ios::out | std::ios::binary | std::ios::trunc);
         const auto dmp = dump();
         out.write(dmp.data(), dmp.size());

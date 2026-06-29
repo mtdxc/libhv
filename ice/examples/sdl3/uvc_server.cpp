@@ -71,7 +71,7 @@ onceToken token1([](){
 }//namespace Http
 
 int main(int argc,char *argv[]) {
-    //loadIniConfig();
+    loadIniConfig();
     logger_enable_color(hlog, true);
     hlog_set_handler(stdout_logger);
     size_t threads = mINI::Instance()[THEAD_COUNT];
