@@ -47,7 +47,8 @@ if(WITH_OPENSSL)
 endif()
 
 add_library(ice ${ICE_SRCS} ${ICE_HEADERS})
-
+add_subdirectory(mp4)
+list(APPEND LIBS mp4)
 target_link_libraries(ice PUBLIC ${LIBS})
 
 target_include_directories(ice PUBLIC
