@@ -29,7 +29,7 @@ set(ICE_HEADERS
 
 set(LIBS "hv_static")
 if(WIN32 OR MINGW)
-    set(LIBS ${LIBS} iphlpapi)
+    list(APPEND LIBS iphlpapi)
 endif()
 
 if(WITH_OPENSSL)
@@ -71,4 +71,4 @@ if(MSVC)
     target_compile_options(ice PRIVATE /utf-8)
 endif()
 
-add_subdirectory(SDL3Test)
+add_subdirectory(examples)
