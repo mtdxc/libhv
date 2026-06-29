@@ -1,4 +1,4 @@
-#include "hlog.h"
+﻿#include "hlog.h"
 #include "AvCapture.h"
 #include "rtc/RtcClient.h"
 using namespace ice;
@@ -24,7 +24,9 @@ public:
         setAudioCodec(CodecOpus);
         setVideoCodec(CodecH264);
         cap.setupAudio(acodec_, 48000, 2);
-        cap.setupVideo(vcodec_, 640, 480, 30);
+        // 改成800x600否则在windows中会出现粉屏...
+        cap.setupVideo(vcodec_, 800, 600, 30);
+        // cap.setPreview(true);
         WhipClient::open(url);
     }
 };

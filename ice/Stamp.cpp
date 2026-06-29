@@ -331,7 +331,7 @@ void NtpStamp::update(uint32_t rtp_stamp, uint64_t ntp_stamp_us) {
 
 uint64_t NtpStamp::getNtpStamp(uint32_t rtp_stamp, uint32_t sample_rate, uint32_t ssrc) {
     if (ssrc!=_last_ssrc || _last_sample_rate != sample_rate) {
-        hlogi("ssrc change %llu->%llu, samplerate %u->%u", _last_ssrc, ssrc, _last_sample_rate, sample_rate);
+        hlogi("ssrc change %u->%u, samplerate %u->%u", _last_ssrc, ssrc, _last_sample_rate, sample_rate);
         _last_sample_rate = sample_rate;
         _last_ssrc = ssrc;
     }

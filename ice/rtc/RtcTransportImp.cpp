@@ -727,18 +727,26 @@ void WebRtcTransportImp::onBeforeEncryptRtp(const char *buf, int &len, void *ctx
         // Add the ssrc information to answer sdp
         m.rtp_rtx_ssrc.emplace_back();
         auto &ssrc = m.rtp_rtx_ssrc.back();
+        // 作为客户端库，使用offer sdp中的ssrc
+        if (_role == Role::CLIENT && _offer_sdp) {
+            auto offer = _offer_sdp->getMedia(m.type);
+            if (offer->rtp_rtx_ssrc.size()) {
+                ssrc = offer->rtp_rtx_ssrc[0];
+            }
+        }
+        else {
+            // 发送的ssrc我们随便定义，因为发送rtp时会修改为此值
+            // We can define the ssrc we send at will, because it will be modified to this value when sending rtp
+            ssrc.ssrc = m.type + RTP_SSRC_OFFSET;
+            ssrc.cname = RTP_CNAME;
+            ssrc.label = std::string(RTP_LABEL) + '-' + m.mid;
+            ssrc.mslabel = RTP_MSLABEL;
+            ssrc.msid = ssrc.mslabel + ' ' + ssrc.label;
 
-        // 发送的ssrc我们随便定义，因为发送rtp时会修改为此值
-        // We can define the ssrc we send at will, because it will be modified to this value when sending rtp
-        ssrc.ssrc = m.type + RTP_SSRC_OFFSET;
-        ssrc.cname = RTP_CNAME;
-        ssrc.label = std::string(RTP_LABEL) + '-' + m.mid;
-        ssrc.mslabel = RTP_MSLABEL;
-        ssrc.msid = ssrc.mslabel + ' ' + ssrc.label;
-
-        if (m.getRelatedRtxPlan(m.plan[0].pt)) {
-            // rtx ssrc
-            ssrc.rtx_ssrc = ssrc.ssrc + RTX_SSRC_OFFSET;
+            if (m.getRelatedRtxPlan(m.plan[0].pt)) {
+                // rtx ssrc
+                ssrc.rtx_ssrc = ssrc.ssrc + RTX_SSRC_OFFSET;
+            }
         }
     }
 }
