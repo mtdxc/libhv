@@ -36,6 +36,7 @@ public:
             TrackInfo info;
             info.audio.codecId = track->getCodec();
             info.audio.channel = track->plan_rtp->channel;
+            if (info.audio.codecId == CodecOpus) info.audio.channel = 2;
             info.audio.sampleRate = track->plan_rtp->sample_rate;
             loop_.startAudioPlay(info.audio.sampleRate, info.audio.channel);
             auto pcms = std::make_shared<PcmBuffer<short>>();

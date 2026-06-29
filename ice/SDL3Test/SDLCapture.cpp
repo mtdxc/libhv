@@ -161,9 +161,9 @@ bool SDLCapture::startAudioPlay(int sampelrate, int channels, uint32_t id) {
         return false;
     }
     else {
-        SDL_AudioSpec inspec;
-        SDL_GetAudioStreamFormat(_spkStream, &inspec, &_playSpec);
-        hlogi("%d stream param: %s -> %s", id, ToString(inspec).c_str(), ToString(_playSpec).c_str());
+        SDL_AudioSpec outspec;
+        SDL_GetAudioStreamFormat(_spkStream, &_playSpec, &outspec);
+        hlogi("%d stream param: %s -> %s", id, ToString(_playSpec).c_str(), ToString(outspec).c_str());
         SDL_ResumeAudioStreamDevice(_spkStream);
         return true;
     }
