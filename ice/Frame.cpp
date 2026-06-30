@@ -14,7 +14,6 @@ TrackType getTrackType(CodecId codecId) {
     }
 }
 
-
 const char *getCodecName(CodecId codec) {
     switch (codec) {
 #define XX(name, type, value, str, mpeg_id, mp4_id, mkv_id) case name : return str;
@@ -28,7 +27,7 @@ const char *getCodecName(CodecId codec) {
 static map<string, CodecId, StrCaseCompare> codec_map = { CODEC_MAP(XX) };
 #undef XX
 
-CodecId getCodecId(const string &str){
+CodecId getCodecId(const string &str) {
     auto it = codec_map.find(str);
     return it == codec_map.end() ? CodecInvalid : it->second;
 }
@@ -44,7 +43,7 @@ TrackType getTrackType(const string &str) {
     return it == track_str_map.end() ? TrackInvalid : it->second;
 }
 
-const char* getTrackString(TrackType type){
+const char* getTrackString(TrackType type) {
     switch (type) {
         case TrackVideo : return "video";
         case TrackAudio : return "audio";
@@ -231,11 +230,134 @@ bool RtpPacket::IsKeyFrame() const {
     return false;
 }
 
-// VideoFrame实现
+// Frame实现
+Frame::Ptr Frame::clone() const {
+    auto ret = std::make_shared<Frame>();
+    ret->codec = codec;
+    ret->is_key = is_key;
+    ret->dts = dts;
+    ret->pts = pts;
+    ret->data_ = data_;
+    return ret;
+}
+
 void Frame::appendNal(const uint8_t *bytes, size_t len) {
     static uint8_t nalHdr[] = {0x00, 0x00, 0x00, 0x01};
     appendData(nalHdr, 4);
     appendData(bytes, len);
+}
+
+size_t findNalStart(const uint8_t *data, size_t size, size_t &startCodeLen) {
+    for (size_t i = 0; i + 3 < size; ++i) {
+        if (data[i] == 0 && data[i + 1] == 0) {
+            if (data[i + 2] == 1) {
+                startCodeLen = 3;
+                return i;
+            }
+            if (i + 3 < size && data[i + 2] == 0 && data[i + 3] == 1) {
+                startCodeLen = 4;
+                return i;
+            }
+        }
+    }
+    return std::string::npos;
+}
+
+void Frame::forEachNal(std::function<bool(const uint8_t* nal, size_t size)> cb) const {
+    const uint8_t *data = data_.data();
+    size_t size = data_.size();
+    int pos = 0;
+    while (pos < size) {
+        size_t startCodeLen = 0;
+        size_t nalStart = findNalStart(data + pos, size - pos, startCodeLen);
+        if (nalStart == std::string::npos) {
+            break;
+        }
+        nalStart += pos + startCodeLen;
+        size_t nalEnd = findNalStart(data + nalStart, size - nalStart, startCodeLen);
+        if (nalEnd == std::string::npos) {
+            nalEnd = size;
+        } else {
+            nalEnd += nalStart;
+        }
+        if (!cb(data + nalStart, nalEnd - nalStart)) {
+            return;
+        }
+        pos = nalEnd;
+    }
+    if (pos != size) {
+        cb(data + pos, size - pos);
+    }
+}
+
+bool Frame::keyFrame() const{
+    bool ret = false;
+    switch (codec)
+    {
+    case CodecH264:
+        // H264 keyframe detection
+        forEachNal([&](const uint8_t* nal, size_t size) {
+            uint8_t nalType = nal[0] & 0x1F;
+            if (nalType == 5 || nalType == 7 || nalType == 8) { // IDR, SPS, PPS
+                ret = true;
+                return false; // stop iteration
+            }
+            return true; // continue iteration
+        });
+        break;
+    case CodecH265:
+        // H265 keyframe detection
+        forEachNal([&](const uint8_t* nal, size_t size) {
+            uint8_t nalType = (nal[0] >> 1) & 0x3F;
+            if (nalType == 19 || nalType == 20 || nalType == 21) { // IDR_W_RADL, IDR_N_LP, CRA
+                ret = true;
+                return false; // stop iteration
+            }
+            return true; // continue iteration
+        });
+        break;
+    case CodecVP8:
+        // VP8 keyframe detection
+        if (size() >= 1) {
+            uint8_t desc = data()[0];
+            bool startOfPartition = (desc & 0x10) != 0;
+            if (startOfPartition && (data()[0] & 0x01) == 0) { // Keyframe
+                return true;
+            }
+        }
+        break;
+    case CodecVP9:
+        // VP9 keyframe detection
+        if (size() >= 1) {
+            uint8_t desc = data()[0];
+            bool pBit = (desc & 0x40) != 0; // P: 0 = keyframe
+            if (!pBit) {
+                return true;
+            }
+        }
+        break;
+    case CodecAV1:
+        // AV1 keyframe detection
+        if (size() >= 1) {
+            uint8_t aggHeader = data()[0];
+            bool nBit = (aggHeader & 0x08) != 0; // N: new coded video sequence
+            if (nBit) {
+                return true;
+            }
+            uint8_t wField = (aggHeader >> 4) & 0x03;
+            if (wField <= 1 && size() >= 2) {
+                uint8_t obuHeader = data()[1];
+                uint8_t obuType = (obuHeader >> 3) & 0x0F;
+                if (obuType == 1) { // OBU_SEQUENCE_HEADER
+                    return true;
+                }
+            }
+        }
+        break;
+    default:
+        break;
+    }
+    return ret;
 }
 
 // 解析 Annex-B 格式的 H264/H265 NAL 单元
@@ -292,9 +414,7 @@ bool Frame::extractH264Nal(const RtpPacket::Ptr &rtp) {
     if (nalType >= 1 && nalType <= 23) {
         // Single NAL unit
         appendNal(payload, psz);
-        if (nalType == 5) is_key = true;   // IDR
-        if (nalType == 7) is_key = true;   // SPS
-        if (nalType == 8) is_key = true;   // PPS
+        if (nalType == 5 || nalType == 7 || nalType == 8) is_key = true;   // IDR
     } else if (nalType == 24) {
         // STAP-A: aggregated NAL units
         size_t offset = 1;

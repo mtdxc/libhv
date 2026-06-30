@@ -215,6 +215,8 @@ public:
     CodecId codec = CodecInvalid; // Codec type
     bool is_key = false;          // Is this a keyframe
     CodecId getCodecId() const override { return codec; }
+    bool keyFrame() const;
+    Ptr clone() const;
     std::string toString() const;
 
     // 分帧：将完整视频帧拆分为RTP包序列
@@ -226,7 +228,7 @@ public:
 
     // rtp追帧，将排序好的rtp包追加到帧中
     bool appendRtp(const RtpPacketPtr &rtp);
-
+    void forEachNal(std::function<bool(const uint8_t* nal, size_t size)> cb) const;
     void appendNal(const uint8_t *data, size_t len);
     void appendData(const void* d, int size) {
         data_.insert(data_.end(), static_cast<const uint8_t*>(d), static_cast<const uint8_t*>(d) + size);
