@@ -143,12 +143,7 @@ typedef struct T_AVRational{
 
 /***
  * Sequence parameter set
- * ¿É²Î¿¼H264±ê×¼µÚ7½ÚºÍ¸½Â¼D E
- /***
- * Sequence parameter set
  * H.264 sequence parameter set, version 7 and above, D E
- 
- * [AUTO-TRANSLATED:bd590cb8]
  */
 #define Extended_SAR 255
 

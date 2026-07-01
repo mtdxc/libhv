@@ -127,7 +127,7 @@ int selectVideoFormat(const AVCodec *codec, int format) {
 int selectAudioFormat(const AVCodec *codec, int format) {
     std::set<int> support_fmts;
     auto fmt = codec->sample_fmts;
-    while (fmt && *fmt != AV_PIX_FMT_NONE) {
+    while (fmt && *fmt != AV_SAMPLE_FMT_NONE) {
         support_fmts.emplace(*fmt);
         ++fmt;
     }
@@ -381,6 +381,7 @@ static inline const AVCodec *getCodecByName(const std::vector<std::string> &code
     return ret;
 }
 
+#undef CODEC_MAP
 #define CODEC_MAP(XX)                                                                                                                                          \
     XX(CodecH264, AV_CODEC_ID_H264)                                                                                                                            \
     XX(CodecH265, AV_CODEC_ID_HEVC)                                                                                                                            \
