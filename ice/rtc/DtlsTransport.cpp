@@ -1005,7 +1005,7 @@ namespace RTC
             hlogd("DtlsTransport %s: DTLS timer set in %" PRIu64 " ms", getId(), timeoutMs);
 
             weak_ptr<DtlsTransport> weak_self = shared_from_this();
-            this->timer = this->poller->setInterval(timeoutMs, [weak_self](hv::TimerID timerId){
+            this->timer = this->poller->setTimer(timeoutMs, [weak_self](hv::TimerID timerId){
                 auto strong_self = weak_self.lock();
                 if (strong_self) {
                     strong_self->OnTimer();
