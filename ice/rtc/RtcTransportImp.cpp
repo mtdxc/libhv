@@ -1,4 +1,4 @@
-#include "config.h"
+﻿#include "config.h"
 #include "onceToken.h"
 #include "Stamp.h"
 #include "rtp/Rtcp.h"
@@ -432,14 +432,14 @@ void WebRtcTransportImp::onRtcp(const char *buf, size_t len) {
             RtcpSR *sr = (RtcpSR *)rtcp;
             auto it = _ssrc_to_track.find(sr->ssrc);
             if (it == _ssrc_to_track.end()) {
-                hlogw("未识别的sr rtcp包: %s", rtcp->dumpString().c_str());
+                hlogw("unknown rtcp sr: %s", rtcp->dumpString().c_str());
                 break;
             }
 
             auto &track = it->second;
             auto rtp_chn = track->getRtpChannel(sr->ssrc);
             if (!rtp_chn) {
-                hlogw("未识别的sr rtcp包: %s", rtcp->dumpString().c_str());
+                hlogw("unknown rtcp sr: %s", rtcp->dumpString().c_str());
                 break;
             }
 
@@ -458,7 +458,7 @@ void WebRtcTransportImp::onRtcp(const char *buf, size_t len) {
                     track->rtcp_context_send->onRtcp(rtcp);
                 }
                 else {
-                    hlogw("未识别的rr rtcp包: %s", rtcp->dumpString().c_str());
+                    hlogw("unknown rtcp rr: %s", rtcp->dumpString().c_str());
                 }
             }
             break;
@@ -469,7 +469,7 @@ void WebRtcTransportImp::onRtcp(const char *buf, size_t len) {
             for (auto ssrc : bye->getSSRC()) {
                 auto it = _ssrc_to_track.find(*ssrc);
                 if (it == _ssrc_to_track.end()) {
-                    hlogw("未识别的bye rtcp包: %s", rtcp->dumpString().c_str());
+                    hlogw("unknown rtcp bye: %s", rtcp->dumpString().c_str());
                     continue;
                 }
                 _ssrc_to_track.erase(it);
@@ -485,7 +485,7 @@ void WebRtcTransportImp::onRtcp(const char *buf, size_t len) {
                 RtcpFB *fb = (RtcpFB *)rtcp;
                 auto it = _ssrc_to_track.find(fb->ssrc_media);
                 if (it == _ssrc_to_track.end()) {
-                    hlogw("未识别的 rtcp包: %s", rtcp->dumpString().c_str());
+                    hlogw("unknown rtcp packet: %s", rtcp->dumpString().c_str());
                     break;
                 }
                 hlogi("onKeyFrameReq: %s, ssrc: %u", getIdentifier(), fb->ssrc_media);
@@ -502,7 +502,7 @@ void WebRtcTransportImp::onRtcp(const char *buf, size_t len) {
                 RtcpFB *fb = (RtcpFB *)rtcp;
                 auto it = _ssrc_to_track.find(fb->ssrc_media);
                 if (it == _ssrc_to_track.end()) {
-                    hlogw("未识别的 rtcp包: %s", rtcp->dumpString().c_str());
+                    hlogw("unknown rtcp: %s", rtcp->dumpString().c_str());
                     break;
                 }
                 auto &track = it->second;
@@ -524,7 +524,7 @@ void WebRtcTransportImp::onRtcp(const char *buf, size_t len) {
             }
             auto it = _ssrc_to_track.find(xr->ssrc);
             if (it == _ssrc_to_track.end()) {
-                hlogw("未识别的 rtcp包: %s", rtcp->dumpString().c_str());
+                hlogw("unknown rtcp: %s", rtcp->dumpString().c_str());
                 break;
             }
             auto &track = it->second;

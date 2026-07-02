@@ -448,7 +448,7 @@ FFmpegDecoder::FFmpegDecoder(const TrackInfo &track, int thread_num, const std::
 
     codec = codec ? codec : codec_default;
     if (!codec) {
-        throw std::runtime_error("未找到解码器");
+        throw std::runtime_error("Decoder not found");
     }
 
     while (true) {
@@ -457,10 +457,9 @@ FFmpegDecoder::FFmpegDecoder(const TrackInfo &track, int thread_num, const std::
         });
 
         if (!_context) {
-            throw std::runtime_error("创建解码器失败");
+            throw std::runtime_error("Decoder create failed");
         }
 
-        // 保存AVFrame的引用  [AUTO-TRANSLATED:2df53d07]
         // Save the AVFrame reference
 #ifdef FF_API_OLD_ENCDEC
         _context->refcounted_frames = 1;
@@ -514,20 +513,19 @@ FFmpegDecoder::FFmpegDecoder(const TrackInfo &track, int thread_num, const std::
         int ret = avcodec_open2(_context.get(), codec, &dict);
         av_dict_free(&dict);
         if (ret >= 0) {
-            // 成功  [AUTO-TRANSLATED:7d878ca9]
             // Success
-            hlogi("打开解码器成功:%s", codec->name);
+            hlogi("Decoder %s open succuess", codec->name);
             break;
         }
 
         if (codec_default && codec_default != codec) {
             // 硬件编解码器打开失败，尝试软件的  [AUTO-TRANSLATED:060200f4]
             // Hardware codec failed to open, try software codec
-            hlogw("打开解码器%s失败，原因是:%s, 再尝试打开解码器%s", codec->name, ffmpeg_err(ret).c_str(), codec_default->name);
+            hlogw("Decoder %s open failed, reason: %s, try to open decoder %s", codec->name, ffmpeg_err(ret).c_str(), codec_default->name);
             codec = codec_default;
             continue;
         }
-        throw std::runtime_error(std::string("打开解码器失败:") + ffmpeg_err(ret).c_str());
+        throw std::runtime_error(std::string("Decoder open failed:") + ffmpeg_err(ret).c_str());
     }
 }
 
@@ -620,9 +618,8 @@ bool FFmpegDecoder::decodeFrame(const char *data, size_t size, uint64_t dts, uin
             break;
         }
         if (live && pts - out_frame->pts > MAX_DELAY_SECOND * 1000 && _ticker.createdTime() > 10 * 1000) {
-            // 后面的帧才忽略,防止Track无法ready  [AUTO-TRANSLATED:23f1a7c9]
-            // The following frames are ignored to prevent the Track from being ready
-            hlogw("解码时，忽略%d秒前的数据:%lld %lld", MAX_DELAY_SECOND, pts, out_frame->pts);
+            // 后面的帧才忽略,防止Track无法ready
+            hlogw("ignore %d s data:%lld %lld", MAX_DELAY_SECOND, pts, out_frame->pts);
             continue;
         }
         onDecode(out_frame);
@@ -996,16 +993,16 @@ FFmpegEncoder::FFmpegEncoder(const TrackInfo &cfg, int thread_num, int format, c
         av_dict_free(&dict);
         if (ret >= 0) {
             //成功
-            hlogi("打开编码器成功:%s", codec->name);
+            hlogi("Encoder %s open succuess", codec->name);
             break;
         }
         if (codec_default && codec_default != codec) {
             //硬件编解码器打开失败，尝试软件的
-            hlogw("打开编码器%s失败，原因是:%s, 再尝试打开编码器%s", codec->name, ffmpeg_err(ret).c_str(), codec_default->name);
+            hlogw("Encoder %s open failed, reason: %s, try to open encoder %s", codec->name, ffmpeg_err(ret).c_str(), codec_default->name);
             codec = codec_default;
             continue;
         }
-        throw std::runtime_error(std::string("打开编码器") + codec->name + "失败:" + ffmpeg_err(ret).c_str());
+        throw std::runtime_error(std::string("Encoder ") + codec->name + " open failed: " + ffmpeg_err(ret).c_str());
     }
 }
 
@@ -1069,7 +1066,7 @@ void FFmpegEncoder::inputFrame_l(FFmpegFrame::Ptr frame_in) {
 #endif
         }
         if (!_swr) {
-            hlogw("创建swresample对象失败");
+            hlogw("swresample create error");
             return;
         }
         frame = _swr->inputFrame(frame_in);
