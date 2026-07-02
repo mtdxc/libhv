@@ -273,6 +273,13 @@ int Mp4Writer::WriteAudio(uint8_t* data, int len, uint64_t tsp) {
     }
   }
   if (MP4_INVALID_TRACK_ID == audio_track_) {
+    if (!audio_samplerate) {
+      audio_samplerate = RtpPayload::getClockRateByCodec(audio_codec);
+    }
+    if (!audio_channels) {
+      audio_channels = 1;
+    }
+
     switch (audio_codec) {
       case CodecAAC: {
         // Main = 1, Low = 2, SSR = 3, Lip = 4
@@ -285,10 +292,6 @@ int Mp4Writer::WriteAudio(uint8_t* data, int len, uint64_t tsp) {
         break;
       }
       case CodecOpus: {
-        if (!audio_channels)
-          audio_channels = 1;
-        if (!audio_samplerate)
-          audio_samplerate = 48000;
         struct opus_head_t opus = {0};
         opus.version = 1;
         opus.channels = audio_channels;
@@ -314,10 +317,6 @@ int Mp4Writer::WriteAudio(uint8_t* data, int len, uint64_t tsp) {
       }
       case CodecG711A:
       case CodecG711U:
-        if (!audio_channels)
-          audio_channels = 1;
-        if (!audio_samplerate)
-          audio_samplerate = 8000;
         hlogi("%s addAudio %s %dx%d", path_.c_str(), getCodecName(audio_codec), audio_channels, audio_samplerate);
         audio_track_ = mp4_writer_add_audio(writer_, audio_codec == CodecG711A ? MOV_OBJECT_G711a : MOV_OBJECT_G711u, 
           audio_channels, 16, audio_samplerate, nullptr, 0);

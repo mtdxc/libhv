@@ -29,7 +29,7 @@ const string kFramerate = CAMERA_FIELD"framerate";
 const string kBitrate = CAMERA_FIELD"bitrate";
 const string kDevice = CAMERA_FIELD"device";
 onceToken token1([](){
-    mINI::Instance()[kCodec] = CodecH264;
+    mINI::Instance()[kCodec] = CodecH265;
     mINI::Instance()[kDevice] = 0;
     mINI::Instance()[kWidth] = 800;
     mINI::Instance()[kHeight] = 600;
@@ -48,8 +48,8 @@ const string kDevice = MIC_FIELD"device";
 onceToken token1([](){
     mINI::Instance()[kCodec] = CodecOpus;
     mINI::Instance()[kDevice] = 0;
-    mINI::Instance()[kSamplerate] = 48000;
     mINI::Instance()[kChannel] = 2;
+    mINI::Instance()[kSamplerate] = 0;
     mINI::Instance()[kBitrate] = 64000;
 }, nullptr);
 } // namespace Microphone 
@@ -98,15 +98,16 @@ int main(int argc,char *argv[]) {
     GET_CONFIG(uint32_t, device, Microphone::kDevice);
     GET_CONFIG(int, samplerate, Microphone::kSamplerate);
     GET_CONFIG(int, channel, Microphone::kChannel);
+    GET_CONFIG(uint32_t, abitrate, Camera::kBitrate);
     GET_CONFIG(int, aCodec, Microphone::kCodec);
-    capture->setupAudio((CodecId)aCodec, samplerate, channel);
+    capture->setupAudio((CodecId)aCodec, abitrate, channel, samplerate);
 
     GET_CONFIG(uint32_t, vbitrate, Camera::kBitrate);
     GET_CONFIG(uint32_t, width, Camera::kWidth);
     GET_CONFIG(uint32_t, height, Camera::kHeight);
     GET_CONFIG(uint32_t, framerate, Camera::kFramerate);
     GET_CONFIG(int, vCodec, Camera::kCodec);
-    capture->setupVideo((CodecId)vCodec, width, height, framerate);
+    capture->setupVideo((CodecId)vCodec, width, height, framerate, vbitrate);
     capture->setGopCache(true);
     capture->start();
     server.setDispatcher(stream, capture);

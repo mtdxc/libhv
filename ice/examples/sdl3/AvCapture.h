@@ -21,11 +21,19 @@ class AvCapture : public SDLCapture, public FrameDispatcher {
         if (audio_enc) {
             auto frame = FFmpegFrame::alloc();
             FFmpegFrame::initAudio(frame.get(), channel, getRecordSpec().freq, AV_SAMPLE_FMT_S16);
-            frame->data[0] = (uint8_t *)pcm;
-            frame->linesize[0] = samples * 2 * channel;
-            frame->nb_samples = samples;
             frame->pts = ticker_.createdTime();
-            audio_enc->inputFrame(frame, false);
+            frame->nb_samples = samples;
+            // 异步解码，否则关闭时偶尔会出现死锁
+            bool sync = true;
+            if (sync) {
+                av_frame_get_buffer(frame.get(), 0);
+                av_frame_make_writable(frame.get());
+                memcpy(frame->data[0], (uint8_t *)pcm, samples * 2 * channel);
+            } else {
+                frame->data[0] = (uint8_t *)pcm;
+                frame->linesize[0] = samples * 2 * channel;
+            }
+            audio_enc->inputFrame(frame, sync);
         }
     }
     void onYuv(uint8_t* yuv, int width, int height) override {
@@ -84,26 +92,30 @@ public:
         }
     }
     
-    bool setupAudio(CodecId id, int sampleRate, int channels, uint32_t deviceId = SDL_AUDIO_DEVICE_DEFAULT_RECORDING) {
+    bool setupAudio(CodecId id, int bitrate, int channels = 1, int sampleRate = 0, uint32_t deviceId = SDL_AUDIO_DEVICE_DEFAULT_RECORDING) {
         aCodec = id;
         ainfo.sampleBit = 16;
-        ainfo.sampleRate = sampleRate;
+        if (sampleRate > 0) {
+            ainfo.sampleRate = sampleRate;
+        } else {
+            ainfo.sampleRate = RtpPayload::getClockRateByCodec(id);
+        }
         ainfo.channel = channels;
         ainfo.codecId = id;
-        ainfo.bitrate = 64000;
+        ainfo.bitrate = bitrate;
         audio_device_ = deviceId;
         if (file_dump && ainfo.codecId == CodecAAC) {
             remove("out.aac");
         }
         return true;
     }
-    bool setupVideo(CodecId id, int width, int height, int fps) {
+    bool setupVideo(CodecId id, int width, int height, int fps, int bitrate) {
         vCodec = id;
         vinfo.width = width;
         vinfo.height = height;
         vinfo.frameRate = fps;
         vinfo.codecId = id;
-        vinfo.bitRate = 512000;
+        vinfo.bitRate = bitrate;
         if (file_dump && vinfo.codecId == CodecH264) {
             remove("out.h264");
         }

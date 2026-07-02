@@ -282,7 +282,8 @@ bool WebRtcTransport::sendRtp(const void* data, size_t len, void *ctx) {
 
     // Copy to writable buffer with extra space for SRTP auth tag
     std::vector<uint8_t> buf((const uint8_t*)data, (const uint8_t*)data + len);
-    buf.resize(len + kMaxSrtpOverhead);
+    // 为rtx多预留两个字节
+    buf.resize(len + kMaxSrtpOverhead + 2);
 
     int pktLen = static_cast<int>(len);
     onBeforeEncryptRtp((char*)buf.data(), pktLen, ctx);

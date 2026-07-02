@@ -1129,7 +1129,7 @@ Frame::RtpPackets Frame::splitToRtp(uint8_t pt, uint32_t ssrc, uint16_t &seq, ui
     case CodecAAC:  pkts = packetizeAac(pt, ssrc, seq, mtu);  break;
     default:
         if (size() > mtu) {
-            hlogw("splitToRtp %d not support size %d", codec, size());
+            hlogw("splitToRtp %s not support size %d", getCodecName(), size());
         }
         else {
             pkts.push_back(RtpPacket::create(codec, pt, ssrc, seq++, pts, false, data(), size()));

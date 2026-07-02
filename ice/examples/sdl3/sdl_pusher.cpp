@@ -23,9 +23,9 @@ public:
     void open(const char* url) {
         setAudioCodec(CodecOpus);
         setVideoCodec(CodecH264);
-        cap.setupAudio(acodec_, 48000, 2);
+        cap.setupAudio(acodec_, 64000);
         // 改成800x600否则在windows中会出现粉屏...
-        cap.setupVideo(vcodec_, 800, 600, 30);
+        cap.setupVideo(vcodec_, 800, 600, 30, 400000);
         // cap.setPreview(true);
         WhipClient::open(url);
     }
