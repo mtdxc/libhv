@@ -37,6 +37,7 @@ union TrackInfo {
 #include "TimeTicker.h"
 #include <mutex>
 #include <condition_variable>
+#include <stdexcept> // std::runtime_error
 #include <list>
 #include <thread>
 #ifdef __cplusplus

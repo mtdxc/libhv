@@ -30,6 +30,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 #include <openssl/rsa.h>
 #include <cstdio>  // std::sprintf(), std::fopen()
 #include <cstring> // std::memcpy(), std::strcmp()
+#include <stdexcept> // std::runtime_error
 #define MS_TRACE()
 #define MS_ERROR hloge
 #define MS_THROW_ERROR(...) do { hloge(__VA_ARGS__); throw std::runtime_error("MS_THROW_ERROR"); } while(false)

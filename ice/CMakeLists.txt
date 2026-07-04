@@ -7,7 +7,6 @@ set(ICE_SRCS
     turn/turn_server.cpp
     agent/ice_agent.cpp
     sdp/ice_sdp.cpp
-    mIni.cpp
 )
 
 set(ICE_HEADERS
@@ -23,7 +22,6 @@ set(ICE_HEADERS
     agent/ice_agent.h
     agent/ice_config.h
     sdp/ice_sdp.h
-    mIni.h
     onceToken.h
 )
 

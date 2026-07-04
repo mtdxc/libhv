@@ -8,6 +8,7 @@
 #include <vector>
 #include <deque>
 #include <mutex>
+#include <memory>
 #define REFRESH_EVENT   (SDL_EVENT_USER + 1)
 
 template <class T>

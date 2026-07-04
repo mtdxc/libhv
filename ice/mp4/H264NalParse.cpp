@@ -1,4 +1,5 @@
-﻿#include "H264NalParse.h"
+﻿#include <string.h>
+#include "H264NalParse.h"
 
 void init_put_bits(PutBitContext *s, char *buffer, int buffer_size)
 {
