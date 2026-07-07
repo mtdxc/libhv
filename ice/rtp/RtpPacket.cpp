@@ -230,11 +230,14 @@ bool RtpPacket::RtxDecode(uint8_t payloadType, uint32_t ssrc) {
 }
 
 std::string RtpPacket::toString() const {
-    auto hdr = getHeader();
+    return getHeader()->toString(size());
+}
+
+std::string RtpHeader::toString(int size) const {
     char line[256];
     snprintf(line, sizeof(line), 
       "ssrc=%" PRIu32 ", pt=%d, seq=%" PRIu16 ", stamp=%" PRIu32 ", size=%d,%d", 
-        hdr->getSsrc(), (int)hdr->pt, hdr->getSeq(), hdr->getTimestamp(), (int)size(), (int)hdr->mark);
+        getSsrc(), (int)pt, getSeq(), getTimestamp(), size, (int)mark);
     return line;
 }
 

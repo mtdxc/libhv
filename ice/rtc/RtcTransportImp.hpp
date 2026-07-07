@@ -60,6 +60,7 @@ struct WrappedRtpTrack : public WrappedMediaTrack {
     void inputRtp(RtpPacket::Ptr rtp, uint64_t stamp_ms) override;
 };
 
+// 封装rtp收发、rtp帧打包和解包和track识别，对外提供Frame发送和接收接口
 class WebRtcTransportImp : public WebRtcTransport, public FrameWriterInterface {
 public:
     using Ptr = std::shared_ptr<WebRtcTransportImp>;
@@ -69,10 +70,10 @@ public:
     bool canRecvRtp() const;
     bool canSendRtp(const RtcMedia& media) const;
     bool canRecvRtp(const RtcMedia& media) const;
-
+    // 发送帧数据
     bool inputFrame(const Frame::Ptr &frame) override {return sendFrame(frame);}
     bool sendFrame(const Frame::Ptr &frame);
-
+    // 帧接收回调
     using FrameCallback = std::function<void(Frame::Ptr)>;
     FrameCallback onFrame;
     virtual void onRecvFrame(MediaTrack &track, const std::string &rid, Frame::Ptr rtp) {
@@ -80,6 +81,7 @@ public:
             onFrame(rtp);
         }
     }
+    // 关键帧请求回调
     using KeyFrameReqCallback = std::function<void(uint32_t)>;
     KeyFrameReqCallback onKeyFrame;
     virtual void onKeyFrameReq(MediaTrack &track, uint32_t ssrc) {

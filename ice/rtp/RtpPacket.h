@@ -159,6 +159,7 @@ struct RtpHeader {
         }
         getCsrcArray()[idx] = htonl(val);
     }
+    std::string toString(int size) const;
 };
 
 #pragma pack(pop)

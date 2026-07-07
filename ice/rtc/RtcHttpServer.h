@@ -36,6 +36,7 @@ class RtcHttpServer
 public:
     RtcHttpServer(const RtcHttpConfig& config);
     ~RtcHttpServer();
+
     static std::shared_ptr<ice::WebRtcTransport> createSession(const char* type, ice::IceAgent *agent);
     static FrameDispatcher::Ptr getDispatcher(const std::string &stream);
     static void setDispatcher(std::string name, FrameDispatcher::Ptr dispatcher);

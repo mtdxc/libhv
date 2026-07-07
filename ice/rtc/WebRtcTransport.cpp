@@ -288,7 +288,6 @@ bool WebRtcTransport::sendRtp(const void* data, size_t len, void *ctx) {
     int pktLen = static_cast<int>(len);
     onBeforeEncryptRtp((char*)buf.data(), pktLen, ctx);
     if (!srtp_send_->EncryptRtp(buf.data(), &pktLen)) {
-        hlogw("WebRtcTransport %s SRTP encrypt failed", getIdentifier());
         return false;
     }
 
@@ -309,7 +308,6 @@ bool WebRtcTransport::sendRtcp(const void* data, size_t len, void* ctx) {
     int pktLen = static_cast<int>(len);
     onBeforeEncryptRtcp((char*)buf.data(), pktLen, ctx);
     if (!srtp_send_->EncryptRtcp(buf.data(), &pktLen)) {
-        hlogw("WebRtcTransport %s SRTCP encrypt failed", getIdentifier());
         return false;
     }
 
@@ -395,14 +393,10 @@ void WebRtcTransport::processRtpOrRtcp(const uint8_t* data, size_t len) {
     if (isRtcpPacket(data, len)) {
         if (srtp_recv_->DecryptSrtcp(buf.data(), &pktLen)) {
             onRtcp((const char*)buf.data(), pktLen);
-        } else {
-            hlogw("WebRtcTransport %s SRTCP decrypt failed", getIdentifier());
         }
     } else {
         if (srtp_recv_->DecryptSrtp(buf.data(), &pktLen)) {
             onRtp((const char*)buf.data(), pktLen, _ticker.createdTime());
-        } else {
-            hlogw("WebRtcTransport %s SRTP decrypt failed", getIdentifier());
         }
     }
 }

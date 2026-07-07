@@ -68,8 +68,6 @@ mov_buffer_t* mov_get_file_buffer() {
   return &io;
 }
 
-static char start_code[4] = {0, 0, 0, 1};
-
 Mp4Reader::Mp4Reader(hv::EventLoop* loop) : loop_(loop) {
   mp4_handle_ = nullptr;
   aCodec = vCodec = CodecInvalid;
@@ -143,7 +141,7 @@ bool Mp4Reader::Open(mov_buffer_t *provider, void* data) {
 void Mp4Reader::onSizeChange(size_t size) {
   if (size == 0) {
     StopRead();
-  } else if(!timer_) {
+  } else if (!timer_) {
     StartRead();
   }
 }
@@ -202,7 +200,7 @@ int Mp4Reader::ReadFrame() {
         if (iFrameLen + iOffset + 4 > bytes_) {
           break;
         }
-        memcpy(pBytes + iOffset, start_code, 4);
+        UI32ToBytes(pBytes + iOffset, 1);
         iOffset += (iFrameLen + 4);
       }
     }
@@ -344,6 +342,7 @@ int Mp4Reader::onVideoTrack(uint32_t track,
 int64_t Mp4Reader::Seek(int64_t tsp, bool quick) {
   mov_reader_seek(mp4_handle_, &tsp);
   frame_.pts = tsp;
+  eof_ = false;
   return tsp;
 }
 

@@ -10,14 +10,15 @@ using namespace ice;
 
 class WebRtcEcho : public WebRtcTransport {
 public:
-    using Ptr = std::shared_ptr<WebRtcEcho>;
     WebRtcEcho(const IceConfig *options, IceAgent *agent) : WebRtcTransport(options, agent) {}
+
     void onRtcConfigure(RtcConfigure &configure) const override{
         WebRtcTransport::onRtcConfigure(configure);
         configure.audio.direction = configure.video.direction = RtpDirection::sendrecv;
         configure.audio.extmap.emplace(RtpExtType::sdes_mid, RtpDirection::sendrecv);
         configure.video.extmap.emplace(RtpExtType::sdes_mid, RtpDirection::sendrecv);
     }
+
     void onRtp(const char *buf, size_t len, uint64_t stamp_ms) override {
         sendRtp(buf, len, nullptr);
     }
@@ -29,14 +30,15 @@ public:
 
 class WebRtcEcho2 : public WebRtcTransportImp {
 public:
-    using Ptr = std::shared_ptr<WebRtcEcho2>;
     WebRtcEcho2(const IceConfig *options, IceAgent *agent) : WebRtcTransportImp(options, agent) {}
+
     void onRtcConfigure(RtcConfigure &configure) const override{
         WebRtcTransportImp::onRtcConfigure(configure);
         configure.audio.direction = configure.video.direction = RtpDirection::sendrecv;
         configure.audio.extmap.emplace(RtpExtType::sdes_mid, RtpDirection::sendrecv);
         configure.video.extmap.emplace(RtpExtType::sdes_mid, RtpDirection::sendrecv);
     }
+
     void onRecvFrame(MediaTrack &track, const std::string &rid, Frame::Ptr rtp) override {
         // hlogi("%s onRecvFrame %s", rid.c_str(), rtp->toString().c_str());
         sendFrame(rtp);
@@ -45,27 +47,30 @@ public:
 
 std::string record_dir = "record";
 class WebRtcPusher : public WebRtcTransportImp {
+    FrameDispatcher::Ptr dispatcher_;
 public:
-    using Ptr = std::shared_ptr<WebRtcPusher>;
     WebRtcPusher(const IceConfig *options, IceAgent *agent) : WebRtcTransportImp(options, agent) {}
     void onRtcConfigure(RtcConfigure &configure) const override{
         WebRtcTransportImp::onRtcConfigure(configure);
         configure.audio.direction = configure.video.direction = RtpDirection::recvonly;
     }
+
     void onStartWebRTC() override {
         WebRtcTransportImp::onStartWebRTC();
-        auto dispatcher = std::make_shared<FrameDispatcher>();
-        dispatcher->setGopCache(true);
+        dispatcher_ = std::make_shared<FrameDispatcher>();
+        dispatcher_->setGopCache(true);
         if (auto track = getTrack(TrackAudio)) {
-            dispatcher->aCodec = track->getCodec();
+            dispatcher_->aCodec = track->getCodec();
         }
         if (auto track = getTrack(TrackVideo)) {
-            dispatcher->vCodec = track->getCodec();
+            dispatcher_->vCodec = track->getCodec();
         }
-        dispatcher->sdp = _answer_sdp ? _answer_sdp->toRtspSdp() : "";
+        dispatcher_->sdp = _answer_sdp ? _answer_sdp->toRtspSdp() : "";
         auto stream = getStream();
-        hlogi("WebRtcPusher %s onStartWebRTC stream: %s, sdp: %s", getIdentifier(), stream.c_str(), dispatcher->sdp.c_str());
-        RtcHttpServer::setDispatcher(stream, dispatcher);
+        hlogi("WebRtcPusher %s onStartWebRTC stream: %s, sdp: %s", getIdentifier(), stream.c_str(), dispatcher_->sdp.c_str());
+        RtcHttpServer::setDispatcher(stream, dispatcher_);
+
+        // 处理录制请求
         auto it = params_.find("record");
         if (it!=params_.end() && it->second == "1") {
             auto writer = std::make_shared<Mp4Writer>();
@@ -74,35 +79,32 @@ public:
             snprintf(path, sizeof(path), "%s/%s_%02d%02d_%02d%02d%02d.mp4", record_dir.c_str(), stream.c_str(), 
                 now.month, now.day, now.hour, now.min, now.sec);
             if (writer->Open(path)) {
-                dispatcher->addDelegate(writer);
+                dispatcher_->addDelegate(writer);
                 hlogi("WebRtcPusher %s startRecord %s", getIdentifier(), path);
             }
-
         }
     }
 
     void onRecvFrame(MediaTrack &track, const std::string &rid, Frame::Ptr rtp) override {
         // hlogi("%s onRecvFrame %s", rid.c_str(), rtp->toString().c_str());
-        auto dispatcher = RtcHttpServer::getDispatcher(getStream());
-        if (dispatcher) {
-            dispatcher->inputFrame(rtp);
+        if (dispatcher_) {
+            dispatcher_->inputFrame(rtp);
         }
     }
     void onClose() override {
         WebRtcTransportImp::onClose();
         RtcHttpServer::setDispatcher(getStream(), nullptr);
+        dispatcher_ = nullptr;
     }
 };
 
 class WebRtcPlayer : public WebRtcTransportImp {
 public:
-    using Ptr = std::shared_ptr<WebRtcPlayer>;
     WebRtcPlayer(const IceConfig *options, IceAgent *agent) : WebRtcTransportImp(options, agent) {}
     void onRtcConfigure(RtcConfigure &configure) const override{
         WebRtcTransportImp::onRtcConfigure(configure);
         configure.audio.direction = configure.video.direction = RtpDirection::sendonly;
 
-        // configure.setPlayRtspInfo(sdp);
         auto dispatcher = RtcHttpServer::getDispatcher(getStream());
         if (dispatcher) {
             if (dispatcher->sdp.empty()) {
@@ -112,6 +114,7 @@ public:
             }
         }
     }
+
     void onStartWebRTC() override {
         WebRtcTransportImp::onStartWebRTC();
         auto dispatcher = RtcHttpServer::getDispatcher(getStream());
@@ -142,14 +145,14 @@ WebRtcTransport::Ptr RtcHttpServer::createSession(const char* type, IceAgent *ag
         return WebRtcTransport::Ptr(new WebRtcTransportImp(nullptr, agent));
 }
 
-std::mutex g_stream_map_mtx;
-std::map<std::string, FrameDispatcher::Ptr> g_stream_map;
+static std::mutex g_stream_map_mtx;
+static std::map<std::string, FrameDispatcher::Ptr> g_stream_map;
 FrameDispatcher::Ptr RtcHttpServer::getDispatcher(const std::string &stream) {
     std::lock_guard<std::mutex> lck(g_stream_map_mtx);
     auto it = g_stream_map.find(stream);
     if (it != g_stream_map.end()) {
         return it->second;
-    } else if(hv::endswith(stream, ".mp4")) {
+    } else if (hv::endswith(stream, ".mp4")) { // 读取mp4文件当文件源
         auto reader = std::make_shared<Mp4Reader>(currentThreadEventLoop);
         std::string path = record_dir + "/" + stream;
         if (reader->Open(path.c_str())) {
@@ -203,32 +206,50 @@ void RtcHttpServer::start() {
     static HttpService http;
     http.document_root = "html";
     http.Any("/index/api/whep", [this](const HttpContextPtr& ctx) {
-        auto sdp = ctx->body();
-        auto transport = createSession(RTC_CLASS_PLAY, agent_.get());
-        transport->setParam(ctx->params());
-        ctx->setHeader("Content-Type", "application/sdp");
-        return ctx->sendString(transport->getAnswerSdp(sdp));
+        try {
+            auto sdp = ctx->body();
+            auto transport = createSession(RTC_CLASS_PLAY, agent_.get());
+            transport->setParam(ctx->params());
+            ctx->setHeader("Content-Type", "application/sdp");
+            return ctx->sendString(transport->getAnswerSdp(sdp));
+        } catch (std::exception &ex) {
+            ctx->setStatus(HTTP_STATUS_INTERNAL_SERVER_ERROR);
+            return ctx->sendString(ex.what());
+        }
     });
     http.Any("/index/api/whip", [this](const HttpContextPtr& ctx) {
-        auto sdp = ctx->body();
-        auto transport = createSession(RTC_CLASS_PUSH, agent_.get());
-        transport->setParam(ctx->params());
-        ctx->setHeader("Content-Type", "application/sdp");
-        return ctx->sendString(transport->getAnswerSdp(sdp));
+        try {
+            auto sdp = ctx->body();
+            auto transport = createSession(RTC_CLASS_PUSH, agent_.get());
+            transport->setParam(ctx->params());
+            ctx->setHeader("Content-Type", "application/sdp");
+            return ctx->sendString(transport->getAnswerSdp(sdp));
+        } catch (std::exception &ex) {
+            ctx->setStatus(HTTP_STATUS_INTERNAL_SERVER_ERROR);
+            return ctx->sendString(ex.what());
+        }
     });
     http.Any("/index/api/webrtc", [this](const HttpContextPtr& ctx) {
-        auto type = ctx->param("type");
-        auto sdp = ctx->body();
-        auto transport = createSession(type.c_str(), agent_.get());
-        transport->setParam(ctx->params());
-        Json val;
-        val["sdp"] = transport->getAnswerSdp(sdp);
-        val["id"] = transport->getIdentifier();
-        val["token"] = transport->getIdentifier();
-        val["type"] = "answer";
-        val["code"] = 0;
-        return ctx->sendJson(val);
+        try {
+            auto type = ctx->param("type");
+            auto sdp = ctx->body();
+            auto transport = createSession(type.c_str(), agent_.get());
+            transport->setParam(ctx->params());
+            Json val;
+            val["sdp"] = transport->getAnswerSdp(sdp);
+            val["id"] = transport->getIdentifier();
+            val["token"] = transport->getIdentifier();
+            val["type"] = "answer";
+            val["code"] = 0;
+            return ctx->sendJson(val);
+        } catch (std::exception &ex) {
+            Json val;
+            val["code"] = -1;
+            val["msg"] = ex.what();
+            return ctx->sendJson(val);
+        }
     });
+
     static WebSocketService ws;
     // ws.setPingInterval(10000);
     ws.onopen = [](const WebSocketChannelPtr& channel, const HttpRequestPtr& req) {

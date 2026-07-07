@@ -40,7 +40,7 @@ public:
                 self->setRemoteDescription(SdpType::answer, res->body);
             }
             else{
-                self->close("sdp error");
+                self->close("sdp request error");
             }
         });
         return true;

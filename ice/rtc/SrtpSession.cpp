@@ -16,17 +16,15 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#define MS_CLASS "RTC::SrtpSession"
-// #define MS_LOG_DEV_LEVEL 3
-
 #include "SrtpSession.hpp"
 
 #include "hlog.h"
 #include "hsocket.h"
 #include <srtp2/srtp.h>
+#include "rtp/RtpPacket.h"
+#include <inttypes.h> // PRIu64
 #include <cstring> // std::memset(), std::memcpy()
 #include <vector>
-#define MS_TRACE()
 
 namespace RTC {
 
@@ -91,12 +89,9 @@ DepLibSRTP &DepLibSRTP::Instance(){
 }
 
 DepLibSRTP::DepLibSRTP() {
-    MS_TRACE();
-
     hlogi("libsrtp version: %s", srtp_get_version_string());
 
     srtp_err_status_t err = srtp_init();
-
 #if 0
         srtp_install_log_handler([](srtp_log_level_t level,
                                     const char *msg,
@@ -121,7 +116,6 @@ DepLibSRTP::DepLibSRTP() {
 
     // Set libsrtp event handler.
     err = srtp_install_event_handler([](srtp_event_data_t *data) {
-        MS_TRACE();
         switch (data->event) {
             case event_ssrc_collision: hlogw("SSRC collision occurred"); break;
             case event_key_soft_limit: hlogw("stream reached the soft key usage limit and will expire soon"); break;
@@ -136,7 +130,6 @@ DepLibSRTP::DepLibSRTP() {
 }
 
 DepLibSRTP::~DepLibSRTP() {
-    MS_TRACE();
     srtp_shutdown();
 }
 
@@ -146,10 +139,8 @@ DepLibSRTP::~DepLibSRTP() {
 
 SrtpSession::SrtpSession(Type type, CryptoSuite cryptoSuite, uint8_t *key, size_t keyLen) {
     _env = DepLibSRTP::Instance().shared_from_this();
-    MS_TRACE();
 
     srtp_policy_t policy; // NOLINT(cppcoreguidelines-pro-type-member-init)
-
     // Set all policy fields to 0.
     std::memset(&policy, 0, sizeof(srtp_policy_t));
 
@@ -189,7 +180,7 @@ SrtpSession::SrtpSession(Type type, CryptoSuite cryptoSuite, uint8_t *key, size_
     }
 
     if (keyLen != policy.rtp.cipher_key_len) {
-        hlogw("SrtpSession %s given keyLen does not match policy.rtp.cipher_keyLen", getId());
+        hlogw("%s given keyLen does not match policy.rtp.cipher_keyLen", getId());
         return ;
     }
 
@@ -223,73 +214,60 @@ SrtpSession::SrtpSession(Type type, CryptoSuite cryptoSuite, uint8_t *key, size_
     srtp_err_status_t err = srtp_create(&this->session, &policy);
 
     if (DepLibSRTP::IsError(err)) {
-        hlogw("SrtpSession %s srtp_create failed: %s", getId(), DepLibSRTP::GetErrorString(err));
+        hlogw("%s srtp_create failed: %s", getId(), DepLibSRTP::GetErrorString(err));
     }
 }
 
 SrtpSession::~SrtpSession() {
-    MS_TRACE();
-
     if (this->session != nullptr) {
         srtp_err_status_t err = srtp_dealloc(this->session);
         if (DepLibSRTP::IsError(err)) {
-            hlogw("SrtpSession %s srtp_dealloc failed: %s", getId(), DepLibSRTP::GetErrorString(err));
+            hlogw("%s srtp_dealloc failed: %s", getId(), DepLibSRTP::GetErrorString(err));
         }
     }
 }
 
 bool SrtpSession::EncryptRtp(uint8_t *data, int *len) {
-    MS_TRACE();
     srtp_err_status_t err = srtp_protect(this->session, static_cast<void *>(data), reinterpret_cast<int *>(len));
-
     if (DepLibSRTP::IsError(err)) {
-        hlogw("SrtpSession %s srtp_protect failed: %s", getId(), DepLibSRTP::GetErrorString(err));
+        auto hdr = (ice::RtpHeader *)data;
+        hlogw("%s srtp_protect failed: %s, %s", getId(), DepLibSRTP::GetErrorString(err), hdr->toString(*len).c_str());
         return false;
     }
-
     return true;
 }
 
 bool SrtpSession::DecryptSrtp(uint8_t *data, int *len) {
-    MS_TRACE();
-
     srtp_err_status_t err = srtp_unprotect(this->session, static_cast<void *>(data), reinterpret_cast<int *>(len));
-
     if (DepLibSRTP::IsError(err)) {
-        hlogw("SrtpSession %s srtp_unprotect failed: %s", getId(), DepLibSRTP::GetErrorString(err));
+        auto hdr = (ice::RtpHeader *)data;
+        hlogw("%s srtp_unprotect failed: %s, %s", getId(), DepLibSRTP::GetErrorString(err), hdr->toString(*len).c_str());
         return false;
     }
-
     return true;
 }
 
 bool SrtpSession::EncryptRtcp(uint8_t *data, int *len) {
-    MS_TRACE();
     srtp_err_status_t err = srtp_protect_rtcp(this->session, static_cast<void *>(data), reinterpret_cast<int *>(len));
-
     if (DepLibSRTP::IsError(err)) {
-        hlogw("SrtpSession %s srtp_protect_rtcp failed: %s", getId(), DepLibSRTP::GetErrorString(err));
+        hlogw("%s srtp_protect_rtcp failed: %s", getId(), DepLibSRTP::GetErrorString(err));
         return false;
     }
-
     return true;
 }
 
 bool SrtpSession::DecryptSrtcp(uint8_t *data, int *len) {
-    MS_TRACE();
-
     srtp_err_status_t err = srtp_unprotect_rtcp(this->session, static_cast<void *>(data), reinterpret_cast<int *>(len));
-
     if (DepLibSRTP::IsError(err)) {
-        hlogw("SrtpSession %s srtp_unprotect_rtcp failed: %s", getId(), DepLibSRTP::GetErrorString(err));
+        hlogw("%s srtp_unprotect_rtcp failed: %s", getId(), DepLibSRTP::GetErrorString(err));
         return false;
     }
-
     return true;
 }
 
 void SrtpSession::RemoveStream(uint32_t ssrc) {
-    srtp_remove_stream(this->session, uint32_t { htonl(ssrc) });
+    srtp_err_status_t err = srtp_remove_stream(this->session, uint32_t { htonl(ssrc) });
+    hlogi("%s srtp_remove_stream %" PRIu32 " return %d", getId(), ssrc, err);
 }
 
 } // namespace RTC

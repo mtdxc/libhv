@@ -73,7 +73,7 @@ namespace RTC
     private:
         struct SrtpCryptoSuiteMapEntry
         {
-            RTC::SrtpSession::CryptoSuite cryptoSuite;
+            SrtpSession::CryptoSuite cryptoSuite;
             const char* name;
         };
 
@@ -105,13 +105,13 @@ namespace RTC
             // DTLS is in the process of negotiating a secure connection. Incoming
             // media can flow through.
             // NOTE: The caller MUST NOT call any method during this callback.
-            virtual void OnDtlsTransportConnecting(const RTC::DtlsTransport* dtlsTransport) = 0;
+            virtual void OnDtlsTransportConnecting(const DtlsTransport* dtlsTransport) = 0;
             // DTLS has completed negotiation of a secure connection (including DTLS-SRTP
             // and remote fingerprint verification). Outgoing media can now flow through.
             // NOTE: The caller MUST NOT call any method during this callback.
             virtual void OnDtlsTransportConnected(
-              const RTC::DtlsTransport* dtlsTransport,
-              RTC::SrtpSession::CryptoSuite srtpCryptoSuite,
+              const DtlsTransport* dtlsTransport,
+              SrtpSession::CryptoSuite srtpCryptoSuite,
               uint8_t* srtpLocalKey,
               size_t srtpLocalKeyLen,
               uint8_t* srtpRemoteKey,
@@ -119,40 +119,37 @@ namespace RTC
               std::string& remoteCert) = 0;
             // The DTLS connection has been closed as the result of an error (such as a
             // DTLS alert or a failure to validate the remote fingerprint).
-            virtual void OnDtlsTransportFailed(const RTC::DtlsTransport* dtlsTransport) = 0;
+            virtual void OnDtlsTransportFailed(const DtlsTransport* dtlsTransport) = 0;
             // The DTLS connection has been closed due to receipt of a close_notify alert.
-            virtual void OnDtlsTransportClosed(const RTC::DtlsTransport* dtlsTransport) = 0;
+            virtual void OnDtlsTransportClosed(const DtlsTransport* dtlsTransport) = 0;
             // Need to send DTLS data to the peer.
             virtual void OnDtlsTransportSendData(
-              const RTC::DtlsTransport* dtlsTransport, const uint8_t* data, size_t len) = 0;
+              const DtlsTransport* dtlsTransport, const uint8_t* data, size_t len) = 0;
             // DTLS application data received.
             virtual void OnDtlsTransportApplicationDataReceived(
-              const RTC::DtlsTransport* dtlsTransport, const uint8_t* data, size_t len) = 0;
+              const DtlsTransport* dtlsTransport, const uint8_t* data, size_t len) = 0;
         };
 
     public:
         static Role StringToRole(const std::string& role)
         {
-            auto it = DtlsTransport::string2Role.find(role);
-
-            if (it != DtlsTransport::string2Role.end())
+            auto it = string2Role.find(role);
+            if (it != string2Role.end())
                 return it->second;
             else
-                return DtlsTransport::Role::NONE;
+                return Role::NONE;
         }
         static FingerprintAlgorithm GetFingerprintAlgorithm(const std::string& fingerprint)
         {
-            auto it = DtlsTransport::string2FingerprintAlgorithm.find(fingerprint);
-
-            if (it != DtlsTransport::string2FingerprintAlgorithm.end())
+            auto it = string2FingerprintAlgorithm.find(fingerprint);
+            if (it != string2FingerprintAlgorithm.end())
                 return it->second;
             else
-                return DtlsTransport::FingerprintAlgorithm::NONE;
+                return FingerprintAlgorithm::NONE;
         }
         static std::string& GetFingerprintAlgorithmString(FingerprintAlgorithm fingerprint)
         {
-            auto it = DtlsTransport::fingerprintAlgorithm2String.find(fingerprint);
-
+            auto it = fingerprintAlgorithm2String.find(fingerprint);
             return it->second;
         }
         static bool IsDtls(const uint8_t* data, size_t len)
@@ -182,20 +179,11 @@ namespace RTC
     public:
         void Dump() const;
         void Run(Role localRole);
-        std::vector<Fingerprint>& GetLocalFingerprints() const
-        {
-            return env->localFingerprints;
-        }
+        std::vector<Fingerprint>& GetLocalFingerprints() const {return env->localFingerprints;}
         bool SetRemoteFingerprint(Fingerprint fingerprint);
         void ProcessDtlsData(const uint8_t* data, size_t len);
-        DtlsState GetState() const
-        {
-            return this->state;
-        }
-        Role GetLocalRole() const
-        {
-            return this->localRole;
-        }
+        DtlsState GetState() const {return this->state;}
+        Role GetLocalRole() const {return this->localRole;}
         void SendApplicationData(const uint8_t* data, size_t len);
 
     private:
@@ -222,8 +210,8 @@ namespace RTC
         bool SetTimeout();
         bool ProcessHandshake();
         bool CheckRemoteFingerprint();
-        void ExtractSrtpKeys(RTC::SrtpSession::CryptoSuite srtpCryptoSuite);
-        RTC::SrtpSession::CryptoSuite GetNegotiatedSrtpCryptoSuite();
+        void ExtractSrtpKeys(SrtpSession::CryptoSuite srtpCryptoSuite);
+        SrtpSession::CryptoSuite GetNegotiatedSrtpCryptoSuite();
 
     private:
         void OnSslInfo(int where, int ret);
