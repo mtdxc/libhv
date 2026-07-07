@@ -1,5 +1,6 @@
 #include "hlog.h"
 #include "rtc/RtcClient.h"
+#include "mp4/Mp4Writer.h"
 using namespace ice;
 
 int main(int argc, char* argv[]) {
@@ -9,10 +10,22 @@ int main(int argc, char* argv[]) {
     if (argc > 1) {
         url = argv[1];
     }
+    std::shared_ptr<Mp4Writer> mp4_writer;
+    if (argc > 2) {
+        const char* mp4_path = argv[2];
+        mp4_writer = std::make_shared<Mp4Writer>();
+        if (!mp4_writer->Open(mp4_path)) {
+            printf("open mp4 file failed: %s\n", mp4_path);
+            return -1;
+        }
+    }
     logger_enable_color(hlog, true);
     hlog_set_handler(stdout_logger);
-    client->onFrame = [](Frame::Ptr frame) {
+    client->onFrame = [mp4_writer](Frame::Ptr frame) {
         printf("recv frame %s\n", frame->toString().c_str());
+        if (mp4_writer) {
+            mp4_writer->inputFrame(frame);
+        }
     };
     client->open(url);
     printf("press q to quit loop\n");
