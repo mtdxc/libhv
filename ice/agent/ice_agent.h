@@ -18,6 +18,7 @@ namespace ice {
 class IceSession;
 class TurnClient;
 class StunTransaction;
+class MdnsService;
 
 // STUN Transaction for tracking requests
 using StunCallback = std::function<void(StunMessage* resp, int code)>;
@@ -94,10 +95,19 @@ public:
     // Start TURN allocation (lazy, called by IceSession during gathering)
     void allocateTurn();
 
+    // ---- mDNS APIs (used by IceSession) ----
+    // Shared mDNS endpoint that hides the local host candidates and resolves the hidden
+    // candidates of the peer. Created on first use, NULL when config().enableMdns is off
+    // or after stop().
+    MdnsService* mdns();
+
 private:
     std::shared_ptr<TurnClient> getTurnClient() const;
     // ---- TURN state ----
     std::shared_ptr<TurnClient> turn_client_;
+
+    // ---- mDNS state ----
+    std::shared_ptr<MdnsService> mdns_;
 
     // UDP callbacks
     void onRecvPdu(const uint8_t* data, size_t len, const struct sockaddr* addr, hio_t* io);

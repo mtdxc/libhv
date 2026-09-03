@@ -51,6 +51,9 @@ struct IceCandidate {
     // Optional fields
     sockaddr_u relatedAddr;      // raddr/rport (base address for srflx/prflx/relay)
     TcpType tcpType = TcpType::None;
+    // mDNS (RFC 6762) name "<uuid>.local" of a hidden host candidate. When it is set,
+    // the candidate is advertised by name in SDP instead of by its literal address.
+    std::string mdnsName;
 
     // Internal use
     sockaddr_u baseAddr;         // Local address used for this candidate
@@ -67,6 +70,15 @@ struct IceCandidate {
     // Get address as string "ip:port"
     std::string addrString() const;
     std::string relatedAddrString() const;
+
+    // An mDNS candidate carries a name instead of a literal address
+    bool isMdns() const { return !mdnsName.empty(); }
+    // false while an mDNS candidate is still waiting for resolution
+    bool hasAddress() const;
+    // Address as it appears in SDP: the mDNS name when hidden, "ip" otherwise
+    std::string sdpAddress() const;
+    // Store the address resolved from the mDNS name, keeping the SDP port
+    void applyResolvedAddress(const sockaddr_u& resolved);
 
     // Type string for SDP
     static const char* typeString(CandidateType type);

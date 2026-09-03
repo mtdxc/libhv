@@ -83,8 +83,8 @@ void WebRtcTransport::onRtcConfigure(RtcConfigure &configure) const {
             candidate->component = 1;
             candidate->transport = TransportProtocolStr(c.protocol);
             candidate->priority = c.priority;
-            char ipstr[64];
-            candidate->address = sockaddr_ip(&c.addr, ipstr, sizeof(ipstr));
+            // sdpAddress is the "<uuid>.local" name when the candidate is hidden by mDNS
+            candidate->address = c.sdpAddress();
             candidate->port = sockaddr_port(&c.addr);
             candidate->type = c.typeString(c.type);
             if (strcasecmp(candidate->transport.c_str(), "tcp") == 0) {

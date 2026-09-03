@@ -1,4 +1,5 @@
 #include "ice_candidate.h"
+#include "../mdns/mdns.h"
 #include <sstream>
 #include <cstdio>
 #include <cstring>
@@ -22,6 +23,33 @@ std::string IceCandidate::addrString() const {
 std::string IceCandidate::relatedAddrString() const {
     char buf[SOCKADDR_STRLEN] = {0};
     return sockaddr_str(const_cast<sockaddr_u*>(&relatedAddr), buf, sizeof(buf));
+}
+
+bool IceCandidate::hasAddress() const {
+    if (addr.sa.sa_family == AF_INET) {
+        return addr.sin.sin_addr.s_addr != 0;
+    }
+    if (addr.sa.sa_family == AF_INET6) {
+        const unsigned char* bytes = (const unsigned char*)&addr.sin6.sin6_addr;
+        for (int i = 0; i < 16; ++i) {
+            if (bytes[i] != 0) return true;
+        }
+    }
+    return false;
+}
+
+std::string IceCandidate::sdpAddress() const {
+    if (!mdnsName.empty()) return mdnsName;
+    char ip[INET6_ADDRSTRLEN] = {0};
+    sockaddr_ip(const_cast<sockaddr_u*>(&addr), ip, sizeof(ip));
+    return ip;
+}
+
+void IceCandidate::applyResolvedAddress(const sockaddr_u& resolved) {
+    // Keep the port advertised in SDP, replace the address that was resolved from mdnsName
+    uint16_t port = sockaddr_port(const_cast<sockaddr_u*>(&addr));
+    memcpy(&addr, &resolved, SOCKADDR_LEN((sockaddr_u*)&resolved));
+    sockaddr_set_port(&addr, port);
 }
 
 const char* IceCandidate::typeString(CandidateType type) {
@@ -124,11 +152,10 @@ std::string IceCandidate::toSdp(bool prefix) const{
     //         [raddr <addr> rport <port>] [tcptype <type>]
     std::ostringstream oss;
 
-    // Get IP and port
-    char ip[INET6_ADDRSTRLEN] = {0};
+    // The address column is either the literal ip or the name of a hidden candidate,
+    // the port is always the real one
     sockaddr_u* addr = (sockaddr_u*)&this->addr;
     int port = sockaddr_port(addr);
-    sockaddr_ip(addr, ip, sizeof(ip));
 
     std::string transport = (this->protocol == TransportProtocol::UDP) ? "udp" : "tcp";
 
@@ -136,7 +163,7 @@ std::string IceCandidate::toSdp(bool prefix) const{
         << " " << componentId
         << " " << transport
         << " " << priority
-        << " " << ip
+        << " " << sdpAddress()
         << " " << port
         << " typ " << typeString(type);
 
@@ -184,7 +211,15 @@ bool IceCandidate::fromSdp(const std::string& line) {
 
     // Parse address
     memset(&this->addr, 0, sizeof(this->addr));
-    if (addrStr.find(':') != std::string::npos) {
+    this->mdnsName.clear();
+    if (isMdnsName(addrStr)) {
+        // Hidden candidate: only the name is known, the address is filled in by
+        // IceSession once the mDNS query returned. Family is provisionally ipv4,
+        // applyResolvedAddress fixes it up.
+        this->mdnsName = addrStr;
+        this->addr.sin.sin_family = AF_INET;
+        this->addr.sin.sin_port = htons(port);
+    } else if (addrStr.find(':') != std::string::npos) {
         // IPv6
         this->addr.sin6.sin6_family = AF_INET6;
         inet_pton(AF_INET6, addrStr.c_str(), &this->addr.sin6.sin6_addr);

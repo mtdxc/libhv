@@ -58,6 +58,14 @@ struct IceConfig {
     bool gatherSrflx = true;        // Gather server-reflexive candidates
     bool gatherRelay = false;       // Gather relay candidates (requires TURN)
 
+    // Advertise local host candidates as mDNS (RFC 6762) "<uuid>.local" names instead of
+    // literal addresses (as browsers do) and resolve the hidden candidates of the peer.
+    // NOTE: the peer resolves a hidden candidate by a multicast query that this process
+    // has to receive, so it only works when port 5353 could be shared with the responder
+    // of the operating system (see MdnsService).
+    bool enableMdns = false;
+    int mdnsTimeoutMs = 4000;       // Max time waiting for the address of a remote .local candidate
+
     // Nomination
     NominationMode nomination = (NominationMode)0; // Regular
 

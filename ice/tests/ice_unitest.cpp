@@ -1,5 +1,7 @@
 #include <thread>
 #include <chrono>
+#include <atomic>
+#include <future>
 #include <memory>
 #include <cstring>
 #include <gtest/gtest.h>
@@ -1205,3 +1207,359 @@ TEST(SdpTest, RtcSessionVideoOffer) {
     auto *rtxPlan = media.getPlan("rtx");
     ASSERT_TRUE(rtxPlan != nullptr);
 }
+
+// ────────────────────────────────────────────────────────────
+// mDNS Tests (RFC 6762)
+// ────────────────────────────────────────────────────────────
+
+TEST(MdnsTest, NameHelpers) {
+    std::string name = mdnsGenerateName();
+    // 36 char UUID v4 + ".local"
+    EXPECT_EQ(name.size(), 36u + strlen(MDNS_SUFFIX));
+    EXPECT_EQ(name[14], '4');
+    EXPECT_TRUE(isMdnsName(name));
+    EXPECT_EQ(mdnsNormalizeName(name + "."), name);
+
+    EXPECT_TRUE(isMdnsName("Foo.Local"));
+    EXPECT_FALSE(isMdnsName(".local"));
+    EXPECT_FALSE(isMdnsName("192.168.1.10"));
+    EXPECT_FALSE(isMdnsName("example.com"));
+
+    EXPECT_EQ(mdnsNormalizeName("ABCD.Local."), "abcd.local");
+}
+
+TEST(MdnsTest, EncodeDecodeQuery) {
+    MdnsMessage msg;
+    MdnsQuestion question;
+    question.name = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.local";
+    question.type = MDNS_TYPE_A;
+    question.unicastResponse = true;
+    msg.questions.push_back(question);
+
+    auto encoded = msg.encode();
+    MdnsMessage decoded;
+    ASSERT_TRUE(MdnsMessage::decode(encoded.data(), encoded.size(), &decoded));
+    EXPECT_FALSE(decoded.response);
+    ASSERT_EQ(decoded.questions.size(), 1u);
+    EXPECT_EQ(decoded.questions[0].name, question.name);
+    EXPECT_EQ(decoded.questions[0].type, (uint16_t)MDNS_TYPE_A);
+    EXPECT_TRUE(decoded.questions[0].unicastResponse);
+    EXPECT_TRUE(decoded.answers.empty());
+}
+
+TEST(MdnsTest, EncodeDecodeAddressRecords) {
+    sockaddr_u v4, v6;
+    memset(&v4, 0, sizeof(v4));
+    memset(&v6, 0, sizeof(v6));
+    sockaddr_set_ipport(&v4, "192.168.1.10", 0);
+    sockaddr_set_ipport(&v6, "fe80::1", 0);
+
+    MdnsMessage msg;
+    msg.response = true;
+    msg.authoritative = true;
+    const std::string name = mdnsGenerateName();
+    for (const auto& addr : {v4, v6}) {
+        MdnsRecord record;
+        record.name = name;
+        record.type = addr.sa.sa_family == AF_INET6 ? MDNS_TYPE_AAAA : MDNS_TYPE_A;
+        record.addr = addr;
+        record.setCacheFlush(true);
+        msg.answers.push_back(record);
+    }
+    // a goodbye record must not be taken for an address
+    MdnsRecord goodbye = msg.answers[0];
+    goodbye.ttl = 0;
+    msg.additionals.push_back(goodbye);
+
+    auto encoded = msg.encode();
+    MdnsMessage decoded;
+    ASSERT_TRUE(MdnsMessage::decode(encoded.data(), encoded.size(), &decoded));
+    EXPECT_TRUE(decoded.response);
+    EXPECT_TRUE(decoded.authoritative);
+    ASSERT_EQ(decoded.answers.size(), 2u);
+    EXPECT_TRUE(decoded.answers[0].cacheFlush());
+
+    sockaddr_u resolved;
+    ASSERT_TRUE(decoded.findAddress(name, &resolved));
+    EXPECT_EQ(mdnsAddrString(resolved), "192.168.1.10:0");
+    EXPECT_FALSE(decoded.findAddress(mdnsGenerateName(), &resolved));
+}
+
+TEST(MdnsTest, DecodeNameCompressionPointer) {
+    // A response whose answer name is a pointer to the question name (RFC 1035 4.1.4)
+    std::vector<uint8_t> encoded = {
+        0x00, 0x00, 0x84, 0x00,
+        0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00,
+        4, 'h', 'o', 's', 't', 5, 'l', 'o', 'c', 'a', 'l', 0,
+        0x00, 0x01, 0x00, 0x01,
+        0xC0, 0x0C,
+        0x00, 0x01, 0x00, 0x01,
+        0x00, 0x00, 0x00, 0x78,
+        0x00, 0x04, 127, 0, 0, 1,
+    };
+
+    MdnsMessage decoded;
+    ASSERT_TRUE(MdnsMessage::decode(encoded.data(), encoded.size(), &decoded));
+    ASSERT_EQ(decoded.questions.size(), 1u);
+    EXPECT_EQ(decoded.questions[0].name, "host.local");
+    ASSERT_EQ(decoded.answers.size(), 1u);
+    EXPECT_EQ(decoded.answers[0].name, "host.local");
+
+    sockaddr_u resolved;
+    // The lookup is case insensitive and tolerates the trailing dot of the wire format
+    ASSERT_TRUE(decoded.findAddress("HOST.LOCAL.", &resolved));
+    EXPECT_EQ(mdnsAddrString(resolved), "127.0.0.1:0");
+}
+
+TEST(MdnsTest, AnnounceAndResolve) {
+    hv::EventLoopThread thread;
+    thread.start();
+    ASSERT_TRUE(thread.isRunning());
+    auto loop = thread.loop();
+
+    auto responder = std::make_shared<MdnsService>(loop);
+    auto resolver = std::make_shared<MdnsService>(loop);
+
+    const std::string name = mdnsGenerateName();
+    sockaddr_u addr;
+    memset(&addr, 0, sizeof(addr));
+    ASSERT_EQ(sockaddr_set_ipport(&addr, "192.0.2.23", 0), 0);  // TEST-NET-1
+
+    std::promise<std::string> result;
+    auto resolved = result.get_future();
+    responder->publish(name, addr);
+    resolver->resolve(name, [&result](const std::string&, const sockaddr_u* ip) {
+        result.set_value(ip ? mdnsAddrString(*ip) : "");
+    }, 3000);
+
+    auto status = resolved.wait_for(std::chrono::seconds(5));
+    // The pending tasks are drained in order, so the services are stopped here for sure
+    std::promise<void> stopped;
+    responder->stop();
+    resolver->stop();
+    loop->runInLoop([&stopped]() { stopped.set_value(); });
+    stopped.get_future().wait();
+    thread.stop();
+    thread.join();
+
+    if (status != std::future_status::ready) {
+        GTEST_SKIP() << "no mDNS traffic was delivered in this environment";
+    }
+    EXPECT_EQ(resolved.get(), "192.0.2.23:0");
+}
+
+TEST(MdnsTest, OneQueryAnswersEveryResolver) {
+    hv::EventLoopThread thread;
+    thread.start();
+    auto loop = thread.loop();
+    auto responder = std::make_shared<MdnsService>(loop);
+    auto resolver = std::make_shared<MdnsService>(loop);
+
+    const std::string name = mdnsGenerateName();
+    sockaddr_u addr;
+    memset(&addr, 0, sizeof(addr));
+    ASSERT_EQ(sockaddr_set_ipport(&addr, "192.0.2.99", 0), 0);
+
+    std::atomic<int> hits{0};
+    auto cb = [&hits](const std::string&, const sockaddr_u* ip) {
+        if (ip && mdnsAddrString(*ip) == "192.0.2.99:0") ++hits;
+    };
+    responder->publish(name, addr);
+    // Two requests for the same name put one query on the wire but have to be answered both
+    resolver->resolve(name, cb, 3000);
+    resolver->resolve(name, cb, 3000);
+
+    for (int i = 0; i < 500 && hits.load() < 2; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    std::promise<void> stopped;
+    responder->stop();
+    resolver->stop();
+    loop->runInLoop([&stopped]() { stopped.set_value(); });
+    stopped.get_future().wait();
+    thread.stop();
+    thread.join();
+
+    if (hits.load() == 0) {
+        GTEST_SKIP() << "no mDNS traffic was delivered in this environment";
+    }
+    EXPECT_EQ(hits.load(), 2);
+}
+
+TEST(IceCandidateTest, MdnsSdpRoundTrip) {
+    IceCandidate cand;
+    cand.foundation = "1";
+    cand.componentId = 1;
+    cand.protocol = TransportProtocol::UDP;
+    cand.priority = 2130706431;
+    cand.type = CandidateType::Host;
+    sockaddr_set_ipport(&cand.addr, "192.168.1.10", 8443);
+    cand.mdnsName = mdnsGenerateName();
+
+    std::string sdp = cand.toSdp();
+    EXPECT_NE(sdp.find(cand.mdnsName), std::string::npos);
+    EXPECT_EQ(sdp.find("192.168.1.10"), std::string::npos);
+    EXPECT_TRUE(cand.hasAddress());  // the local candidate does know its address
+
+    IceCandidate parsed;
+    ASSERT_TRUE(parsed.fromSdp(sdp));
+    EXPECT_TRUE(parsed.isMdns());
+    EXPECT_FALSE(parsed.hasAddress());  // hidden until the name is resolved
+    EXPECT_EQ(parsed.mdnsName, cand.mdnsName);
+    EXPECT_EQ(parsed.protocol, cand.protocol);
+    EXPECT_EQ(parsed.priority, cand.priority);
+    EXPECT_EQ(parsed.type, cand.type);
+
+    // Resolution keeps the port advertised in SDP, only the address is filled in
+    sockaddr_u resolved;
+    memset(&resolved, 0, sizeof(resolved));
+    sockaddr_set_ipport(&resolved, "10.0.0.5", 0);
+    parsed.applyResolvedAddress(resolved);
+    EXPECT_TRUE(parsed.hasAddress());
+    EXPECT_EQ(parsed.addrString(), "10.0.0.5:8443");
+
+    // A plain candidate is unaffected
+    IceCandidate plain;
+    ASSERT_TRUE(plain.fromSdp("1 1 udp 2130706431 192.168.1.10 8443 typ host"));
+    EXPECT_FALSE(plain.isMdns());
+    EXPECT_TRUE(plain.hasAddress());
+    EXPECT_EQ(plain.sdpAddress(), "192.168.1.10");
+}
+
+static std::string ipOf(const sockaddr_u& addr) {
+    char ip[INET6_ADDRSTRLEN] = {0};
+    sockaddr_ip((sockaddr_u*)&addr, ip, sizeof(ip));
+    return ip;
+}
+
+TEST_F(IceAgentTest, MdnsHidesHostCandidates) {
+    config_.enableMdns = true;
+    IceAgent agent;
+    agent.setConfig(config_);
+    ASSERT_EQ(agent.start(), 0);
+
+    auto session = agent.createSession();
+    EXPECT_TRUE(session->mdnsEnabled());
+
+    std::vector<IceCandidate> gathered;
+    session->onLocalCandidate = [&gathered](const IceCandidate& cand) {
+        gathered.push_back(cand);
+    };
+    session->gatherCandidates();
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    ASSERT_FALSE(gathered.empty());
+    for (auto cand : gathered) {
+        ASSERT_EQ(cand.type, CandidateType::Host);
+        // SDP hides the address, the candidate itself keeps it for the connectivity checks
+        EXPECT_TRUE(isMdnsName(cand.mdnsName));
+        EXPECT_TRUE(cand.hasAddress());
+        EXPECT_EQ(cand.sdpAddress(), cand.mdnsName);
+        EXPECT_EQ(cand.toSdp().find(ipOf(cand.addr)), std::string::npos);
+    }
+
+    agent.stop();
+}
+
+TEST_F(IceAgentTest, MdnsDisabledKeepsLiteralAddresses) {
+    config_.enableMdns = false;
+    IceAgent agent;
+    agent.setConfig(config_);
+    ASSERT_EQ(agent.start(), 0);
+
+    auto session = agent.createSession();
+    EXPECT_FALSE(session->mdnsEnabled());
+
+    std::vector<IceCandidate> gathered;
+    session->onLocalCandidate = [&gathered](const IceCandidate& cand) {
+        gathered.push_back(cand);
+    };
+    session->gatherCandidates();
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    ASSERT_FALSE(gathered.empty());
+    for (auto cand : gathered) {
+        EXPECT_FALSE(cand.isMdns());
+        EXPECT_EQ(cand.sdpAddress(), ipOf(cand.addr));
+        EXPECT_NE(cand.toSdp().find(ipOf(cand.addr)), std::string::npos);
+    }
+
+    agent.stop();
+}
+
+// Reads a candidate vector of a session, in the event loop thread that owns it
+using CandidatesGetter = std::function<const std::vector<IceCandidate>& (IceSession&)>;
+
+static std::vector<IceCandidate> snapshotCandidates(const IceSessionPtr& session, const CandidatesGetter& getter) {
+    std::promise<std::vector<IceCandidate>> promise;
+    auto future = promise.get_future();
+    session->loop()->runInLoop([&promise, session, getter]() {
+        promise.set_value(getter(*session));
+    });
+    return future.get();
+}
+
+TEST_F(IceAgentTest, MdnsResolvesHiddenRemoteCandidates) {
+    // NOTE: like MdnsTest.AnnounceAndResolve this needs mDNS multicast to be delivered
+    // on the local link, which is the case whenever the candidates could be hidden.
+    config_.enableMdns = true;
+    IceAgent agent;
+    agent.setConfig(config_);
+    ASSERT_EQ(agent.start(), 0);
+
+    auto s1 = agent.createSession();
+    auto s2 = agent.createSession();
+
+    // Exchange the candidates as SDP lines the way a signaling channel would: session2
+    // never learns the address of session1 from the SDP, only its "<uuid>.local" name.
+    s1->onLocalCandidate = [s2](const IceCandidate& cand) {
+        IceCandidate remote;
+        if (remote.fromSdp(cand.toSdp())) {
+            s2->addRemoteCandidate(remote);
+        }
+    };
+    s2->onLocalCandidate = [s1](const IceCandidate& cand) {
+        IceCandidate remote;
+        if (remote.fromSdp(cand.toSdp())) {
+            s1->addRemoteCandidate(remote);
+        }
+    };
+
+    auto locals = [](IceSession& s) -> const std::vector<IceCandidate>& { return s.localCandidates(); };
+    auto remotes = [](IceSession& s) -> const std::vector<IceCandidate>& { return s.remoteCandidates(); };
+
+    s1->setRemoteCredentials(s2->localUfrag(), s2->localPwd());
+    s2->setRemoteCredentials(s1->localUfrag(), s1->localPwd());
+    s1->gatherCandidates();
+    s2->gatherCandidates();
+
+    std::vector<IceCandidate> local, remote;
+    bool resolved = false;
+    for (int i = 0; i < 400 && !resolved; ++i) {
+        local = snapshotCandidates(s1, locals);
+        remote = snapshotCandidates(s2, remotes);
+        // Candidates whose name is not resolved yet never reach remoteCandidates()
+        resolved = !local.empty() && remote.size() >= local.size();
+        if (!resolved) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(resolved) << "session2 did not resolve the hidden candidates of session1";
+
+    for (const auto& hidden : local) {
+        ASSERT_TRUE(isMdnsName(hidden.mdnsName));
+        bool matched = false;
+        for (const auto& cand : remote) {
+            if (mdnsNormalizeName(cand.mdnsName) != mdnsNormalizeName(hidden.mdnsName)) continue;
+            matched = true;
+            EXPECT_TRUE(cand.hasAddress());
+            EXPECT_EQ(cand.addrString(), hidden.addrString());
+            EXPECT_EQ(cand.protocol, hidden.protocol);
+            EXPECT_EQ(cand.componentId, hidden.componentId);
+        }
+        EXPECT_TRUE(matched) << "no candidate was queued for " << hidden.mdnsName.c_str();
+    }
+
+    agent.stop();
+}
+
+

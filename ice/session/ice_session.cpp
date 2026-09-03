@@ -2,6 +2,7 @@
 #include "../agent/ice_agent.h"
 #include "../stun/stun_auth.h"
 #include "../turn/turn_client.h"
+#include "../mdns/mdns.h"
 #include "hloop.h"
 #include "hlog.h"
 
@@ -107,6 +108,9 @@ void IceSession::close() {
 
     setState(IceState::Closed);
 
+    // Withdraw the announced mDNS names and drop the pending resolutions
+    cleanupMdns();
+
     // Kill timers (only if the loop is still valid)
     hloop_t* loop = loop_ ? loop_->loop() : nullptr;
     if (loop) {
@@ -172,14 +176,113 @@ void IceSession::setRemoteCredentials(const std::string& ufrag, const std::strin
 }
 
 void IceSession::addLocalCandidate(const IceCandidate& candidate) {
-    hlogi("IceSession %s addLocalCandidate %s", id(), candidate.toSdp().c_str());
-    local_candidates_.push_back(candidate);
+    IceCandidate local = candidate;
+    hideLocalCandidate(local);
+    hlogi("IceSession %s addLocalCandidate %s", id(), local.toSdp().c_str());
+    local_candidates_.push_back(local);
     if (onLocalCandidate) {
-        onLocalCandidate(candidate);
+        onLocalCandidate(local);
     }
 }
 
+std::string IceSession::mdnsNameFor(const sockaddr_u& addr) {
+    char ip[INET6_ADDRSTRLEN] = {0};
+    sockaddr_ip((sockaddr_u*)&addr, ip, sizeof(ip));
+    std::string key = ip;
+    auto it = mdns_names_.find(key);
+    if (it != mdns_names_.end()) return it->second;
+
+    MdnsService* mdns = agent_ ? agent_->mdns() : nullptr;
+    if (!mdns) return "";
+
+    std::string name = mdnsGenerateName();
+    mdns_names_[key] = name;
+    // Announce name -> address on the local link, so that the peer can ask who owns it
+    mdns->publish(name, addr);
+    hlogi("IceSession %s mdns: hiding %s behind %s", id(), ip, name.c_str());
+    return name;
+}
+
+void IceSession::hideLocalCandidate(IceCandidate& candidate) {
+    if (!mdns_enabled_ || candidate.type != CandidateType::Host) return;
+    std::string name = mdnsNameFor(candidate.addr);
+    // Without an mDNS service there is nobody to answer, advertise the address as is
+    if (name.empty()) return;
+    candidate.mdnsName = name;
+}
+
+void IceSession::resolveRemoteMdnsCandidate(const IceCandidate& candidate) {
+    std::string name = mdnsNormalizeName(candidate.mdnsName);
+    MdnsService* mdns = agent_ ? agent_->mdns() : nullptr;
+    if (!mdns) {
+        hlogw("IceSession %s drop candidate %s: mDNS is not available", id(), name.c_str());
+        return;
+    }
+
+    std::vector<IceCandidate>& pending = pending_remote_mdns_[name];
+    bool first = pending.empty();
+    pending.push_back(candidate);
+    if (!first) {
+        hlogi("IceSession %s candidate %s queued, mDNS query %s is already running", id(), candidate.toSdp().c_str(), name.c_str());
+        return;
+    }
+
+    // The callback keeps the session alive, so `this` stays valid
+    std::shared_ptr<IceSession> self = shared_from_this();
+    int timeoutMs = agent_->config().mdnsTimeoutMs;
+    hlogi("IceSession %s addRemoteCandidate %s: resolving mDNS name %s", id(), candidate.toSdp().c_str(), name.c_str());
+    mdns->resolve(name, [this, self](const std::string& resolved, const sockaddr_u* addr) {
+        this->onRemoteMdnsResolved(resolved, addr);
+    }, timeoutMs);
+}
+
+void IceSession::onRemoteMdnsResolved(const std::string& name, const sockaddr_u* addr) {
+    auto it = pending_remote_mdns_.find(name);
+    if (it == pending_remote_mdns_.end()) return;
+    std::vector<IceCandidate> candidates = std::move(it->second);
+    pending_remote_mdns_.erase(it);
+
+    if (state_ == IceState::Closed) return;
+    if (!addr) {
+        hlogw("IceSession %s dropped %zu candidate(s): mDNS name %s was not resolved", id(), candidates.size(), name.c_str());
+        return;
+    }
+
+    hlogi("IceSession %s mDNS %s resolved to %s", id(), name.c_str(), mdnsAddrString(*addr).c_str());
+    for (auto& candidate : candidates) {
+        candidate.applyResolvedAddress(*addr);
+        addRemoteCandidate(candidate);
+    }
+}
+
+void IceSession::cleanupMdns() {
+    if (mdns_names_.empty() && pending_remote_mdns_.empty()) return;
+    MdnsService* mdns = agent_ ? agent_->mdns() : nullptr;
+    if (mdns) {
+        for (const auto& kv : mdns_names_) {
+            mdns->unpublish(kv.second);
+        }
+        // cancel() runs the callback, which erases from pending_remote_mdns_
+        std::vector<std::string> names;
+        names.reserve(pending_remote_mdns_.size());
+        for (const auto& kv : pending_remote_mdns_) {
+            names.push_back(kv.first);
+        }
+        for (const auto& name : names) {
+            mdns->cancel(name);
+        }
+    }
+    mdns_names_.clear();
+    pending_remote_mdns_.clear();
+}
+
 void IceSession::addRemoteCandidate(const IceCandidate& candidate) {
+    if (candidate.isMdns() && !candidate.hasAddress()) {
+        // The peer hides the address of the candidate behind a "<uuid>.local" name, it
+        // cannot take part in the connectivity checks until the name is resolved.
+        resolveRemoteMdnsCandidate(candidate);
+        return;
+    }
     hlogi("IceSession %s addRemoteCandidate %s", id(), candidate.toSdp().c_str());
     remote_candidates_.push_back(candidate);
 

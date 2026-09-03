@@ -3,6 +3,7 @@
 
 #include <string>
 #include <vector>
+#include <map>
 #include <memory>
 #include <functional>
 #include <unordered_map>
@@ -46,6 +47,12 @@ public:
 
     void setNomination(NominationMode mode) { nomination_ = mode; }
     void setTiebreaker(uint64_t tb) { tiebreaker_ = tb; }
+
+    // Advertise the local host candidates as mDNS (RFC 6762) "<uuid>.local" names and
+    // resolve the hidden candidates of the peer. Enabled from IceConfig::enableMdns by
+    // IceAgent::createSession, must be changed before gatherCandidates.
+    void setMdnsEnabled(bool enabled) { mdns_enabled_ = enabled; }
+    bool mdnsEnabled() const { return mdns_enabled_; }
 
     const char* id() const { return local_ufrag_.c_str(); }
     
@@ -137,6 +144,20 @@ private:
     // Form candidate pairs
     void formPairs();
 
+    // mDNS hidden candidates
+    // The "<uuid>.local" name hiding a local address, created and announced once per
+    // address so that the udp and tcp candidates of an interface share it. Returns an
+    // empty string when the mDNS service is not available.
+    std::string mdnsNameFor(const sockaddr_u& addr);
+    // Replace the address of a local host candidate by its name, called by addLocalCandidate
+    void hideLocalCandidate(IceCandidate& candidate);
+    // Queue a remote candidate whose address is hidden behind a name, and query the name
+    void resolveRemoteMdnsCandidate(const IceCandidate& candidate);
+    // A queued name was resolved (addr is NULL on timeout), pair the candidates waiting for it
+    void onRemoteMdnsResolved(const std::string& name, const sockaddr_u* addr);
+    // Withdraw the announced names and drop the pending resolutions
+    void cleanupMdns();
+
     // Keepalive
     void startKeepalive();
     void sendKeepalive();
@@ -161,6 +182,13 @@ private:
     std::vector<IceCandidate> local_candidates_;
     std::vector<IceCandidate> remote_candidates_;
     bool remote_candidates_done_ = false;
+
+    // mDNS state
+    bool mdns_enabled_ = false;
+    // local "ip" => name published for the hidden host candidates of that address
+    std::map<std::string, std::string> mdns_names_;
+    // name => remote candidates whose address is still hidden behind it
+    std::map<std::string, std::vector<IceCandidate>> pending_remote_mdns_;
 
     // Check list
     IceCheckList checklist_;

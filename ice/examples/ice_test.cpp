@@ -10,9 +10,13 @@ using namespace ice;
 int main(int argc, char* argv[]) {
     logger_enable_color(hlog, true);
     bool testTcp = false;
+    bool testMdns = false;
     for (int i =0; i < argc; ++i) {
         if (strcmp(argv[i], "--tcp") == 0) {
             testTcp = true;
+        }
+        if (strcmp(argv[i], "--mdns") == 0) {
+            testMdns = true;
         }
         if (strcmp(argv[i], "--log") == 0) {
             hlog_set_handler(stdout_logger);
@@ -21,6 +25,8 @@ int main(int argc, char* argv[]) {
     IceConfig config;
     config.udpPort = 0; // ephemeral
     config.gatherTcp = true;
+    // hide the host candidates behind "<uuid>.local" names, as browsers do
+    config.enableMdns = testMdns;
     // stun server
     config.gatherSrflx = true;
     config.stunServers.push_back({"120.26.218.183", 3478});
@@ -58,17 +64,29 @@ int main(int argc, char* argv[]) {
     session2->onData = [](const void* data, size_t len) {
         printf("  Session2 recv %d data: %.*s\n", len, (int)len, (const char*)data);
     };
-    session1->onLocalCandidate = [session2, testTcp](const IceCandidate& candidate) {
+    // Hand a candidate to the peer the way a signaling channel does. With mDNS the peer
+    // gets the SDP line, hence it only sees the name the address is hidden behind.
+    auto signalTo = [testMdns](const IceSessionPtr& peer, const IceCandidate& candidate) {
+        if (!testMdns) {
+            peer->addRemoteCandidate(candidate);
+            return;
+        }
+        IceCandidate remote;
+        if (remote.fromSdp(candidate.toSdp())) {
+            peer->addRemoteCandidate(remote);
+        }
+    };
+    session1->onLocalCandidate = [session2, signalTo, testTcp](const IceCandidate& candidate) {
         printf("  Session1 local candidate: %s\n", candidate.toSdp().c_str());
         if (testTcp && candidate.protocol != TransportProtocol::TCP) 
             return;
-        session2->addRemoteCandidate(candidate);
+        signalTo(session2, candidate);
     };
-    session2->onLocalCandidate = [session1, testTcp](const IceCandidate& candidate) {
+    session2->onLocalCandidate = [session1, signalTo, testTcp](const IceCandidate& candidate) {
         printf("  Session2 local candidate: %s\n", candidate.toSdp().c_str());
         if (testTcp && candidate.protocol != TransportProtocol::TCP) 
             return;
-        session1->addRemoteCandidate(candidate);
+        signalTo(session1, candidate);
     };
     session1->onSelectedPair = [](const CandidatePair& pair) {
         printf("  Session1 selected pair: %s\n", pair.toString().c_str());

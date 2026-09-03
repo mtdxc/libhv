@@ -3,6 +3,7 @@
 #include "../stun/stun_auth.h"
 #include "../session/ice_session.h"
 #include "../turn/turn_client.h"
+#include "../mdns/mdns.h"
 #include "hloop.h"
 #include "hlog.h"
 #include <algorithm>
@@ -215,10 +216,32 @@ void IceAgent::stop() {
         hio_close(udp_io);
     }
 
+    // Stopped last, so that the sessions above could withdraw their hidden candidates.
+    // NOTE: MdnsService::stop() waits for the event loop, hence the agent lock is dropped.
+    std::shared_ptr<MdnsService> mdns;
+    {
+        std::unique_lock<decltype(mutex_)> lock(mutex_);
+        mdns = mdns_;
+        mdns_.reset();
+    }
+    if (mdns) {
+        mdns->stop();
+    }
+}
+
+MdnsService* IceAgent::mdns() {
+    if (!config_.enableMdns) return nullptr;
+    std::unique_lock<decltype(mutex_)> lock(mutex_);
+    if (!mdns_ && running_) {
+        mdns_ = std::make_shared<MdnsService>(pools_->loop());
+        hlogi("IceAgent mdns service created");
+    }
+    return mdns_.get();
 }
 
 IceSessionPtr IceAgent::createSession() {
     auto session = std::make_shared<IceSession>(this, pools_->loop());
+    session->setMdnsEnabled(config_.enableMdns);
     std::unique_lock<decltype(mutex_)> lock(mutex_);
     sessions_.insert(session);
     return session;
