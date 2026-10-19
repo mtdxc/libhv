@@ -6,22 +6,19 @@
 - rudp: KCP
 - evpp: c++ EventLoop interface similar to muduo and evpp
 - http client/server: include https http1/x http2
+- http server sync/async/ctx/state/script handlers
 - websocket client/server
 - mqtt client
-
-## Improving
-
-- Path router: optimized matching via trie?
-
-## Plan
-
 - redis client
 - async DNS
+- socks5 proxy
 - lua binding
 - js binding
 - hrpc = libhv + protobuf
+
+## Plan
+
 - rudp: FEC, ARQ, UDT, QUIC
-- kcptun
 - coroutine
 - cppsocket.io
 - IM-libhv

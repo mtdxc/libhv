@@ -10,7 +10,7 @@
 #include "hstring.h"
 #include "LRUCache.h"
 
-#define HTTP_HEADER_MAX_LENGTH      1024        // 1K
+#define HTTP_HEADER_MAX_LENGTH      4096        // 4K
 #define FILE_CACHE_MAX_NUM          100
 #define FILE_CACHE_MAX_SIZE         (1 << 22)   // 4M
 // 文件或目录列表缓存
@@ -38,9 +38,17 @@ typedef struct file_cache_s {
     }
 
     bool is_modified() {
-        // 判断前后两次的修改时间是否相同
+        struct stat new_st;
+        // stat failed: treat as modified to force re-validation via reopen
+#ifdef OS_WIN
+        if (_wstat(hv::utf8_to_wchar(filepath).c_str(), (struct _stat*)&new_st) != 0)
+            return true;
+#else
+        if (stat(filepath.c_str(), &new_st) != 0)
+            return true;
+#endif
         time_t mtime = st.st_mtime;
-        stat(filepath.c_str(), &st);
+        st = new_st;
         return mtime != st.st_mtime;
     }
 
@@ -55,11 +63,16 @@ typedef struct file_cache_s {
         filebuf.len = filesize;
     }
     // 更新http头部
-    void prepend_header(const char* header, int len) {
-        if (len > HTTP_HEADER_MAX_LENGTH) return;
+    // Prepend the response header into the space reserved before filebuf so the
+    // header + file content can be sent as one buffer (httpbuf). Returns false
+    // if the header does not fit the reserved space; the caller must then send
+    // the header and filebuf separately (filebuf stays intact either way).
+    bool prepend_header(const char* header, int len) {
+        if (len > HTTP_HEADER_MAX_LENGTH) return false;
         httpbuf.base = filebuf.base - len;
         httpbuf.len = len + filebuf.len;
         memcpy(httpbuf.base, header, len);
+        return true;
     }
 } file_cache_t;
 

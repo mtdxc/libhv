@@ -5,6 +5,8 @@
 #include "herr.h"
 
 #include "unpack.h"
+#include "socks5.h"
+#include "proxy.h"
 
 uint64_t hloop_next_event_id() {
     static hatomic_t s_id = HATOMIC_VAR_INIT(0);
@@ -63,6 +65,7 @@ static void hio_socket_init(hio_t* io) {
 }
 
 void hio_init(hio_t* io) {
+    io->phase = HIO_PHASE_NONE;
     // alloc localaddr,peeraddr when hio_socket_init
     /*
     if (io->localaddr == NULL) {
@@ -85,13 +88,14 @@ void hio_ready(hio_t* io) {
     io->ready = 1;
     io->connected = 0;
     io->closed = 0;
-    io->accept = io->connect = io->connectex = 0;
+    io->accept = io->connect = 0;
     io->recv = io->send = 0;
     io->recvfrom = io->sendto = 0;
     io->close = 0;
     // public:
     io->id = hio_next_id();
     io->io_type = HIO_TYPE_UNKNOWN;
+    io->phase = HIO_PHASE_READY;
     io->error = 0;
     io->events = io->revents = 0;
     io->last_read_hrtime = io->last_write_hrtime = io->loop->cur_hrtime;
@@ -135,16 +139,13 @@ void hio_ready(hio_t* io) {
     io->ssl_ctx = NULL;
     io->alloced_ssl_ctx = 0;
     io->hostname = NULL;
+    io->proxy = NULL;
     // context
     io->ctx = NULL;
     // private:
 #if defined(EVENT_POLL) || defined(EVENT_KQUEUE)
     io->event_index[0] = io->event_index[1] = -1;
 #endif
-#ifdef EVENT_IOCP
-    io->hovlp = NULL;
-#endif
-
     // io_type
     fill_io_type(io);
     if (io->io_type & HIO_TYPE_SOCKET) {
@@ -423,6 +424,7 @@ void hio_write_cb(hio_t* io, const void* buf, int len) {
 void hio_close_cb(hio_t* io) {
     io->connected = 0;
     io->closed = 1;
+    io->phase = HIO_PHASE_CLOSED;
     hclose_cb close_cb = io->close_cb;
     if (close_cb) {
         // printd("close_cb------\n");
@@ -493,6 +495,15 @@ int hio_set_hostname(hio_t* io, const char* hostname) {
 
 const char* hio_get_hostname(hio_t* io) {
     return io->hostname;
+}
+
+int hio_set_proxy(hio_t* io, const proxy_setting_t* setting) {
+    if (io == NULL || setting == NULL) return -1;
+    proxy_ctx_t* proxy = proxy_ctx_new(setting);
+    if (proxy == NULL) return -1;
+    proxy_ctx_free(io->proxy);
+    io->proxy = proxy;
+    return 0;
 }
 
 void hio_del_connect_timer(hio_t* io) {

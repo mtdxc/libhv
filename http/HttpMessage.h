@@ -219,7 +219,9 @@ public:
         if (file.open(filepath.c_str(), "wb") != 0) {
             return HTTP_STATUS_INTERNAL_SERVER_ERROR;
         }
-        file.write(formdata.content.data(), formdata.content.size());
+        if (file.write(formdata.content.data(), formdata.content.size()) != formdata.content.size()) {
+            return HTTP_STATUS_INTERNAL_SERVER_ERROR;
+        }
         return 200;
     }
 
@@ -270,7 +272,7 @@ public:
     const std::string& Body();
 
     // headers -> string
-    void DumpHeaders(std::string& str);
+    virtual void DumpHeaders(std::string& str);
     // structured content -> body
     void DumpBody();
     void DumpBody(std::string& str);
@@ -383,8 +385,14 @@ public:
     uint32_t            retry_count;
     uint32_t            retry_delay;    // unit: ms
     unsigned            redirect: 1;
-    unsigned            proxy   : 1;
+    unsigned            proxy   : 1;    // proxy configured
     unsigned            cancel  : 1;
+    // proxy endpoint and optional credentials. The origin remains in
+    // scheme/host/port; HTTP uses URI forwarding and HTTPS uses CONNECT.
+    std::string         proxy_host;
+    int                 proxy_port;
+    std::string         proxy_username;
+    std::string         proxy_password;
 
     HttpRequest();
 
@@ -392,6 +400,7 @@ public:
     virtual void Reset();
 
     virtual std::string Dump(bool is_dump_headers = true, bool is_dump_body = false);
+    virtual void DumpHeaders(std::string& str);
 
     // method
     void SetMethod(const char* method) {
@@ -402,7 +411,7 @@ public:
     }
 
     // scheme
-    bool IsHttps() {
+    bool IsHttps() const {
         return strncmp(scheme.c_str(), "https", 5) == 0 ||
                strncmp(url.c_str(), "https://", 8) == 0;
     }
@@ -443,7 +452,13 @@ public:
     void SetHost(const char* host, int port = DEFAULT_HTTP_PORT);
 
     void SetProxy(const char* host, int port);
-    bool IsProxy() { return proxy; }
+    bool IsProxy() const { return proxy == 1; }
+    bool IsUriProxy() const { return proxy == 1 && scheme == "http"; }
+    bool IsTunnelProxy() const { return proxy == 1 && scheme == "https"; }
+    // Basic authentication for an HTTP proxy request. Empty username clears it.
+    void SetProxyAuth(const char* username, const char* password = NULL);
+    // Prepare the proxy-only authorization header for the current request mode.
+    void FillProxyHeaders();
 
     // Auth
     void SetAuth(const std::string& auth);

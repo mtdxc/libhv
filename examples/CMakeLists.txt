@@ -12,6 +12,8 @@ list(APPEND EXAMPLES
     udp_echo_server
     udp_proxy_server
     socks5_proxy_server
+    socks5_client_test
+    host
     multi-acceptor-processes
     multi-acceptor-threads
     one-acceptor-multi-workers
@@ -66,6 +68,12 @@ target_link_libraries(udp_proxy_server ${HV_LIBRARIES})
 add_executable(socks5_proxy_server socks5_proxy_server.c)
 target_link_libraries(socks5_proxy_server ${HV_LIBRARIES})
 
+add_executable(socks5_client_test socks5_client_test.c)
+target_link_libraries(socks5_client_test ${HV_LIBRARIES})
+
+add_executable(host host.c)
+target_link_libraries(host ${HV_LIBRARIES})
+
 add_executable(multi-acceptor-processes multi-thread/multi-acceptor-processes.c)
 target_link_libraries(multi-acceptor-processes ${HV_LIBRARIES})
 
@@ -116,6 +124,38 @@ if(WITH_EVPP)
     target_link_libraries(nmap ${HV_LIBRARIES})
 
     list(APPEND EXAMPLES hmain_test nmap)
+
+    if(WITH_REDIS)
+        include_directories(../redis)
+
+        add_executable(redis_client_example redis_client_test.cpp)
+        target_link_libraries(redis_client_example ${HV_LIBRARIES})
+
+        add_executable(redis_subscriber_example redis_subscriber_test.cpp)
+        target_link_libraries(redis_subscriber_example ${HV_LIBRARIES})
+
+        list(APPEND EXAMPLES redis_client_example redis_subscriber_example)
+    endif()
+
+    if(WITH_LUA)
+        include_directories(../lua)
+
+        # hvlua: standalone Lua runtime on top of libhv's event loop
+        add_executable(hvlua hvlua.cpp)
+        target_link_libraries(hvlua ${HV_LIBRARIES})
+
+        list(APPEND EXAMPLES hvlua)
+    endif()
+
+    if(WITH_JS)
+        include_directories(../js)
+
+        # hvjs: standalone QuickJS runtime on top of libhv's event loop
+        add_executable(hvjs hvjs.cpp)
+        target_link_libraries(hvjs ${HV_LIBRARIES})
+
+        list(APPEND EXAMPLES hvjs)
+    endif()
 if(WITH_HTTP)
     include_directories(../http)
 
@@ -221,5 +261,42 @@ if(WITH_MQTT)
     list(APPEND EXAMPLES mqtt_sub mqtt_pub mqtt_client_test mqtt_server_test)
 endif()
 
+# hrpc examples: link the hrpc library (built at top level when WITH_RPC=ON) --
+# exactly how a downstream user consumes hrpc: -lhrpc -lhv -lprotobuf.
+if(WITH_RPC)
+    # rpc/ is a sibling subdirectory; re-resolve protobuf/absl here (child scopes don't share).
+    find_package(Protobuf REQUIRED)
+    find_package(absl QUIET)
+    set(RPC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../rpc)
+    set(RPC_EXAMPLE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/rpc)
+    set(HRPC_EX_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/rpc_gen)
+    file(MAKE_DIRECTORY ${HRPC_EX_GEN_DIR})
+
+    # generate calc stubs (calc.pb.*, calc.hrpc.h) with the plugin built at top level
+    add_custom_command(
+        OUTPUT ${HRPC_EX_GEN_DIR}/calc.pb.cc ${HRPC_EX_GEN_DIR}/calc.pb.h ${HRPC_EX_GEN_DIR}/calc.hrpc.h
+        COMMAND ${Protobuf_PROTOC_EXECUTABLE}
+                --plugin=protoc-gen-hrpc=$<TARGET_FILE:protoc-gen-hrpc>
+                --cpp_out=${HRPC_EX_GEN_DIR} --hrpc_out=${HRPC_EX_GEN_DIR}
+                -I${RPC_EXAMPLE_DIR} ${RPC_EXAMPLE_DIR}/calc.proto
+        DEPENDS ${RPC_EXAMPLE_DIR}/calc.proto protoc-gen-hrpc
+        COMMENT "hrpc: generating calc.pb + calc.hrpc.h")
+
+    add_executable(hrpc_calc_server
+        rpc/rpc_calc_server.cpp ${HRPC_EX_GEN_DIR}/calc.pb.cc ${HRPC_EX_GEN_DIR}/calc.hrpc.h)
+    add_executable(hrpc_calc_client
+        rpc/rpc_calc_client.cpp ${HRPC_EX_GEN_DIR}/calc.pb.cc ${HRPC_EX_GEN_DIR}/calc.hrpc.h)
+    foreach(tgt hrpc_calc_server hrpc_calc_client)
+        target_include_directories(${tgt} PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/.. ${CMAKE_CURRENT_SOURCE_DIR}/../base
+            ${CMAKE_CURRENT_SOURCE_DIR}/../ssl ${CMAKE_CURRENT_SOURCE_DIR}/../event
+            ${CMAKE_CURRENT_SOURCE_DIR}/../cpputil ${CMAKE_CURRENT_SOURCE_DIR}/../evpp
+            ${RPC_DIR} ${HRPC_EX_GEN_DIR} ${Protobuf_INCLUDE_DIRS})
+        target_link_libraries(${tgt} ${HRPC_LIBRARIES} ${HV_LIBRARIES} protobuf::libprotobuf ${HRPC_ABSL_LIBS})
+        set_target_properties(${tgt} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+    endforeach()
+
+    list(APPEND EXAMPLES hrpc_calc_server hrpc_calc_client)
+endif()
 
 add_custom_target(examples DEPENDS ${EXAMPLES})

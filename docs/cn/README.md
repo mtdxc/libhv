@@ -1,8 +1,17 @@
 ## c接口
 
 - [hloop: 事件循环](hloop.md)
+- [hdns: 异步DNS解析](hdns.md)
 - [hbase: 基础函数](hbase.md)
 - [hlog:  日志](hlog.md)
+
+## lua接口
+
+- [Lua Binding: hv.* Lua 绑定](lua.md)
+
+## js接口
+
+- [Http JS Handler: HTTP JS脚本处理器](HttpJsHandler.md)
 
 ## c++接口
 
@@ -13,6 +22,12 @@
 - [class UdpServer: UDP服务端类](UdpServer.md)
 - [class UdpClient: UDP客户端类](UdpClient.md)
 - [class HttpServer: HTTP服务端类](HttpServer.md)
+- [Http Lua Handler: HTTP Lua脚本处理器](HttpLuaHandler.md)
 - [class HttpClient: HTTP客户端类](HttpClient.md)
 - [class WebSocketServer: WebSocket服务端类](WebSocketServer.md)
 - [class WebSocketClient: WebSocket客户端类](WebSocketClient.md)
+- [class RedisClient: Redis客户端类](RedisClient.md)
+
+## rpc
+
+- [hrpc: TLV + protobuf RPC 框架](rpc.md)

@@ -24,6 +24,22 @@
 #define HIO_READ_UNTIL_LENGTH   0x2
 #define HIO_READ_UNTIL_DELIM    0x4
 
+// Internal NIO transport lifecycle. hio_handle_events is the single readiness
+// dispatcher; phase selects its current transport or handshake action.
+typedef enum {
+    HIO_PHASE_NONE = 0,
+    HIO_PHASE_READY,
+    HIO_PHASE_ACCEPTING,
+    HIO_PHASE_CONNECTING,
+    HIO_PHASE_PROXY_HANDSHAKING,
+    HIO_PHASE_PROXY_ESTABLISHED,
+    HIO_PHASE_TLS_SERVER_HANDSHAKING,
+    HIO_PHASE_TLS_CLIENT_HANDSHAKING,
+    HIO_PHASE_TLS_ESTABLISHED,
+    HIO_PHASE_ESTABLISHED,
+    HIO_PHASE_CLOSED,
+} hio_phase_e;
+
 ARRAY_DECL(hio_t*, io_array);
 ARRAY_DECL(hsignal_t*, signal_array);
 QUEUE_DECL(hevent_t, event_queue);
@@ -66,9 +82,22 @@ struct hloop_s {
     int                         eventfds[2];
     event_queue                 custom_events;
     hmutex_t                    custom_events_mutex;
+    // async dns resolver (event/hdns.c), created lazily, freed in hloop_cleanup
+    void*                       dns_resolver;
+    // per-loop lua_State (lua/), stored as opaque void* so the C core stays
+    // lua-free. Set via hloop_set_lua_state with a destructor; freed in hloop_cleanup.
+    void*                       lua_state;
+    void                        (*lua_state_dtor)(void* lua_state);
+    // per-loop JS runtime (js/), stored as opaque void* so the C core stays
+    // quickjs-free. Set via hloop_set_js_runtime with a destructor; freed in hloop_cleanup.
+    void*                       js_runtime;
+    void                        (*js_runtime_dtor)(void* js_runtime);
 };
 
 uint64_t hloop_next_event_id();
+
+// async dns resolver (event/hdns.c): free per-loop resolver, called in hloop_cleanup.
+void hdns_resolver_free(hloop_t* loop);
 
 struct hidle_s {
     HEVENT_FIELDS
@@ -102,7 +131,7 @@ struct hperiod_s {
 };
 
 QUEUE_DECL(offset_buf_t, write_queue);
-// sizeof(struct hio_s)=416 on linux-x64
+// sizeof(struct hio_s)=424 on linux-x64
 struct hio_s {
     HEVENT_FIELDS
     // flags
@@ -111,7 +140,6 @@ struct hio_s {
     unsigned    closed      :1;
     unsigned    accept      :1;
     unsigned    connect     :1;
-    unsigned    connectex   :1; // for ConnectEx/DisconnectEx
     unsigned    recv        :1;
     unsigned    send        :1;
     unsigned    recvfrom    :1;
@@ -121,6 +149,7 @@ struct hio_s {
     unsigned    alloced_ssl_ctx :1; // for hio_new_ssl_ctx
 // public:
     hio_type_e  io_type;
+    hio_phase_e phase;
     uint32_t    id; // fd cannot be used as unique identifier, so we provide an id
     int         fd;
     int         error;
@@ -173,15 +202,14 @@ struct hio_s {
     void*       ssl;        // for hio_set_ssl
     void*       ssl_ctx;    // for hio_set_ssl_ctx
     char*       hostname;   // for hssl_set_sni_hostname
+    // Proxy context. Client connections run a handshake before connect_cb;
+    // proxy server listeners and accepted connections use the same type.
+    struct proxy_ctx_s* proxy;
     // context
     void*       ctx; // for hio_context / hio_set_context
 // private:
 #if defined(EVENT_POLL) || defined(EVENT_KQUEUE)
     int         event_index[2]; // for poll,kqueue
-#endif
-
-#ifdef EVENT_IOCP
-    void*       hovlp;          // for iocp/overlapio
 #endif
 
 #if WITH_RUDP

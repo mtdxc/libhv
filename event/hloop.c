@@ -101,7 +101,7 @@ static int hloop_process_ios(hloop_t* loop, int timeout) {
     // That is to call IO multiplexing function such as select, poll, epoll, etc.
     int nevents = iowatcher_poll_events(loop, timeout);
     if (nevents < 0) {
-        hlogd("poll_events error=%d", -nevents);
+        hlogd("iowatcher_poll_events failed err=%d", -nevents);
     }
     return nevents < 0 ? 0 : nevents;
 }
@@ -332,8 +332,9 @@ static void hloop_init(hloop_t* loop) {
     heap_init(&loop->realtimers, timers_compare);
 
     // ios
-    // NOTE: io_array_init when hio_get -> io_array_resize
-    // io_array_init(&loop->ios, IO_ARRAY_INIT_SIZE);
+    // NOTE: not lazily in hio_get: hio_get may run on another thread
+    // (e.g. TcpClient::createsocket) while hloop_run creates the eventfd io.
+    io_array_init(&loop->ios, IO_ARRAY_INIT_SIZE);
 
     // readbuf
     // NOTE: alloc readbuf when hio_use_loop_readbuf
@@ -360,6 +361,22 @@ static void hloop_cleanup(hloop_t* loop) {
         loop->pendings[i] = NULL;
     }
 
+    // per-loop lua_State (opaque; destructor supplied by lua/ layer)
+    if (loop->lua_state && loop->lua_state_dtor) {
+        printd("cleanup lua_state...\n");
+        loop->lua_state_dtor(loop->lua_state);
+    }
+    loop->lua_state = NULL;
+    loop->lua_state_dtor = NULL;
+
+    // per-loop JS runtime (opaque; destructor supplied by js/ layer)
+    if (loop->js_runtime && loop->js_runtime_dtor) {
+        printd("cleanup js_runtime...\n");
+        loop->js_runtime_dtor(loop->js_runtime);
+    }
+    loop->js_runtime = NULL;
+    loop->js_runtime_dtor = NULL;
+
     // ios
     printd("cleanup ios...\n");
     for (int i = 0; i < loop->ios.maxsize; ++i) {
@@ -369,6 +386,12 @@ static void hloop_cleanup(hloop_t* loop) {
         }
     }
     io_array_cleanup(&loop->ios);
+
+    // IO close callbacks may cancel pending DNS queries, so keep the resolver
+    // alive until every IO has been closed. DNS query timers are still valid
+    // here because the timer sweep happens below.
+    printd("cleanup dns_resolver...\n");
+    hdns_resolver_free(loop);
 
     // idles
     printd("cleanup idles...\n");
@@ -598,6 +621,24 @@ void* hloop_userdata(hloop_t* loop) {
     return loop->userdata;
 }
 
+void hloop_set_lua_state(hloop_t* loop, void* lua_state, void (*dtor)(void* lua_state)) {
+    loop->lua_state = lua_state;
+    loop->lua_state_dtor = dtor;
+}
+
+void* hloop_lua_state(hloop_t* loop) {
+    return loop->lua_state;
+}
+
+void hloop_set_js_runtime(hloop_t* loop, void* js_runtime, void (*dtor)(void* js_runtime)) {
+    loop->js_runtime = js_runtime;
+    loop->js_runtime_dtor = dtor;
+}
+
+void* hloop_js_runtime(hloop_t* loop) {
+    return loop->js_runtime;
+}
+
 static hloop_t* s_signal_loop = NULL;
 static void signal_handler(int signo) {
     if (!s_signal_loop) return;
@@ -767,8 +808,6 @@ const char* hio_engine() {
     return  "epoll";
 #elif defined(EVENT_KQUEUE)
     return  "kqueue";
-#elif defined(EVENT_IOCP)
-    return  "iocp";
 #elif defined(EVENT_PORT)
     return  "evport";
 #elif defined(EVENT_IO_URING)
@@ -814,6 +853,7 @@ void hio_detach(hio_t* io) {
 
 void hio_attach(hloop_t* loop, hio_t* io) {
     int fd = io->fd;
+    bool use_loop_readbuf = io->loop == NULL || hio_is_loop_readbuf(io);
     // NOTE: hio was not freed for reused when closed, but attached hio can't be reused,
     // so we need to free it if fd exists to avoid memory leak.
     hio_t* preio = __hio_get(loop, fd);
@@ -822,8 +862,9 @@ void hio_attach(hloop_t* loop, hio_t* io) {
     }
 
     io->loop = loop;
-    // NOTE: use new_loop readbuf
-    hio_use_loop_readbuf(io);
+    if (use_loop_readbuf) {
+        hio_use_loop_readbuf(io);
+    }
     loop->ios.ptr[fd] = io;
 }
 
@@ -841,11 +882,6 @@ int hio_add(hio_t* io, hio_cb cb, int events) {
     if (io->fd < 3) return -1;
 #endif
     hloop_t* loop = io->loop;
-    if (!io->active) {
-        EVENT_ADD(loop, io, cb);
-        loop->nios++;
-    }
-
     if (!io->ready) {
         hio_ready(io);
     }
@@ -854,9 +890,22 @@ int hio_add(hio_t* io, hio_cb cb, int events) {
         io->cb = (hevent_cb)cb;
     }
 
-    if (!(io->events & events)) {
-        iowatcher_add_event(loop, io->fd, events);
-        io->events |= events;
+    int add_events = events & ~io->events;
+    if (add_events && iowatcher_add_event(loop, io->fd, add_events) != 0) {
+        hlogd("iowatcher_add_event failed fd=%d add_events=%d io->events=%d err=%d",
+              io->fd, add_events, io->events, socket_errno());
+        return -1;
+    }
+    io->events |= add_events;
+
+    if (!io->active) {
+        // A NULL callback only changes the watched mask. Keep the transport
+        // dispatcher installed by the initial hio_add call.
+        if (cb == NULL) {
+            cb = (hio_cb)io->cb;
+        }
+        EVENT_ADD(loop, io, cb);
+        loop->nios++;
     }
     return 0;
 }
@@ -869,10 +918,14 @@ int hio_del(hio_t* io, int events) {
 #endif
     if (!io->active) return -1;
 
-    if (io->events & events) {
-        iowatcher_del_event(io->loop, io->fd, events);
-        io->events &= ~events;
+    int del_events = io->events & events;
+    if (del_events && iowatcher_del_event(io->loop, io->fd, del_events) != 0) {
+        hlogd("iowatcher_del_event failed fd=%d del_events=%d io->events=%d err=%d",
+              io->fd, del_events, io->events, socket_errno());
+        return -1;
     }
+    io->events &= ~del_events;
+
     if (io->events == 0) {
         io->loop->nios--;
         // NOTE: not EVENT_DEL, avoid free

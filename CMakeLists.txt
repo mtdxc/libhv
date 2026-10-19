@@ -3,6 +3,13 @@ cmake_policy(SET CMP0077 NEW)
 
 project(hv VERSION 1.3.4)
 
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+
+set(LIBHV_FIND_DEPENDENCY_OPENSSL FALSE)
+set(LIBHV_FIND_DEPENDENCY_NGHTTP2 FALSE)
+set(LIBHV_FIND_DEPENDENCY_QUICKJS FALSE)
+
 option(BUILD_SHARED "build shared library" ON)
 option(BUILD_STATIC "build static library" ON)
 
@@ -17,6 +24,8 @@ option(WITH_HTTP "compile http" ON)
 option(WITH_HTTP_SERVER "compile http/server" ON)
 option(WITH_HTTP_CLIENT "compile http/client" ON)
 option(WITH_MQTT "compile mqtt" OFF)
+option(WITH_REDIS "compile redis" OFF)
+option(WITH_RPC "compile hrpc (libhrpc, needs protobuf)" OFF)
 
 option(ENABLE_UDS "Unix Domain Socket" OFF)
 option(USE_MULTIMAP "MultiMap" OFF)
@@ -27,6 +36,9 @@ option(WITH_NGHTTP2 "with nghttp2 library" OFF)
 option(WITH_OPENSSL "with openssl library" OFF)
 option(WITH_GNUTLS  "with gnutls library"  OFF)
 option(WITH_MBEDTLS "with mbedtls library" OFF)
+
+option(WITH_LUA "with lua library" OFF)
+option(WITH_JS "with quickjs library" OFF)
 
 option(WITH_KCP "compile event/kcp" OFF)
 
@@ -149,7 +161,13 @@ endif()
 
 if(WITH_NGHTTP2)
     add_definitions(-DWITH_NGHTTP2)
-    set(LIBS ${LIBS} nghttp2)
+    find_package(nghttp2 CONFIG QUIET)
+    if(TARGET nghttp2::nghttp2)
+        set(LIBS ${LIBS} nghttp2::nghttp2)
+        set(LIBHV_FIND_DEPENDENCY_NGHTTP2 TRUE)
+    else()
+        set(LIBS ${LIBS} nghttp2)
+    endif()
 endif()
 
 if(WITH_OPENSSL)
@@ -157,6 +175,7 @@ if(WITH_OPENSSL)
     find_package(OpenSSL)
     if(OpenSSL_FOUND)
         set(LIBS ${LIBS} OpenSSL::SSL OpenSSL::Crypto)
+        set(LIBHV_FIND_DEPENDENCY_OPENSSL ON)
     else()
         set(LIBS ${LIBS} ssl crypto)
     endif()
@@ -179,6 +198,81 @@ if(WITH_IO_URING)
     set(LIBS ${LIBS} uring)
 endif()
 
+if(WITH_LUA)
+    add_definitions(-DWITH_LUA)
+    find_package(Lua)
+    if(LUA_FOUND)
+        include_directories(${LUA_INCLUDE_DIR})
+        set(LIBS ${LIBS} ${LUA_LIBRARIES})
+    else()
+        set(LIBS ${LIBS} lua)
+    endif()
+    # lua bindings that wrap higher-level modules are conditionally compiled on
+    # HVLUA_WITH_* (kept in sync with Makefile.in): enabled only when both WITH_LUA
+    # and the underlying module are on. Without these, the http/redis/ws/mqtt
+    # binding bodies are #ifdef'd out and hv.http/redis/ws/mqtt silently become nil.
+    if(WITH_EVPP AND WITH_HTTP AND WITH_HTTP_CLIENT)
+        add_definitions(-DHVLUA_WITH_HTTP)
+    endif()
+    if(WITH_EVPP AND WITH_REDIS)
+        add_definitions(-DHVLUA_WITH_REDIS)
+    endif()
+    if(WITH_EVPP AND WITH_MQTT)
+        add_definitions(-DHVLUA_WITH_MQTT)
+    endif()
+endif()
+
+if(WITH_JS)
+    add_definitions(-DWITH_JS)
+    find_path(QUICKJS_INCLUDE_DIR
+        NAMES quickjs.h
+        HINTS
+            ${QUICKJS_ROOT}/include/quickjs
+            ${QUICKJS_ROOT}/include
+            /opt/homebrew/opt/quickjs/include/quickjs
+            /opt/homebrew/opt/quickjs/include
+            /usr/local/opt/quickjs/include/quickjs
+            /usr/local/opt/quickjs/include
+            /usr/local/include/quickjs
+            /usr/local/include
+            /usr/include/quickjs
+            /usr/include)
+    find_library(QUICKJS_LIBRARY
+        NAMES quickjs libquickjs
+        HINTS
+            ${QUICKJS_ROOT}/lib/quickjs
+            ${QUICKJS_ROOT}/lib
+            /opt/homebrew/opt/quickjs/lib/quickjs
+            /opt/homebrew/opt/quickjs/lib
+            /usr/local/opt/quickjs/lib/quickjs
+            /usr/local/opt/quickjs/lib
+            /usr/local/lib/quickjs
+            /usr/local/lib
+            /usr/lib/quickjs
+            /usr/lib)
+    if(NOT QUICKJS_INCLUDE_DIR OR NOT QUICKJS_LIBRARY)
+        message(FATAL_ERROR "WITH_JS requires QuickJS. Set QUICKJS_ROOT or QUICKJS_INCLUDE_DIR and QUICKJS_LIBRARY.")
+    endif()
+    if(NOT TARGET QuickJS::QuickJS)
+        add_library(QuickJS::QuickJS UNKNOWN IMPORTED)
+        set_target_properties(QuickJS::QuickJS PROPERTIES
+            IMPORTED_LOCATION "${QUICKJS_LIBRARY}"
+            INTERFACE_INCLUDE_DIRECTORIES "${QUICKJS_INCLUDE_DIR}")
+    endif()
+    include_directories(${QUICKJS_INCLUDE_DIR})
+    set(LIBS ${LIBS} QuickJS::QuickJS)
+    set(LIBHV_FIND_DEPENDENCY_QUICKJS TRUE)
+    if(WITH_EVPP AND WITH_HTTP AND WITH_HTTP_CLIENT)
+        add_definitions(-DHVJS_WITH_HTTP)
+    endif()
+    if(WITH_EVPP AND WITH_REDIS)
+        add_definitions(-DHVJS_WITH_REDIS)
+    endif()
+    if(WITH_EVPP AND WITH_MQTT)
+        add_definitions(-DHVJS_WITH_MQTT)
+    endif()
+endif()
+
 if(WIN32 OR MINGW)
     add_definitions(-DWIN32_LEAN_AND_MEAN -D_CRT_SECURE_NO_WARNINGS -D_WIN32_WINNT=0x0600)
     set(LIBS ${LIBS} secur32 crypt32 winmm iphlpapi ws2_32)
@@ -196,6 +290,12 @@ elseif(UNIX AND NOT MINGW)
     if(RT_LIBRARY)
         set(LIBS ${LIBS} rt)
     endif()
+    # Some platforms (e.g. 32-bit ARM / Raspberry Pi) need libatomic for
+    # 64-bit atomics; link it only when available. See issue #384.
+    find_library(ATOMIC_LIBRARY atomic)
+    if(ATOMIC_LIBRARY)
+        set(LIBS ${LIBS} atomic)
+    endif()
 endif()
 
 if(APPLE)
@@ -203,7 +303,7 @@ if(APPLE)
 endif()
 
 # see Makefile
-set(ALL_SRCDIRS . base ssl event event/kcp util cpputil evpp protocol http http/client http/server mqtt)
+set(ALL_SRCDIRS . base ssl event event/kcp util cpputil evpp redis protocol http http/client http/server mqtt js)
 set(CORE_SRCDIRS . base ssl event)
 if(WIN32 OR MINGW)
     if(WITH_WEPOLL)
@@ -222,9 +322,26 @@ if(WITH_PROTOCOL)
     set(LIBHV_SRCDIRS ${LIBHV_SRCDIRS} protocol)
 endif()
 
+if(WITH_LUA)
+    set(LIBHV_HEADERS ${LIBHV_HEADERS} ${LUA_HEADERS})
+    set(LIBHV_SRCDIRS ${LIBHV_SRCDIRS} lua)
+    if(NOT WITH_EVPP)
+        set(LIBHV_HEADERS ${LIBHV_HEADERS} ${CPPUTIL_HEADERS})
+        set(LIBHV_SRCDIRS ${LIBHV_SRCDIRS} cpputil)
+    endif()
+endif()
+
 if(WITH_EVPP)
     set(LIBHV_HEADERS ${LIBHV_HEADERS} ${CPPUTIL_HEADERS} ${EVPP_HEADERS})
     set(LIBHV_SRCDIRS ${LIBHV_SRCDIRS} cpputil evpp)
+    if(WITH_JS)
+        set(LIBHV_HEADERS ${LIBHV_HEADERS} ${JS_HEADERS})
+        set(LIBHV_SRCDIRS ${LIBHV_SRCDIRS} js)
+    endif()
+    if(WITH_REDIS)
+        set(LIBHV_HEADERS ${LIBHV_HEADERS} ${REDIS_HEADERS})
+        set(LIBHV_SRCDIRS ${LIBHV_SRCDIRS} redis)
+    endif()
     if(WITH_HTTP)
         set(LIBHV_HEADERS ${LIBHV_HEADERS} ${HTTP_HEADERS})
         set(LIBHV_SRCDIRS ${LIBHV_SRCDIRS} http)
@@ -233,6 +350,15 @@ if(WITH_EVPP)
         endif()
         if(WITH_HTTP_SERVER)
             set(LIBHV_HEADERS ${LIBHV_HEADERS} ${HTTP_SERVER_HEADERS})
+            if(WITH_LUA OR WITH_JS)
+                set(LIBHV_HEADERS ${LIBHV_HEADERS} http/server/HttpScriptHandler.h)
+            endif()
+            if(WITH_LUA)
+                set(LIBHV_HEADERS ${LIBHV_HEADERS} http/server/HttpLuaHandler.h)
+            endif()
+            if(WITH_JS)
+                set(LIBHV_HEADERS ${LIBHV_HEADERS} http/server/HttpJsHandler.h)
+            endif()
             set(LIBHV_SRCDIRS ${LIBHV_SRCDIRS} http/server)
         endif()
         if(WITH_HTTP_CLIENT)
@@ -252,6 +378,15 @@ if(WITH_MQTT)
 endif()
 
 list_source_directories(LIBHV_SRCS ${LIBHV_SRCDIRS})
+if(NOT WITH_LUA)
+    list(FILTER LIBHV_SRCS EXCLUDE REGEX "(^|/)HttpLuaHandler\\.cpp$")
+endif()
+if(NOT WITH_JS)
+    list(FILTER LIBHV_SRCS EXCLUDE REGEX "(^|/)HttpJsHandler\\.cpp$")
+endif()
+if(NOT WITH_LUA AND NOT WITH_JS)
+    list(FILTER LIBHV_SRCS EXCLUDE REGEX "(^|/)HttpScriptHandler\\.cpp$")
+endif()
 if(WIN32)
     set(CMAKE_RC_FLAGS_DEBUG -D_DEBUG)
     configure_file(${PROJECT_SOURCE_DIR}/${PROJECT_NAME}.rc.in ${CMAKE_BINARY_DIR}/${PROJECT_NAME}.rc)
@@ -265,13 +400,16 @@ if(BUILD_SHARED)
     add_library(hv SHARED ${LIBHV_SRCS})
     target_compile_definitions(hv PRIVATE HV_DYNAMICLIB)
     target_include_directories(hv PRIVATE ${LIBHV_SRCDIRS}
-        INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
-    target_link_libraries(hv ${LIBS})
+        INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+    if(WITH_JS)
+        target_include_directories(hv INTERFACE $<BUILD_INTERFACE:${QUICKJS_INCLUDE_DIR}>)
+    endif()
+    target_link_libraries(hv PUBLIC ${LIBS})
     install(TARGETS hv
-        EXPORT libhvConfig
-        ARCHIVE DESTINATION lib
-        LIBRARY DESTINATION lib
-        RUNTIME DESTINATION bin)
+        EXPORT libhvTargets
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
     add_custom_target(libhv DEPENDS hv)
 endif()
 
@@ -279,25 +417,52 @@ if(BUILD_STATIC)
     add_library(hv_static STATIC ${LIBHV_SRCS})
     target_compile_definitions(hv_static PUBLIC HV_STATICLIB)
     target_include_directories(hv_static PRIVATE ${LIBHV_SRCDIRS}
-        INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
-    target_link_libraries(hv_static ${LIBS})
+        INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+    if(WITH_JS)
+        target_include_directories(hv_static INTERFACE $<BUILD_INTERFACE:${QUICKJS_INCLUDE_DIR}>)
+    endif()
+    target_link_libraries(hv_static PUBLIC ${LIBS})
     if(NOT (WIN32 AND BUILD_SHARED))
         set_target_properties(hv_static PROPERTIES OUTPUT_NAME hv)
     endif()
     install(TARGETS hv_static
-        EXPORT libhvConfig
-        ARCHIVE DESTINATION lib)
+        EXPORT libhvTargets
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
     add_custom_target(libhv_static DEPENDS hv_static)
 endif()
 
 if(WIN32 AND NOT MINGW)
     if(BUILD_SHARED)
-        install(FILES $<TARGET_PDB_FILE:${PROJECT_NAME}> DESTINATION bin OPTIONAL)
+        install(FILES $<TARGET_PDB_FILE:${PROJECT_NAME}> DESTINATION ${CMAKE_INSTALL_BINDIR} OPTIONAL)
     endif()
 endif()
 
-install(FILES ${LIBHV_HEADERS} DESTINATION include/hv)
-install(EXPORT libhvConfig DESTINATION lib/cmake/libhv)
+install(FILES ${LIBHV_HEADERS} DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/hv)
+
+set(LIBHV_INSTALL_CMAKEDIR ${CMAKE_INSTALL_LIBDIR}/cmake/libhv)
+configure_package_config_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/libhvConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/libhvConfig.cmake
+    INSTALL_DESTINATION ${LIBHV_INSTALL_CMAKEDIR}
+    PATH_VARS CMAKE_INSTALL_INCLUDEDIR CMAKE_INSTALL_LIBDIR)
+write_basic_package_version_file(
+    ${CMAKE_CURRENT_BINARY_DIR}/libhvConfigVersion.cmake
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMajorVersion)
+install(FILES
+    ${CMAKE_CURRENT_BINARY_DIR}/libhvConfig.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/libhvConfigVersion.cmake
+    DESTINATION ${LIBHV_INSTALL_CMAKEDIR})
+install(EXPORT libhvTargets
+    NAMESPACE libhv::
+    FILE libhvTargets.cmake
+    DESTINATION ${LIBHV_INSTALL_CMAKEDIR})
+
+# hrpc: TLV + protobuf RPC, built as a separate library (libhrpc) so libhv
+# stays protobuf-free. See rpc/CMakeLists.txt. Must precede examples (they link hrpc).
+if(WITH_RPC)
+    add_subdirectory(rpc)
+endif()
 
 if(BUILD_SHARED)
     set(HV_LIBRARIES hv CACHE INTERNAL "link hv libraries")

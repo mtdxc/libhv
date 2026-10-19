@@ -34,6 +34,7 @@ HttpHandler::HttpHandler(hio_t* io) :
     upgrade(0),
     proxy(0),
     proxy_connected(0),
+    proxy_ssl(0),
     forward_proxy(0),
     reverse_proxy(0),
     ip{'\0'},
@@ -42,6 +43,7 @@ HttpHandler::HttpHandler(hio_t* io) :
     tid(0),
     // for http
     io(io),
+    server(NULL),
     service(NULL),
     api_handler(NULL),
     // for websocket
@@ -52,7 +54,8 @@ HttpHandler::HttpHandler(hio_t* io) :
     files(NULL),
     file(NULL),
     // for proxy
-    proxy_port(0)
+    proxy_port(0),
+    proxy_connect_start_ms(0)
 {
     // Init();
 }
@@ -81,6 +84,39 @@ bool HttpHandler::Init(int http_version) {
         tid = hloop_tid(loop);
         writer = std::make_shared<HttpResponseWriter>(io, resp);
         writer->status = hv::SocketChannel::CONNECTED;
+        if (protocol == HTTP_V2) {
+            // Async handlers run on a worker thread but the nghttp2 session is
+            // not thread-safe, so the writer posts the h2 response submit back
+            // to this io's loop thread (hloop_post_event is thread-safe).
+            // Capture hio_id too: a fd (hence hio_t*) can be reused by a new
+            // connection after close, so verify the id still matches before
+            // touching the handler, otherwise a late post could send this
+            // response over a different connection.
+            hio_t* hio = io;
+            uint32_t hid = hio_id(io);
+            writer->submitHttp2Response = [hio, hid]() {
+                hloop_t* loop = hevent_loop(hio);
+                hevent_t ev;
+                memset(&ev, 0, sizeof(ev));
+                ev.loop = loop;
+                ev.userdata = hio;
+                ev.event_id = hid;   // carry the captured hio id for validation
+                ev.cb = [](hevent_t* ev) {
+                    hio_t* io = (hio_t*)ev->userdata;
+                    // stale post: fd was reused by another connection after close
+                    if (hio_id(io) != ev->event_id) return;
+                    // handler is stored as the io userdata; NULL after close.
+                    HttpHandler* handler = (HttpHandler*)hevent_userdata(io);
+                    if (handler && handler->parser) {
+                        // async left state at HANDLE_CONTINUE; move to WANT_SEND
+                        // so GetSendData drives the h2 send instead of bailing.
+                        handler->state = WANT_SEND;
+                        handler->SendHttpResponse();
+                    }
+                };
+                hloop_post_event(loop, &ev);
+            };
+        }
     } else {
         pid = hv_getpid();
         tid = hv_gettid();
@@ -284,7 +320,7 @@ void HttpHandler::onHeadersComplete() {
         ++p;
     }
 
-    if (service && service->pathHandlers.size() != 0) {
+    if (service && service->HasRoutes()) {
         service->GetRoute(pReq, &api_handler);
     }
 
@@ -320,6 +356,11 @@ void HttpHandler::onBody(const char* data, size_t size) {
 void HttpHandler::onMessageComplete() {
     // printf("onMessageComplete\n");
     int status_code = HTTP_STATUS_OK;
+
+    // stat: count every completed request (including proxy and error requests)
+    if (server) {
+        server->stat.total_requests++;
+    }
 
     if (error) {
         SendHttpStatusResponse(resp->status_code);
@@ -360,6 +401,12 @@ void HttpHandler::onMessageComplete() {
     }
 
     if (status_code != HTTP_STATUS_NEXT) {
+        // draining is the authoritative close decision: honor it here too, in
+        // case it was set after addResponseHeaders() ran for this request,
+        // otherwise the connection would stay alive and never drain.
+        if (server && server->draining) {
+            keepalive = false;
+        }
         // keepalive ? Reset : Close
         if (keepalive) {
             Reset();
@@ -441,6 +488,10 @@ void HttpHandler::addResponseHeaders() {
     pResp->headers["Server"] = "libhv/" HV_VERSION_STRING;
 
     // Connection:
+    // graceful shutdown: don't keep the connection alive while draining
+    if (server && server->draining) {
+        keepalive = false;
+    }
     pResp->headers["Connection"] = keepalive ? "keep-alive" : "close";
 }
 
@@ -517,7 +568,7 @@ postprocessor:
         }
     }
 
-    if (writer && writer->state != hv::HttpResponseWriter::SEND_BEGIN) {
+    if (writer && !writer->isBegin()) {
         status_code = HTTP_STATUS_NEXT;
     }
     if (status_code == HTTP_STATUS_NEXT) {
@@ -591,6 +642,11 @@ int HttpHandler::defaultStaticHandler() {
         }
         long total = file->size();
         if (to == 0 || to >= total) to = total - 1;
+        if (from < 0 || from >= total || to < from) {
+            closeFile();
+            resp->SetHeader("Content-Range", hv::asprintf("bytes */%ld", total));
+            return HTTP_STATUS_RANGE_NOT_SATISFIABLE;
+        }
         file->seek(from);
         status_code = HTTP_STATUS_PARTIAL_CONTENT;
         resp->status_code = HTTP_STATUS_PARTIAL_CONTENT;
@@ -748,6 +804,18 @@ int HttpHandler::FeedRecvData(const char* data, size_t len) {
     case HttpHandler::HTTP_V1:
     case HttpHandler::HTTP_V2:
         if (state != WANT_RECV) {
+            // A new request arrived on this connection before the previous one
+            // finished. Reset() reuses the same req/resp objects, so if an async
+            // handler on another thread is still producing/sending the previous
+            // response (writer not yet End()ed), resetting here races that thread
+            // and can crash. In that case reject the pipelined/early data and let
+            // the caller close the connection. Otherwise (response already sent)
+            // it is safe to reset for the next keep-alive request.
+            if (writer && !writer->isEnd()) {
+                hloge("[%s:%d] new request while previous async response is still in flight", ip, port);
+                error = ERR_REQUEST;
+                return -1;
+            }
             Reset();
         }
         nfeed = parser->FeedRecvData(data, len);
@@ -756,6 +824,19 @@ int HttpHandler::FeedRecvData(const char* data, size_t len) {
             hloge("[%s:%d] http parse error: %s", ip, port, parser->StrError(parser->GetError()));
             error = ERR_PARSE;
             return -1;
+        }
+        // HTTP2: flush frames nghttp2 queued while consuming this input --
+        // SETTINGS/PING ACK, WINDOW_UPDATE, and DATA that was deferred by flow
+        // control until the peer's WINDOW_UPDATE just arrived. Without this a
+        // response body larger than the stream window (64KB) would stall.
+        // Drives the parser directly (not the send-state machine) so it is safe
+        // on the recv path.
+        if (protocol == HttpHandler::HTTP_V2 && io && parser) {
+            char* sdata = NULL;
+            size_t slen = 0;
+            while (parser->GetSendData(&sdata, &slen) > 0) {
+                if (sdata && slen) hio_write(io, sdata, slen);
+            }
         }
         break;
     case HttpHandler::WEBSOCKET:
@@ -813,11 +894,18 @@ int HttpHandler::GetSendData(char** data, size_t* len) {
                 // FileCache
                 // NOTE: no copy filebuf, more efficient
                 header = pResp->Dump(true, false);
-                fc->prepend_header(header.c_str(), header.size());
-                *data = fc->httpbuf.base;
-                *len = fc->httpbuf.len;
-                state = SEND_DONE;
-                return *len;
+                if (fc->prepend_header(header.c_str(), header.size())) {
+                    // header fit the reserved space: send header + file content
+                    // as one buffer.
+                    *data = fc->httpbuf.base;
+                    *len = fc->httpbuf.len;
+                    state = SEND_DONE;
+                    return *len;
+                }
+                // header too large for the reserved space: send the header now,
+                // then the file content (pResp->content points at fc->filebuf).
+                state = SEND_BODY;
+                goto return_header;
             }
             // API service
             if (const char* content = (const char*)pResp->Content()) {
@@ -1048,9 +1136,8 @@ int HttpHandler::handleForwardProxy() {
         return connectProxy(req->url);
     } else {
         hlogw("[%s:%d] Forbidden to forward proxy %s", ip, port, req->url.c_str());
-        SetError(HTTP_STATUS_FORBIDDEN, HTTP_STATUS_FORBIDDEN);
+        return SendHttpStatusResponse(HTTP_STATUS_FORBIDDEN);
     }
-    return 0;
 }
 
 int HttpHandler::handleReverseProxy() {
@@ -1081,33 +1168,113 @@ int HttpHandler::connectProxy(const std::string& strUrl) {
 
     if (forward_proxy && !service->IsTrustProxy(url.host.c_str())) {
         hlogw("[%s:%d] Forbidden to proxy %s", ip, port, url.host.c_str());
-        SetError(HTTP_STATUS_FORBIDDEN, HTTP_STATUS_FORBIDDEN);
-        return 0;
+        return SendHttpStatusResponse(HTTP_STATUS_FORBIDDEN);
     }
 
-    hloop_t* loop = hevent_loop(io);
     proxy = 1;
     proxy_host = url.host;
     proxy_port = url.port;
-    hio_t* upstream_io = hio_create_socket(loop, proxy_host.c_str(), proxy_port, HIO_TYPE_TCP, HIO_CLIENT_SIDE);
-    if (upstream_io == NULL) {
-        return SetError(ERR_SOCKET, HTTP_STATUS_BAD_GATEWAY);
+    proxy_ssl = url.scheme == "https" && req->method != HTTP_CONNECT;
+    proxy_connect_start_ms = hloop_now_hrtime(hevent_loop(io)) / 1000;
+
+    if (is_ipaddr(proxy_host.c_str())) {
+        hio_t* upstream_io = hio_create_socket(hevent_loop(io), proxy_host.c_str(),
+                                                proxy_port, HIO_TYPE_TCP, HIO_CLIENT_SIDE);
+        if (upstream_io == NULL) {
+            return SetError(ERR_SOCKET, HTTP_STATUS_BAD_GATEWAY);
+        }
+        return connectProxy(upstream_io);
     }
-    if (url.scheme == "https") {
+    hio_read_stop(io);
+
+    EventLoop* loop = currentThreadEventLoop;
+    assert(loop != NULL);
+
+    hdns_setting_t dns_setting;
+    if (service->proxy_connect_timeout > 0) {
+        int dns_attempts = HDNS_DEFAULT_RETRIES + 1;
+        dns_setting.timeout_ms = MAX(1, service->proxy_connect_timeout / dns_attempts);
+    }
+    hio_t* downstream_io = io;
+    uint32_t downstream_id = hio_id(io);
+    std::string target_host = proxy_host;
+    int target_port = proxy_port;
+    DnsID dns_id = loop->resolveDns(target_host.c_str(),
+        [downstream_io, downstream_id, target_host, target_port](int status, int naddrs, const sockaddr_u* addrs) {
+            if (!hio_is_opened(downstream_io) || hio_id(downstream_io) != downstream_id) {
+                return;
+            }
+            HttpHandler* handler = (HttpHandler*)hevent_userdata(downstream_io);
+            if (handler == NULL || handler->proxy_host != target_host ||
+                handler->proxy_port != target_port) return;
+            if (status != HDNS_STATUS_OK || naddrs <= 0) {
+                int dns_error = status == HDNS_STATUS_TIMEOUT ? ETIMEDOUT : ERR_DNS_RESOLVE;
+                http_status http_error = dns_error == ETIMEDOUT ?
+                                         HTTP_STATUS_GATEWAY_TIMEOUT : HTTP_STATUS_BAD_GATEWAY;
+                handler->SetError(dns_error, http_error);
+                handler->SendHttpStatusResponse(http_error);
+                hio_close(downstream_io);
+                return;
+            }
+
+            hio_t* upstream_io = NULL;
+            char resolved_ip[SOCKADDR_STRLEN] = {0};
+            for (int i = 0; i < naddrs; ++i) {
+                if (sockaddr_ip((sockaddr_u*)&addrs[i], resolved_ip, sizeof(resolved_ip)) == NULL) continue;
+                upstream_io = hio_create_socket(hevent_loop(downstream_io), resolved_ip,
+                                                target_port, HIO_TYPE_TCP, HIO_CLIENT_SIDE);
+                if (upstream_io) break;
+            }
+            if (upstream_io == NULL) {
+                handler->SetError(ERR_SOCKET, HTTP_STATUS_BAD_GATEWAY);
+                handler->SendHttpStatusResponse(HTTP_STATUS_BAD_GATEWAY);
+                hio_close(downstream_io);
+                return;
+            }
+            hio_set_hostname(upstream_io, target_host.c_str());
+            handler->connectProxy(upstream_io);
+        }, &dns_setting);
+    if (dns_id == INVALID_DNS_ID) {
+        SetError(ERR_DNS_RESOLVE, HTTP_STATUS_BAD_GATEWAY);
+        SendHttpStatusResponse(HTTP_STATUS_BAD_GATEWAY);
+        hio_close(io);
+        return ERR_DNS_RESOLVE;
+    }
+    return 0;
+}
+
+int HttpHandler::connectProxy(hio_t* upstream_io) {
+    if (!io || !upstream_io) return ERR_NULL_POINTER;
+    int timeout_ms = service->proxy_connect_timeout;
+    if (timeout_ms > 0) {
+        uint64_t elapsed_ms = hloop_now_hrtime(hevent_loop(io)) / 1000 - proxy_connect_start_ms;
+        if (elapsed_ms >= (uint64_t)timeout_ms) {
+            hio_close(upstream_io);
+            SetError(ETIMEDOUT, HTTP_STATUS_GATEWAY_TIMEOUT);
+            SendHttpStatusResponse(HTTP_STATUS_GATEWAY_TIMEOUT);
+            hio_close(io);
+            return ETIMEDOUT;
+        }
+        timeout_ms -= (int)elapsed_ms;
+    }
+    // CONNECT establishes a raw TCP tunnel. The client starts TLS only after
+    // receiving the 200 response, so enabling TLS on this upstream would
+    // incorrectly terminate and re-encrypt the tunnel.
+    if (proxy_ssl) {
         hio_enable_ssl(upstream_io);
     }
     hevent_set_userdata(upstream_io, this);
     hio_setup_upstream(io, upstream_io);
     hio_setcb_connect(upstream_io, HttpHandler::onProxyConnect);
     hio_setcb_close(upstream_io, HttpHandler::onProxyClose);
-    if (service->proxy_connect_timeout > 0) {
-        hio_set_connect_timeout(upstream_io, service->proxy_connect_timeout);
+    if (timeout_ms > 0) {
+        hio_set_connect_timeout(upstream_io, timeout_ms);
     }
     if (service->proxy_read_timeout > 0) {
-        hio_set_read_timeout(io, service->proxy_read_timeout);
+        hio_set_read_timeout(upstream_io, service->proxy_read_timeout);
     }
     if (service->proxy_write_timeout > 0) {
-        hio_set_write_timeout(io, service->proxy_write_timeout);
+        hio_set_write_timeout(upstream_io, service->proxy_write_timeout);
     }
     hio_connect(upstream_io);
     // NOTE: wait upstream_io connected then start read
@@ -1116,7 +1283,7 @@ int HttpHandler::connectProxy(const std::string& strUrl) {
 }
 
 int HttpHandler::closeProxy() {
-    if (proxy && proxy_connected) {
+    if (proxy) {
         proxy_connected = 0;
         if (io) hio_close_upstream(io);
     }

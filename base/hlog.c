@@ -29,9 +29,44 @@
 //#include "htime.h"
 #define SECONDS_PER_HOUR    3600
 #define SECONDS_PER_DAY     86400   // 24*3600
-#define SECONDS_PER_WEEK    604800  // 7*24*3600;
+#define SECONDS_PER_WEEK    604800  // 7*24*3600
+
+static inline struct tm* hv_localtime_r(time_t ts, struct tm* tm) {
+#ifdef _WIN32
+    localtime_s(tm, &ts);
+#else
+    tm = localtime_r(&ts, tm);
+#endif
+    return tm;
+}
+
+static inline struct tm* hv_gmtime_r(time_t ts, struct tm* tm) {
+#ifdef _WIN32
+    gmtime_s(tm, &ts);
+#else
+    tm = gmtime_r(&ts, tm);
+#endif
+    return tm;
+}
 
 static int s_gmtoff = 28800; // 8*3600
+static void init_gmtoff() {
+    time_t ts = time(NULL);
+    struct tm local_tm, gmt_tm;
+    memset(&local_tm, 0, sizeof(local_tm));
+    memset(&gmt_tm, 0, sizeof(gmt_tm));
+    hv_localtime_r(ts, &local_tm);
+    hv_gmtime_r(ts, &gmt_tm);
+    s_gmtoff =  (local_tm.tm_hour - gmt_tm.tm_hour) * 3600 +
+                (local_tm.tm_min - gmt_tm.tm_min) * 60 +
+                (local_tm.tm_sec - gmt_tm.tm_sec);
+
+    if (local_tm.tm_yday > gmt_tm.tm_yday) {
+        s_gmtoff += SECONDS_PER_DAY;
+    } else if (local_tm.tm_yday < gmt_tm.tm_yday) {
+        s_gmtoff -= SECONDS_PER_DAY;
+    }
+}
 
 struct logger_s {
     logger_handler  handler;
@@ -72,20 +107,14 @@ static void logger_init(logger_t* logger) {
     logger->truncate_percent = DEFAULT_LOG_TRUNCATE_PERCENT;
     logger->remain_days = DEFAULT_LOG_REMAIN_DAYS;
     logger->enable_fsync = 1;
-    logger_set_file(logger, DEFAULT_LOG_FILE);
     logger->last_logfile_ts = 0;
     logger->can_write_cnt = -1;
     hmutex_init(&logger->mutex_);
+    logger_set_file(logger, DEFAULT_LOG_FILE);
 }
 
 logger_t* logger_create() {
-    // init gmtoff here
-    time_t ts = time(NULL);
-    struct tm* local_tm = localtime(&ts);
-    int local_hour = local_tm->tm_hour;
-    struct tm* gmt_tm = gmtime(&ts);
-    int gmt_hour = gmt_tm->tm_hour;
-    s_gmtoff = (local_hour - gmt_hour) * SECONDS_PER_HOUR;
+    init_gmtoff();
 
     logger_t* logger = (logger_t*)malloc(sizeof(logger_t));
     logger_init(logger);
@@ -164,12 +193,23 @@ void logger_enable_color(logger_t* logger, int on) {
 }
 
 void logger_set_file(logger_t* logger, const char* filepath) {
+    hmutex_lock(&logger->mutex_);
     strncpy(logger->filepath, filepath, sizeof(logger->filepath) - 1);
+    logger->filepath[sizeof(logger->filepath) - 1] = '\0';
     // remove suffix .log
     char* suffix = strrchr(logger->filepath, '.');
     if (suffix && strcmp(suffix, ".log") == 0) {
         *suffix = '\0';
     }
+    // close the current logfile, the next write opens the new one
+    if (logger->fp_) {
+        fclose(logger->fp_);
+        logger->fp_ = NULL;
+    }
+    logger->cur_logfile[0] = '\0';
+    logger->last_logfile_ts = 0;
+    logger->can_write_cnt = -1;
+    hmutex_unlock(&logger->mutex_);
 }
 
 void logger_set_max_filesize(logger_t* logger, unsigned long long filesize) {
@@ -214,12 +254,14 @@ const char* logger_get_cur_file(logger_t* logger) {
 }
 
 static void logfile_name(const char* filepath, time_t ts, char* buf, int len) {
-    struct tm* tm = localtime(&ts);
+    struct tm tm;
+    memset(&tm, 0, sizeof(tm));
+    hv_localtime_r(ts, &tm);
     snprintf(buf, len, "%s.%04d%02d%02d.log",
             filepath,
-            tm->tm_year+1900,
-            tm->tm_mon+1,
-            tm->tm_mday);
+            tm.tm_year+1900,
+            tm.tm_mon+1,
+            tm.tm_mday);
 }
 
 static void logfile_truncate(logger_t* logger) {
@@ -383,16 +425,17 @@ int logger_vprint(logger_t* logger, int level, const char* file, int line, const
     us       = tm.wMilliseconds * 1000;
 #else
     struct timeval tv;
-    struct tm* tm = NULL;
     gettimeofday(&tv, NULL);
-    time_t tt = tv.tv_sec;
-    tm = localtime(&tt);
-    year     = tm->tm_year + 1900;
-    month    = tm->tm_mon  + 1;
-    day      = tm->tm_mday;
-    hour     = tm->tm_hour;
-    min      = tm->tm_min;
-    sec      = tm->tm_sec;
+    time_t ts = tv.tv_sec;
+    struct tm tm;
+    memset(&tm, 0, sizeof(tm));
+    localtime_r(&ts, &tm);
+    year     = tm.tm_year + 1900;
+    month    = tm.tm_mon  + 1;
+    day      = tm.tm_mday;
+    hour     = tm.tm_hour;
+    min      = tm.tm_min;
+    sec      = tm.tm_sec;
     us       = tv.tv_usec;
 #endif
 

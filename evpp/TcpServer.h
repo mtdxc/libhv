@@ -11,6 +11,8 @@
 namespace hv {
 
 template<class TSocketChannel = SocketChannel>
+// TcpServerEventLoopTmpl is a loop-bound wrapper around one listening socket and its accepted channels.
+// When an external EventLoopPtr is supplied, the caller remains responsible for owner-loop shutdown and destruction ordering.
 class TcpServerEventLoopTmpl {
 public:
     typedef std::shared_ptr<TSocketChannel> TSocketChannelPtr;
@@ -74,6 +76,7 @@ public:
     }
 
     int startAccept() {
+        acceptor_loop->assertInLoopThread();
         if (listenfd < 0) {
             listenfd = createsocket(port, host.c_str());
             if (listenfd < 0) {
@@ -101,6 +104,7 @@ public:
     }
 
     int stopAccept() {
+        acceptor_loop->assertInLoopThread();
         if (listenfd < 0) return -1;
         hloop_t* loop = acceptor_loop->loop();
         if (loop == NULL) return -2;
@@ -117,6 +121,7 @@ public:
         acceptor_loop->runInLoop(std::bind(&TcpServerEventLoopTmpl::startAccept, this));
     }
     // stop thread-safe
+    // NOTE: When an external loop is supplied, this closes the listener but does not own that loop's lifetime.
     void stop(bool wait_threads_stopped = true) {
         closesocket();
         if (worker_threads.threadNum() > 0) {
@@ -173,6 +178,7 @@ public:
         return channels.size();
     }
 
+    // NOTE: fn is executed while holding mutex_, so it must stay short and must not call server APIs that may lock channels again.
     int foreachChannel(std::function<void(const TSocketChannelPtr& channel)> fn) {
         std::lock_guard<std::mutex> locker(mutex_);
         for (auto& pair : channels) {
@@ -194,16 +200,19 @@ public:
 
 private:
     static void newConnEvent(hio_t* connio) {
+        assert(connio != NULL);
         TcpServerEventLoopTmpl* server = (TcpServerEventLoopTmpl*)hevent_userdata(connio);
+        assert(server != NULL);
+        EventLoop* worker_loop = currentThreadEventLoop;
+        assert(worker_loop != NULL);
         if (server->connectionNum() >= server->max_connections) {
+            --worker_loop->connectionNum;
             hlogw("over max_connections");
             hio_close(connio);
             return;
         }
 
         // NOTE: attach to worker loop
-        EventLoop* worker_loop = currentThreadEventLoop;
-        assert(worker_loop != NULL);
         hio_attach(worker_loop->loop(), connio);
 
         const TSocketChannelPtr& channel = server->addChannel(connio);
@@ -229,7 +238,7 @@ private:
                 server->onConnection(channel);
             }
             server->removeChannel(channel);
-            // NOTE: After removeChannel, channel may be destroyed,
+            // NOTE: After removeChannel, channel may be destroyed immediately,
             // so in this lambda function, no code should be added below.
         };
 
@@ -246,7 +255,11 @@ private:
         TcpServerEventLoopTmpl* server = (TcpServerEventLoopTmpl*)hevent_userdata(connio);
         // NOTE: detach from acceptor loop
         hio_detach(connio);
-        EventLoopPtr worker_loop = server->worker_threads.nextLoop(server->load_balance);
+        uint32_t hash = 0;
+        if (server->load_balance == LB_IpHash) {
+            hash = sockaddr_ip_hash((sockaddr_u*)hio_peeraddr(connio));
+        }
+        EventLoopPtr worker_loop = server->worker_threads.nextLoop(server->load_balance, hash);
         if (worker_loop == NULL) {
             worker_loop = server->acceptor_loop;
         }
@@ -285,7 +298,6 @@ public:
     TcpServerTmpl(EventLoopPtr loop = NULL)
         : EventLoopThread(loop)
         , TcpServerEventLoopTmpl<TSocketChannel>(EventLoopThread::loop())
-        , is_loop_owner(loop == NULL)
     {}
     virtual ~TcpServerTmpl() {
         stop(true);
@@ -304,15 +316,12 @@ public:
     }
 
     // stop thread-safe
+    // NOTE: EventLoopThread::stop() will not stop a loop this server does not own
+    // (external loop supplied at construction).
     void stop(bool wait_threads_stopped = true) {
-        if (is_loop_owner) {
-            EventLoopThread::stop(wait_threads_stopped);
-        }
+        EventLoopThread::stop(wait_threads_stopped);
         TcpServerEventLoopTmpl<TSocketChannel>::stop(wait_threads_stopped);
     }
-
-private:
-    bool is_loop_owner;
 };
 
 typedef TcpServerTmpl<SocketChannel> TcpServer;

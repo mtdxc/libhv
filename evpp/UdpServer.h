@@ -9,6 +9,8 @@
 namespace hv {
 
 template<class TSocketChannel = SocketChannel>
+// UdpServerEventLoopTmpl is a loop-bound wrapper around one udp server socket.
+// When used with an external EventLoopPtr, stop receiving first and destroy the object on the owner loop.
 class UdpServerEventLoopTmpl {
 public:
     typedef std::shared_ptr<TSocketChannel> TSocketChannelPtr;
@@ -48,6 +50,7 @@ public:
     }
 
     int startRecv() {
+        loop_->assertInLoopThread();
         if (channel == NULL || channel->isClosed()) {
             int bindfd = createsocket(port, host.c_str());
             if (bindfd < 0) {
@@ -133,7 +136,6 @@ public:
     UdpServerTmpl(EventLoopPtr loop = NULL)
         : EventLoopThread(loop)
         , UdpServerEventLoopTmpl<TSocketChannel>(EventLoopThread::loop())
-        , is_loop_owner(loop == NULL)
     {}
     virtual ~UdpServerTmpl() {
         stop(true);
@@ -153,15 +155,12 @@ public:
     }
 
     // stop thread-safe
+    // NOTE: When constructed with an external loop, this only closes the socket;
+    // EventLoopThread::stop() will not stop a loop this server does not own.
     void stop(bool wait_threads_stopped = true) {
         UdpServerEventLoopTmpl<TSocketChannel>::closesocket();
-        if (is_loop_owner) {
-            EventLoopThread::stop(wait_threads_stopped);
-        }
+        EventLoopThread::stop(wait_threads_stopped);
     }
-
-private:
-    bool is_loop_owner;
 };
 
 typedef UdpServerTmpl<SocketChannel> UdpServer;

@@ -86,6 +86,118 @@ target_include_directories(ftp PRIVATE .. ../base ../protocol)
 add_executable(sendmail sendmail_test.c ../protocol/smtp.c ../base/hsocket.c ../base/htime.c ../util/base64.c)
 target_include_directories(sendmail PRIVATE .. ../base ../protocol ../util)
 
+# ------http------
+add_executable(http_router_test http_router_test.cpp)
+target_include_directories(http_router_test PRIVATE ../http/server)
+
+if(WITH_HTTP)
+add_executable(websocket_parser_test websocket_parser_test.cpp)
+target_include_directories(websocket_parser_test PRIVATE .. ../base ../http)
+target_link_libraries(websocket_parser_test ${HV_LIBRARIES})
+set(HTTP_UNITTEST_TARGETS websocket_parser_test)
+endif()
+
+if(WITH_LUA)
+add_executable(lua_binding_test lua_binding_test.cpp)
+target_include_directories(lua_binding_test PRIVATE .. ../base ../ssl ../event ../cpputil ../evpp ../lua)
+target_link_libraries(lua_binding_test ${HV_LIBRARIES})
+add_executable(lua_io_test lua_io_test.cpp)
+target_include_directories(lua_io_test PRIVATE .. ../base ../ssl ../event ../cpputil ../evpp ../lua)
+target_link_libraries(lua_io_test ${HV_LIBRARIES})
+set(HTTP_LUA_UNITTEST_TARGETS lua_binding_test lua_io_test)
+if(WITH_EVPP AND WITH_HTTP AND WITH_HTTP_SERVER)
+add_executable(http_script_handler_test http_script_handler_test.cpp)
+target_include_directories(http_script_handler_test PRIVATE .. ../base ../ssl ../event ../cpputil ../evpp ../lua ../http ../http/server)
+target_link_libraries(http_script_handler_test ${HV_LIBRARIES})
+set(HTTP_LUA_UNITTEST_TARGETS ${HTTP_LUA_UNITTEST_TARGETS} http_script_handler_test)
+if(WITH_HTTP_CLIENT)
+add_executable(http_lua_handler_test http_lua_handler_test.cpp)
+target_include_directories(http_lua_handler_test PRIVATE .. ../base ../ssl ../event ../cpputil ../evpp ../lua ../http ../http/server ../http/client)
+target_link_libraries(http_lua_handler_test ${HV_LIBRARIES})
+set(HTTP_LUA_UNITTEST_TARGETS ${HTTP_LUA_UNITTEST_TARGETS} http_lua_handler_test)
+endif()
+endif()
+if(WITH_EVPP AND WITH_HTTP AND WITH_HTTP_CLIENT AND WITH_HTTP_SERVER)
+add_executable(lua_http_test lua_http_test.cpp)
+target_include_directories(lua_http_test PRIVATE .. ../base ../ssl ../event ../cpputil ../evpp ../lua ../http ../http/server ../http/client)
+target_link_libraries(lua_http_test ${HV_LIBRARIES})
+add_executable(lua_ws_test lua_ws_test.cpp)
+target_include_directories(lua_ws_test PRIVATE .. ../base ../ssl ../event ../cpputil ../evpp ../lua ../http ../http/server ../http/client)
+target_link_libraries(lua_ws_test ${HV_LIBRARIES})
+set(HTTP_LUA_UNITTEST_TARGETS ${HTTP_LUA_UNITTEST_TARGETS} lua_http_test lua_ws_test)
+endif()
+if(WITH_EVPP AND WITH_MQTT)
+add_executable(lua_mqtt_test lua_mqtt_test.cpp)
+target_include_directories(lua_mqtt_test PRIVATE .. ../base ../ssl ../event ../cpputil ../evpp ../lua ../mqtt)
+target_link_libraries(lua_mqtt_test ${HV_LIBRARIES})
+set(HTTP_LUA_UNITTEST_TARGETS ${HTTP_LUA_UNITTEST_TARGETS} lua_mqtt_test)
+endif()
+if(WITH_EVPP AND WITH_REDIS)
+add_executable(lua_redis_test lua_redis_test.cpp redis_test_server.cpp)
+target_include_directories(lua_redis_test PRIVATE .. ../base ../ssl ../event ../cpputil ../evpp ../lua ../redis)
+target_link_libraries(lua_redis_test ${HV_LIBRARIES})
+set(HTTP_LUA_UNITTEST_TARGETS ${HTTP_LUA_UNITTEST_TARGETS} lua_redis_test)
+endif()
+endif()
+
+if(WITH_JS AND WITH_EVPP AND WITH_HTTP AND WITH_HTTP_SERVER AND WITH_HTTP_CLIENT)
+add_executable(http_js_handler_test http_js_handler_test.cpp)
+target_include_directories(http_js_handler_test PRIVATE .. ../base ../ssl ../event ../cpputil ../evpp ../js ../http ../http/server ../http/client)
+target_link_libraries(http_js_handler_test ${HV_LIBRARIES})
+set(HTTP_JS_UNITTEST_TARGETS http_js_handler_test)
+if(WITH_REDIS)
+add_executable(http_js_redis_test http_js_redis_test.cpp redis_test_server.cpp)
+target_include_directories(http_js_redis_test PRIVATE .. ../base ../ssl ../event ../cpputil ../evpp ../http ../http/server ../http/client ../redis)
+target_link_libraries(http_js_redis_test ${HV_LIBRARIES})
+set(HTTP_JS_UNITTEST_TARGETS ${HTTP_JS_UNITTEST_TARGETS} http_js_redis_test)
+endif()
+add_executable(http_js_ws_test http_js_ws_test.cpp)
+target_include_directories(http_js_ws_test PRIVATE .. ../base ../ssl ../event ../cpputil ../evpp ../http ../http/server ../http/client)
+target_link_libraries(http_js_ws_test ${HV_LIBRARIES})
+set(HTTP_JS_UNITTEST_TARGETS ${HTTP_JS_UNITTEST_TARGETS} http_js_ws_test)
+if(WITH_MQTT)
+add_executable(http_js_mqtt_test http_js_mqtt_test.cpp)
+target_include_directories(http_js_mqtt_test PRIVATE .. ../base ../ssl ../event ../cpputil ../evpp ../http ../http/server ../http/client ../mqtt)
+target_link_libraries(http_js_mqtt_test ${HV_LIBRARIES})
+set(HTTP_JS_UNITTEST_TARGETS ${HTTP_JS_UNITTEST_TARGETS} http_js_mqtt_test)
+endif()
+endif()
+
+# ------event: async dns------
+add_executable(hdns_test hdns_test.c)
+target_include_directories(hdns_test PRIVATE .. ../base ../ssl ../event)
+target_link_libraries(hdns_test ${HV_LIBRARIES})
+
+add_executable(hdns_benchmark hdns_benchmark.c)
+target_include_directories(hdns_benchmark PRIVATE .. ../base ../ssl ../event)
+target_link_libraries(hdns_benchmark ${HV_LIBRARIES})
+
+# ------redis------
+if(WITH_EVPP AND WITH_REDIS)
+add_executable(redis_protocol_test redis_protocol_test.cpp ../redis/RedisMessage.cpp)
+target_include_directories(redis_protocol_test PRIVATE .. ../base ../event ../cpputil ../redis)
+
+set(REDIS_UNITTEST_TARGETS redis_protocol_test)
+set(REDIS_TEST_INCLUDE_DIRS .. ../base ../ssl ../event ../cpputil ../redis ../evpp)
+set(REDIS_LINKED_UNITTEST_TARGETS redis_async_client_test redis_client_test redis_batch_test redis_subscriber_test)
+
+foreach(redis_target ${REDIS_LINKED_UNITTEST_TARGETS})
+    add_executable(${redis_target} ${redis_target}.cpp redis_test_server.cpp)
+    target_include_directories(${redis_target} PRIVATE ${REDIS_TEST_INCLUDE_DIRS})
+    target_link_libraries(${redis_target} ${HV_LIBRARIES})
+endforeach()
+
+list(APPEND REDIS_UNITTEST_TARGETS ${REDIS_LINKED_UNITTEST_TARGETS})
+endif()
+
+# ------evpp: async dns in connect path (connect/reconnect, lifetime, resolve-fail)------
+if(WITH_EVPP)
+add_executable(tcpclient_dns_test tcpclient_dns_test.cpp)
+target_include_directories(tcpclient_dns_test PRIVATE .. ../base ../ssl ../event ../cpputil ../evpp)
+target_link_libraries(tcpclient_dns_test ${HV_LIBRARIES})
+set(EVPP_DNS_UNITTEST_TARGETS tcpclient_dns_test)
+endif()
+
 if(UNIX)
 add_executable(webbench webbench.c)
 endif()
@@ -115,4 +227,12 @@ add_custom_target(unittest DEPENDS
     ping
     ftp
     sendmail
+    http_router_test
+    ${HTTP_UNITTEST_TARGETS}
+    ${HTTP_LUA_UNITTEST_TARGETS}
+    ${HTTP_JS_UNITTEST_TARGETS}
+    hdns_test
+    hdns_benchmark
+    ${REDIS_UNITTEST_TARGETS}
+    ${EVPP_DNS_UNITTEST_TARGETS}
 )

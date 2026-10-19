@@ -2,7 +2,7 @@ include config.mk
 include Makefile.vars
 
 MAKEF=$(MAKE) -f Makefile.in
-ALL_SRCDIRS=. base ssl event event/kcp util cpputil evpp protocol http http/client http/server mqtt
+ALL_SRCDIRS=. base ssl event event/kcp util cpputil evpp redis protocol http http/client http/server mqtt js
 CORE_SRCDIRS=. base ssl event
 ifeq ($(WITH_KCP), yes)
 CORE_SRCDIRS += event/kcp
@@ -20,9 +20,30 @@ LIBHV_HEADERS += $(PROTOCOL_HEADERS)
 LIBHV_SRCDIRS += protocol
 endif
 
+ifeq ($(WITH_LUA), yes)
+LIBHV_HEADERS += $(LUA_HEADERS)
+LIBHV_SRCDIRS += lua
+ifneq ($(WITH_EVPP), yes)
+LIBHV_HEADERS += $(CPPUTIL_HEADERS)
+LIBHV_SRCDIRS += cpputil
+endif
+endif
+
+ifeq ($(WITH_JS), yes)
+ifeq ($(WITH_EVPP), yes)
+LIBHV_HEADERS += $(JS_HEADERS)
+LIBHV_SRCDIRS += js
+endif
+endif
+
 ifeq ($(WITH_EVPP), yes)
 LIBHV_HEADERS += $(CPPUTIL_HEADERS) $(EVPP_HEADERS)
 LIBHV_SRCDIRS += cpputil evpp
+
+ifeq ($(WITH_REDIS), yes)
+LIBHV_HEADERS += $(REDIS_HEADERS)
+LIBHV_SRCDIRS += redis
+endif
 
 ifeq ($(WITH_HTTP), yes)
 LIBHV_HEADERS += $(HTTP_HEADERS)
@@ -35,6 +56,15 @@ endif
 ifeq ($(WITH_HTTP_SERVER), yes)
 LIBHV_HEADERS += $(HTTP_SERVER_HEADERS)
 LIBHV_SRCDIRS += http/server
+ifneq ($(filter yes,$(WITH_LUA) $(WITH_JS)),)
+LIBHV_HEADERS += http/server/HttpScriptHandler.h
+endif
+ifeq ($(WITH_LUA), yes)
+LIBHV_HEADERS += http/server/HttpLuaHandler.h
+endif
+ifeq ($(WITH_JS), yes)
+LIBHV_HEADERS += http/server/HttpJsHandler.h
+endif
 endif
 
 ifeq ($(WITH_HTTP_CLIENT), yes)
@@ -64,6 +94,8 @@ EXAMPLES = hmain_test htimer_test hloop_test pipe_test \
 	udp_echo_server \
 	udp_proxy_server \
 	socks5_proxy_server \
+	socks5_client_test \
+	host \
 	multi-acceptor-processes \
 	multi-acceptor-threads \
 	one-acceptor-multi-workers \
@@ -72,6 +104,9 @@ EXAMPLES = hmain_test htimer_test hloop_test pipe_test \
 
 ifeq ($(WITH_EVPP), yes)
 EXAMPLES += nmap
+ifeq ($(WITH_REDIS), yes)
+EXAMPLES += redis_client_example redis_subscriber_example
+endif
 ifeq ($(WITH_HTTP), yes)
 EXAMPLES += wrk
 ifeq ($(WITH_HTTP_SERVER), yes)
@@ -88,6 +123,17 @@ endif
 
 ifeq ($(WITH_MQTT), yes)
 EXAMPLES += mqtt_sub mqtt_pub mqtt_client_test
+endif
+
+ifeq ($(WITH_LUA), yes)
+ifeq ($(WITH_EVPP), yes)
+EXAMPLES += hvlua
+endif
+endif
+ifeq ($(WITH_JS), yes)
+ifeq ($(WITH_EVPP), yes)
+EXAMPLES += hvjs
+endif
 endif
 
 examples: $(EXAMPLES)
@@ -119,17 +165,48 @@ endif
 	$(CP) $(LIBHV_HEADERS) include/hv
 	@echo "make libhv done."
 
+# hrpc = TLV + protobuf, built as a separate library so libhv stays protobuf-free.
+# Requires protobuf; override PROTOBUF_PREFIX if not under /usr/local (homebrew: /opt/homebrew).
+# Modern protobuf/abseil headers require C++17.
+PROTOBUF_PREFIX ?= /usr/local
+HRPC_CXXFLAGS ?= -O2 -fPIC -std=c++17
+libhrpc: libhv
+	bash rpc/protoc-gen-hrpc/build.sh
+	protoc --cpp_out=rpc -Irpc rpc/rpc.proto
+	$(MKDIR) lib
+ifeq ($(BUILD_SHARED), yes)
+	$(MAKEF) TARGET=$@ TARGET_TYPE="SHARED" CXXFLAGS="$(HRPC_CXXFLAGS)" SRCDIRS="rpc" \
+		INCDIRS=". base ssl event cpputil evpp rpc $(PROTOBUF_PREFIX)/include" \
+		LIBDIRS="lib $(PROTOBUF_PREFIX)/lib" LIBS="hv protobuf"
+endif
+ifeq ($(BUILD_STATIC), yes)
+	$(MAKEF) TARGET=$@ TARGET_TYPE="STATIC" CXXFLAGS="$(HRPC_CXXFLAGS)" SRCDIRS="rpc" \
+		INCDIRS=". base ssl event cpputil evpp rpc $(PROTOBUF_PREFIX)/include"
+endif
+	$(MKDIR) include/hv/rpc
+	$(CP) $(RPC_HEADERS) rpc/rpc.pb.h include/hv/rpc
+	@echo "make libhrpc done."
+
 install:
 	$(MKDIR) $(INSTALL_INCDIR)
 	$(MKDIR) $(INSTALL_LIBDIR)
 	$(CP) include/hv/* $(INSTALL_INCDIR)
 	$(CP) lib/libhv.*  $(INSTALL_LIBDIR)
+ifeq ($(WITH_RPC), yes)
+	$(MKDIR) $(INSTALL_INCDIR)/rpc
+	$(CP) include/hv/rpc/* $(INSTALL_INCDIR)/rpc
+	$(CP) lib/libhrpc.*    $(INSTALL_LIBDIR)
+	$(MKDIR) $(PREFIX)/bin
+	$(CP) rpc/protoc-gen-hrpc/protoc-gen-hrpc $(PREFIX)/bin
+endif
 	$(LDCONFIG)
 	@echo "make install done."
 
 uninstall: clean
 	$(RM) $(PREFIX)/include/hv
 	$(RM) $(PREFIX)/lib/libhv.*
+	$(RM) $(PREFIX)/lib/libhrpc.*
+	$(RM) $(PREFIX)/bin/protoc-gen-hrpc
 	@echo "make uninstall done."
 
 hmain_test: prepare
@@ -165,6 +242,18 @@ udp_proxy_server: prepare
 socks5_proxy_server: prepare
 	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS)" SRCS="examples/socks5_proxy_server.c"
 
+socks5_client_test: prepare
+	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS)" SRCS="examples/socks5_client_test.c"
+
+host: prepare
+	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS)" SRCS="examples/host.c"
+
+hvlua: prepare libhv
+	$(CXX) -g -Wall -O0 -std=c++11 -DWITH_LUA $(LUA_CFLAGS) -I. -Ibase -Issl -Ievent -Icpputil -Ievpp -Ilua -o bin/hvlua examples/hvlua.cpp -Llib -lhv -pthread $(LUA_LIBS)
+
+hvjs: prepare libhv
+	$(MAKEF) TARGET=$@ SRCDIRS="$(LIBHV_SRCDIRS)" SRCS="examples/hvjs.cpp"
+
 multi-acceptor-processes: prepare
 	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS)" SRCS="examples/multi-thread/multi-acceptor-processes.c"
 
@@ -186,12 +275,20 @@ tinyproxyd: prepare
 nmap: prepare libhv
 	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS) cpputil examples/nmap" DEFINES="PRINT_DEBUG"
 
+ifeq ($(WITH_REDIS), yes)
+redis_client_example: prepare
+	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS) cpputil evpp redis" SRCS="examples/redis_client_test.cpp"
+
+redis_subscriber_example: prepare
+	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS) cpputil evpp redis" SRCS="examples/redis_subscriber_test.cpp"
+endif
+
 wrk: prepare
 	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS) util cpputil evpp http" SRCS="examples/wrk.cpp"
 
 httpd: prepare
 	$(RM) examples/httpd/*.o
-	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS) util cpputil evpp http http/client http/server examples/httpd"
+	$(MAKEF) TARGET=$@ SRCDIRS="$(LIBHV_SRCDIRS) util cpputil evpp http http/client http/server examples/httpd"
 
 consul: prepare libhv
 	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS) util cpputil evpp http http/client examples/consul" DEFINES="PRINT_DEBUG"
@@ -204,13 +301,13 @@ wget: prepare
 	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS) util cpputil evpp http http/client" SRCS="examples/wget.cpp"
 
 http_server_test: prepare
-	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS) util cpputil evpp http http/server" SRCS="examples/http_server_test.cpp"
+	$(MAKEF) TARGET=$@ SRCDIRS="$(LIBHV_SRCDIRS)" SRCS="examples/http_server_test.cpp"
 
 http_client_test: prepare
 	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS) util cpputil evpp http http/client" SRCS="examples/http_client_test.cpp"
 
 websocket_server_test: prepare
-	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS) util cpputil evpp http http/server" SRCS="examples/websocket_server_test.cpp examples/protoo.cpp"
+	$(MAKEF) TARGET=$@ SRCDIRS="$(LIBHV_SRCDIRS) util cpputil evpp http http/server" SRCS="examples/websocket_server_test.cpp  examples/protoo.cpp"
 
 websocket_client_test: prepare
 	$(MAKEF) TARGET=$@ SRCDIRS="$(CORE_SRCDIRS) util cpputil evpp http http/client" SRCS="examples/websocket_client_test.cpp examples/protoo.cpp"
@@ -260,7 +357,31 @@ protorpc_server: prepare protorpc_protoc
 		SRCS="examples/protorpc/protorpc_server.cpp examples/protorpc/protorpc.c" \
 		LIBS="protobuf"
 
-unittest: prepare
+# hrpc examples: build libhrpc (TLV + protobuf RPC library), then link the
+# calc example against it -- exactly how a downstream user consumes hrpc.
+# Override PROTOBUF_PREFIX if protobuf is not under /usr/local (homebrew: /opt/homebrew).
+hrpc: hrpc_calc_client hrpc_calc_server
+
+hrpc_calc_protoc: libhrpc
+	bash examples/rpc/protoc.sh
+
+hrpc_calc_client: prepare hrpc_calc_protoc
+	$(RM) examples/rpc/*.o
+	$(MAKEF) TARGET=$@ CXXFLAGS="$(HRPC_CXXFLAGS)" SRCDIRS="include/hv/rpc" \
+		SRCS="examples/rpc/rpc_calc_client.cpp examples/rpc/calc.pb.cc" \
+		INCDIRS="include/hv include/hv/rpc examples/rpc $(PROTOBUF_PREFIX)/include" \
+		LIBDIRS="lib $(PROTOBUF_PREFIX)/lib" LIBS="hrpc hv protobuf"
+
+hrpc_calc_server: prepare hrpc_calc_protoc
+	$(RM) examples/rpc/*.o
+	$(MAKEF) TARGET=$@ CXXFLAGS="$(HRPC_CXXFLAGS)" SRCDIRS="include/hv/rpc" \
+		SRCS="examples/rpc/rpc_calc_server.cpp examples/rpc/calc.pb.cc" \
+		INCDIRS="include/hv include/hv/rpc examples/rpc $(PROTOBUF_PREFIX)/include" \
+		LIBDIRS="lib $(PROTOBUF_PREFIX)/lib" LIBS="hrpc hv protobuf"
+
+
+
+unittest: prepare libhv
 	$(CC)  -g -Wall -O0 -std=c99   -I. -Ibase            -o bin/rbtree_test       unittest/rbtree_test.c        base/rbtree.c
 	$(CC)  -g -Wall -O0 -std=c99   -I. -Ibase            -o bin/hbase_test        unittest/hbase_test.c         base/hbase.c
 	$(CC)  -g -Wall -O0 -std=c99   -I. -Ibase            -o bin/mkdir_p           unittest/mkdir_test.c         base/hbase.c
@@ -285,11 +406,74 @@ unittest: prepare
 	$(CXX) -g -Wall -O0 -std=c++11 -I. -Ibase -Icpputil  -o bin/synchronized_test unittest/synchronized_test.cpp -pthread
 	$(CXX) -g -Wall -O0 -std=c++11 -I. -Ibase -Icpputil  -o bin/threadpool_test   unittest/threadpool_test.cpp  -pthread
 	$(CXX) -g -Wall -O0 -std=c++11 -I. -Ibase -Icpputil  -o bin/objectpool_test   unittest/objectpool_test.cpp  -pthread
+	$(CXX) -g -Wall -O0 -std=c++11 -Ihttp/server         -o bin/http_router_test  unittest/http_router_test.cpp
 	$(CXX) -g -Wall -O0 -std=c++11 -I. -Ibase -Issl -Ievent -Ievpp -Icpputil -Ihttp -Ihttp/client -Ihttp/server -o bin/sizeof_test unittest/sizeof_test.cpp
+	$(CXX) -g -Wall -O0 -std=c++11 -I. -Ibase -Ievent -Issl -Ievpp -o bin/tlv_test unittest/tlv_test.cpp
 	$(CC)  -g -Wall -O0 -std=c99   -I. -Ibase -Iprotocol -o bin/nslookup          unittest/nslookup_test.c      protocol/dns.c  base/hsocket.c base/htime.c
 	$(CC)  -g -Wall -O0 -std=c99   -I. -Ibase -Iprotocol -o bin/ping              unittest/ping_test.c          protocol/icmp.c base/hsocket.c base/htime.c -DPRINT_DEBUG
 	$(CC)  -g -Wall -O0 -std=c99   -I. -Ibase -Iprotocol -o bin/ftp               unittest/ftp_test.c           protocol/ftp.c  base/hsocket.c base/htime.c
 	$(CC)  -g -Wall -O0 -std=c99   -I. -Ibase -Iprotocol -Iutil -o bin/sendmail   unittest/sendmail_test.c      protocol/smtp.c base/hsocket.c base/htime.c util/base64.c
+	$(CC)  -g -Wall -O0 -std=c99   -I. -Ibase -Issl -Ievent -o bin/hdns_test      unittest/hdns_test.c      -Llib -lhv -pthread
+	$(CC)  -g -Wall -O0 -std=c99   -I. -Ibase -Issl -Ievent -o bin/hdns_benchmark unittest/hdns_benchmark.c -Llib -lhv -pthread
+ifeq ($(WITH_EVPP), yes)
+	$(CXX) -g -Wall -O0 -std=c++11 -I. -Ibase -Issl -Ievent -Icpputil -Ievpp -o bin/tcpclient_dns_test unittest/tcpclient_dns_test.cpp -Llib -lhv -pthread
+endif
+ifeq ($(WITH_HTTP), yes)
+	$(CXX) -g -Wall -O0 -std=c++11 -I. -Ibase -Ihttp -o bin/websocket_parser_test unittest/websocket_parser_test.cpp -Llib -lhv -pthread
+endif
+ifeq ($(WITH_EVPP), yes)
+ifeq ($(WITH_REDIS), yes)
+	$(CXX) -g -Wall -O0 -std=c++11 -I. -Ibase -Ievent -Icpputil -Iredis -o bin/redis_protocol_test unittest/redis_protocol_test.cpp redis/RedisMessage.cpp
+	$(CXX) -g -Wall -O0 -std=c++11 -I. -Ibase -Issl -Ievent -Icpputil -Iredis -Ievpp -o bin/redis_async_client_test unittest/redis_async_client_test.cpp unittest/redis_test_server.cpp -Llib -lhv -pthread
+	$(CXX) -g -Wall -O0 -std=c++11 -I. -Ibase -Issl -Ievent -Icpputil -Iredis -Ievpp -o bin/redis_client_test unittest/redis_client_test.cpp unittest/redis_test_server.cpp -Llib -lhv -pthread
+	$(CXX) -g -Wall -O0 -std=c++11 -I. -Ibase -Issl -Ievent -Icpputil -Iredis -Ievpp -o bin/redis_batch_test unittest/redis_batch_test.cpp unittest/redis_test_server.cpp -Llib -lhv -pthread
+	$(CXX) -g -Wall -O0 -std=c++11 -I. -Ibase -Issl -Ievent -Icpputil -Iredis -Ievpp -o bin/redis_subscriber_test unittest/redis_subscriber_test.cpp unittest/redis_test_server.cpp -Llib -lhv -pthread
+endif
+endif
+ifeq ($(WITH_LUA), yes)
+	$(CXX) -g -Wall -O0 -std=c++11 -DWITH_LUA $(LUA_CFLAGS) -I. -Ibase -Issl -Ievent -Icpputil -Ievpp -Ilua -o bin/lua_binding_test unittest/lua_binding_test.cpp -Llib -lhv -pthread $(LUA_LIBS)
+	$(CXX) -g -Wall -O0 -std=c++11 -DWITH_LUA $(LUA_CFLAGS) -I. -Ibase -Issl -Ievent -Icpputil -Ievpp -Ilua -o bin/lua_io_test unittest/lua_io_test.cpp -Llib -lhv -pthread $(LUA_LIBS)
+ifeq ($(WITH_EVPP), yes)
+ifeq ($(WITH_HTTP), yes)
+ifeq ($(WITH_HTTP_SERVER), yes)
+	$(CXX) -g -Wall -O0 -std=c++11 -DWITH_LUA $(LUA_CFLAGS) -I. -Ibase -Issl -Ievent -Icpputil -Ievpp -Ilua -Ihttp -Ihttp/server -o bin/http_script_handler_test unittest/http_script_handler_test.cpp -Llib -lhv -pthread $(LUA_LIBS)
+ifeq ($(WITH_HTTP_CLIENT), yes)
+	$(CXX) -g -Wall -O0 -std=c++11 -DWITH_LUA $(LUA_CFLAGS) -I. -Ibase -Issl -Ievent -Icpputil -Ievpp -Ilua -Ihttp -Ihttp/server -Ihttp/client -o bin/http_lua_handler_test unittest/http_lua_handler_test.cpp -Llib -lhv -pthread $(LUA_LIBS)
+endif
+endif
+ifeq ($(WITH_HTTP_SERVER), yes)
+ifeq ($(WITH_HTTP_CLIENT), yes)
+	$(CXX) -g -Wall -O0 -std=c++11 -DWITH_LUA -DHVLUA_WITH_HTTP $(LUA_CFLAGS) -I. -Ibase -Issl -Ievent -Icpputil -Ievpp -Ilua -Ihttp -Ihttp/server -Ihttp/client -o bin/lua_http_test unittest/lua_http_test.cpp -Llib -lhv -pthread $(LUA_LIBS)
+	$(CXX) -g -Wall -O0 -std=c++11 -DWITH_LUA -DHVLUA_WITH_HTTP $(LUA_CFLAGS) -I. -Ibase -Issl -Ievent -Icpputil -Ievpp -Ilua -Ihttp -Ihttp/server -Ihttp/client -o bin/lua_ws_test unittest/lua_ws_test.cpp -Llib -lhv -pthread $(LUA_LIBS)
+endif
+endif
+endif
+ifeq ($(WITH_MQTT), yes)
+	$(CXX) -g -Wall -O0 -std=c++11 -DWITH_LUA -DHVLUA_WITH_MQTT $(LUA_CFLAGS) -I. -Ibase -Issl -Ievent -Icpputil -Ievpp -Ilua -Imqtt -o bin/lua_mqtt_test unittest/lua_mqtt_test.cpp -Llib -lhv -pthread $(LUA_LIBS)
+endif
+ifeq ($(WITH_REDIS), yes)
+	$(CXX) -g -Wall -O0 -std=c++11 -DWITH_LUA -DHVLUA_WITH_REDIS $(LUA_CFLAGS) -I. -Ibase -Issl -Ievent -Icpputil -Iredis -Ievpp -Ilua -o bin/lua_redis_test unittest/lua_redis_test.cpp unittest/redis_test_server.cpp -Llib -lhv -pthread $(LUA_LIBS)
+endif
+endif
+endif
+ifeq ($(WITH_JS), yes)
+ifeq ($(WITH_EVPP), yes)
+ifeq ($(WITH_HTTP), yes)
+ifeq ($(WITH_HTTP_SERVER), yes)
+ifeq ($(WITH_HTTP_CLIENT), yes)
+	$(CXX) -g -Wall -O0 -std=c++11 -DWITH_JS -DHVJS_WITH_HTTP $(JS_CFLAGS) -I. -Ibase -Issl -Ievent -Icpputil -Ievpp -Ijs -Ihttp -Ihttp/server -Ihttp/client -o bin/http_js_handler_test unittest/http_js_handler_test.cpp -Llib -lhv -pthread $(LDFLAGS) $(JS_LIBS)
+ifeq ($(WITH_REDIS), yes)
+	$(CXX) -g -Wall -O0 -std=c++11 -DWITH_JS -DHVJS_WITH_HTTP -DHVJS_WITH_REDIS $(JS_CFLAGS) -I. -Ibase -Issl -Ievent -Icpputil -Ievpp -Ihttp -Ihttp/server -Ihttp/client -Iredis -o bin/http_js_redis_test unittest/http_js_redis_test.cpp unittest/redis_test_server.cpp -Llib -lhv -pthread $(LDFLAGS) $(JS_LIBS)
+endif
+	$(CXX) -g -Wall -O0 -std=c++11 -DWITH_JS -DHVJS_WITH_HTTP $(JS_CFLAGS) -I. -Ibase -Issl -Ievent -Icpputil -Ievpp -Ihttp -Ihttp/server -Ihttp/client -o bin/http_js_ws_test unittest/http_js_ws_test.cpp -Llib -lhv -pthread $(LDFLAGS) $(JS_LIBS)
+ifeq ($(WITH_MQTT), yes)
+	$(CXX) -g -Wall -O0 -std=c++11 -DWITH_JS -DHVJS_WITH_HTTP -DHVJS_WITH_MQTT $(JS_CFLAGS) -I. -Ibase -Issl -Ievent -Icpputil -Ievpp -Ihttp -Ihttp/server -Ihttp/client -Imqtt -o bin/http_js_mqtt_test unittest/http_js_mqtt_test.cpp -Llib -lhv -pthread $(LDFLAGS) $(JS_LIBS)
+endif
+endif
+endif
+endif
+endif
+endif
 
 run-unittest: unittest
 	bash scripts/unittest.sh

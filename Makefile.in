@@ -22,6 +22,7 @@
 # LIBS="opencv_core opencv_highgui"
 #+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 -include config.mk
+-include Makefile.vars
 
 # VARIABLES
 TARGET ?= test
@@ -128,6 +129,17 @@ ifeq ($(ALL_SRCS), )
 	ALL_SRCS = $(wildcard *.c *.cc *.cpp)
 endif
 override SRCS += $(filter-out %_test.c %_test.cc %_test.cpp, $(ALL_SRCS))
+ifneq ($(MAKECMDGOALS),clean)
+ifneq ($(WITH_LUA), yes)
+override SRCS := $(filter-out %/HttpLuaHandler.cpp HttpLuaHandler.cpp, $(SRCS))
+endif
+ifneq ($(WITH_JS), yes)
+override SRCS := $(filter-out %/HttpJsHandler.cpp HttpJsHandler.cpp, $(SRCS))
+endif
+ifeq ($(filter yes,$(WITH_LUA) $(WITH_JS)),)
+override SRCS := $(filter-out %/HttpScriptHandler.cpp HttpScriptHandler.cpp, $(SRCS))
+endif
+endif
 # OBJS += $(patsubst %.c, %.o, $(SRCS))
 # OBJS += $(patsubst %.cc, %.o, $(SRCS))
 # OBJS += $(patsubst %.cpp, %.o, $(SRCS))
@@ -158,6 +170,52 @@ endif
 
 ifeq ($(USE_MULTIMAP), yes)
 	CPPFLAGS += -DUSE_MULTIMAP
+endif
+
+ifeq ($(WITH_LUA), yes)
+	CPPFLAGS += -DWITH_LUA $(LUA_CFLAGS)
+	LDFLAGS += $(LUA_LIBS)
+# lua bindings that wrap higher-level modules are enabled only when both the lua
+# binding and the underlying module are built (HVLUA_WITH_* preprocessor macros).
+ifeq ($(WITH_EVPP), yes)
+ifeq ($(WITH_HTTP), yes)
+ifeq ($(WITH_HTTP_CLIENT), yes)
+	CPPFLAGS += -DHVLUA_WITH_HTTP
+endif
+endif
+endif
+ifeq ($(WITH_EVPP), yes)
+ifeq ($(WITH_REDIS), yes)
+	CPPFLAGS += -DHVLUA_WITH_REDIS
+endif
+endif
+ifeq ($(WITH_EVPP), yes)
+ifeq ($(WITH_MQTT), yes)
+	CPPFLAGS += -DHVLUA_WITH_MQTT
+endif
+endif
+endif
+
+ifeq ($(WITH_JS), yes)
+	CPPFLAGS += -DWITH_JS $(JS_CFLAGS)
+	LDFLAGS += $(JS_LIBS)
+ifeq ($(WITH_EVPP), yes)
+ifeq ($(WITH_HTTP), yes)
+ifeq ($(WITH_HTTP_CLIENT), yes)
+	CPPFLAGS += -DHVJS_WITH_HTTP
+endif
+endif
+endif
+ifeq ($(WITH_EVPP), yes)
+ifeq ($(WITH_REDIS), yes)
+	CPPFLAGS += -DHVJS_WITH_REDIS
+endif
+endif
+ifeq ($(WITH_EVPP), yes)
+ifeq ($(WITH_MQTT), yes)
+	CPPFLAGS += -DHVJS_WITH_MQTT
+endif
+endif
 endif
 
 CPPFLAGS += $(addprefix -D, $(DEFINES))
@@ -228,6 +286,12 @@ else
 	LINK_RT=$(shell echo "int main(){return 0;}" | $(CC) -x c - -lrt 2>&1)
 ifeq ($(LINK_RT), )
 	LDFLAGS += -lrt
+endif
+	# Some platforms (e.g. 32-bit ARM / Raspberry Pi) need -latomic for 64-bit
+	# atomics; only link it when the toolchain accepts it. See issue #384.
+	LINK_ATOMIC=$(shell echo "int main(){return 0;}" | $(CC) -x c - -latomic 2>&1)
+ifeq ($(LINK_ATOMIC), )
+	LDFLAGS += -latomic
 endif
 endif
 endif

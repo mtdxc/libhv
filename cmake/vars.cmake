@@ -27,6 +27,7 @@ set(SSL_HEADERS
 set(EVENT_HEADERS
     event/hloop.h
     event/nlog.h
+    event/hdns.h
 )
 
 set(UTIL_HEADERS
@@ -66,6 +67,19 @@ set(EVPP_HEADERS
     evpp/TcpServer.h
     evpp/UdpClient.h
     evpp/UdpServer.h
+    evpp/TLVMessage.h
+    evpp/TLVChannel.h
+    evpp/TLVClient.h
+    evpp/TLVServer.h
+)
+
+set(REDIS_HEADERS
+    redis/RedisMessage.h
+    redis/AsyncRedisClient.h
+    redis/RedisClient.h
+    redis/RedisPipeline.h
+    redis/RedisTransaction.h
+    redis/RedisSubscriber.h
 )
 
 set(PROTOCOL_HEADERS
@@ -107,5 +121,16 @@ set(HTTP_SERVER_HEADERS
 
 set(MQTT_HEADERS
     mqtt/mqtt_protocol.h
+    mqtt/mqtt_server.h
     mqtt/mqtt_client.h
-    mqtt/mqtt_server.h)
+)
+
+set(LUA_HEADERS
+    lua/hvlua.h
+    lua/hvlua_util.h
+    lua/hvlua_json.h
+)
+
+set(JS_HEADERS
+    js/hvjs.h
+)

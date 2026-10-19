@@ -1,7 +1,7 @@
 事件循环和IO多路复用机制介绍
 
 事件循环是`libevent、libev、libuv、libhv`这类网络库里最核心的概念，即在事件循环里处理IO读写事件、定时器事件、自定义事件等各种事件；<br>
-IO多路复用即在一个IO线程监听多个fd，如最早期的`select`、后来的`poll`，`linux的epoll`、`windows的iocp`、`bsd的kqueue`、`solaris的port`等，都属于IO多路复用机制。<br>
+IO多路复用即在一个IO线程监听多个fd，如最早期的`select`、后来的`poll`，`linux的epoll`、`windows的wepoll/WSAPoll`、`bsd的kqueue`、`solaris的port`等，都属于IO多路复用机制。<br>
 非阻塞NIO搭配IO多路复用机制就是高并发的钥匙。<br>
 `libhv`下的`event`模块正是封装了多种平台的IO多路复用机制，提供了统一的事件接口，是`libhv`的核心模块。<br>
 
@@ -103,6 +103,14 @@ void  hloop_set_userdata(hloop_t* loop, void* userdata);
 
 // 获取事件循环的用户数据
 void* hloop_userdata(hloop_t* loop);
+
+// 设置/获取事件循环关联的 lua_State（由 lua 绑定使用）
+void  hloop_set_lua_state(hloop_t* loop, void* lua_state, void (*dtor)(void* lua_state));
+void* hloop_lua_state(hloop_t* loop);
+
+// 设置/获取事件循环关联的 JS runtime（由 js 绑定使用）
+void  hloop_set_js_runtime(hloop_t* loop, void* js_runtime, void (*dtor)(void* js_runtime));
+void* hloop_js_runtime(hloop_t* loop);
 
 // 投递事件
 void hloop_post_event(hloop_t* loop, hevent_t* ev);
@@ -263,6 +271,8 @@ hwrite_cb   hio_getcb_write(hio_t* io);
 // 获取关闭回调
 hclose_cb   hio_getcb_close(hio_t* io);
 
+// 回调语义见下文“IO回调语义与缓冲区生命周期”。
+
 // 开启SSL/TLS加密通信
 int  hio_enable_ssl(hio_t* io);
 // 是否SSL/TLS加密通信
@@ -303,6 +313,7 @@ int hio_accept (hio_t* io);
 
 // 连接
 // connect => hio_add(io, HV_WRITE) => hconnect_cb
+// connect_cb表示应用层连接可用；配置代理或TLS时会在相应握手全部成功后才调用。
 int hio_connect(hio_t* io);
 
 // 读
@@ -339,10 +350,12 @@ int hio_read_until_delim (hio_t* io, unsigned char delim);
 
 // 写
 // hio_try_write => hio_add(io, HV_WRITE) => write => hwrite_cb
+// write_cb报告实际写出的字节数；使用hio_write_is_complete判断写队列是否排空。
 int hio_write  (hio_t* io, const void* buf, size_t len);
 
 // 关闭
 // hio_del(io, HV_RDWR) => close => hclose_cb
+// close_cb在一次hio生命周期中最多调用一次，适合释放连接关联的上下文。
 int hio_close  (hio_t* io);
 
 // 异步关闭 (投递一个close事件)
@@ -406,6 +419,11 @@ hio_t* hloop_create_tcp_server (hloop_t* loop, const char* host, int port, hacce
 // 创建TCP客户端，示例代码见 examples/nc.c
 hio_t* hloop_create_tcp_client (hloop_t* loop, const char* host, int port, hconnect_cb connect_cb, hclose_cb close_cb);
 
+// 创建SOCKS5客户端，示例代码见 examples/socks5_client_test.c
+// setting会被复制并自动使用SOCKS5协议。
+hio_t* hloop_create_socks5_client(hloop_t* loop, const proxy_setting_t* setting,
+                                  hconnect_cb connect_cb, hclose_cb close_cb);
+
 // @ssl_server: hio_create_socket(loop, host, port, HIO_TYPE_SSL, HIO_SERVER_SIDE) -> hio_setcb_accept -> hio_accept
 // 创建SSL服务端，示例代码见 examples/tcp_echo_server.c => #define TEST_SSL 1
 hio_t* hloop_create_ssl_server (hloop_t* loop, const char* host, int port, haccept_cb accept_cb);
@@ -421,6 +439,15 @@ hio_t* hloop_create_udp_server (hloop_t* loop, const char* host, int port);
 // @udp_server: hio_create_socket(loop, host, port, HIO_TYPE_UDP, HIO_CLIENT_SIDE)
 // 创建UDP客户端，示例代码见 examples/nc.c
 hio_t* hloop_create_udp_client (hloop_t* loop, const char* host, int port);
+
+//-----------------代理服务-----------------------------------------
+// 三个接口都会复制proxy_setting_t。服务端场景中proxy_host/proxy_port是监听地址。
+// TCP/UDP的target_host/target_port是固定上游；SOCKS5的目标由客户端CONNECT请求指定。
+// TCP/UDP只提供明文固定上游转发；UDP为单listener配对单upstream，不维护NAT会话表。
+// SOCKS5仅支持CONNECT；username非空时强制用户名密码认证，password可为空字符串。
+hio_t* hloop_create_tcp_proxy_server(hloop_t* loop, const proxy_setting_t* setting);
+hio_t* hloop_create_udp_proxy_server(hloop_t* loop, const proxy_setting_t* setting);
+hio_t* hloop_create_socks5_proxy_server(hloop_t* loop, const proxy_setting_t* setting);
 
 //-----------------pipe---------------------------------------------
 // 创建pipe，示例代码见 examples/pipe_test.c
@@ -621,6 +648,14 @@ void kcp_setting_init_with_fast3_mode(kcp_setting_t* setting);
 int hio_set_kcp(hio_t* io, kcp_setting_t* setting DEFAULT(NULL));
 
 ```
+
+### IO回调语义与缓冲区生命周期
+
+- `connect_cb` 表示应用层连接已可用：若设置了代理或TLS，代理握手和TLS握手均已成功；它并不只是TCP三次握手完成。
+- `write_cb` 的 `writebytes` 表示本次实际写出的字节数，不表示一条业务消息已经全部发送；需要通过 `hio_write_is_complete(io)` 判断写队列是否排空。
+- `read_cb` 和 `write_cb` 都可能同步触发：例如 `hio_read` 处理已有读缓存，或 `hio_write` 立即写入成功时。因此回调代码必须能处理可重入调用。
+- `close_cb` 在一次 `hio_t` 生命周期内最多触发一次，是释放连接关联上下文的合适位置。
+- `read_cb` / `write_cb` 收到的 `buf` 由libhv借用提供，只保证在本次回调返回前有效；需要保存或跨异步边界使用时必须自行复制。
 
 示例代码：
 

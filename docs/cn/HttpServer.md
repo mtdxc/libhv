@@ -10,8 +10,8 @@ class HttpServer {
 
     // 设置监听主机
     void setHost(const char* host = "0.0.0.0");
-    // 设置监听端口
-    void setPort(int port = 0, int ssl_port = 0);
+    // 设置监听端口，port=0 表示自动分配空闲端口
+    void setPort(int port = 0, int ssl_port = -1);
     // 设置监听文件描述符
     void setListenFD(int fd = -1, int ssl_fd = -1);
 
@@ -30,16 +30,44 @@ class HttpServer {
     std::function<void()> onWorkerStart;
     // 事件循环结束时执行的回调函数
     std::function<void()> onWorkerStop;
+    // 新连接建立时执行的回调函数 (在任何HTTP解析之前)，返回false则拒绝(关闭)该连接。
+    std::function<bool(hio_t* io)> onAccept;
+    // 连接关闭时执行的回调函数。
+    std::function<void(hio_t* io)> onClose;
+
+    // 获取运行时统计信息 (连接数/请求数/收发字节数, 可用于计算QPS/吞吐)
+    // 注意: 统计计数是`每进程`的; 多进程模式下需外部聚合各进程的数据。
+    const HttpServerStat& getStat();
 
     // 占用当前线程运行
     int run(bool wait = true);
 
-    // 不占用当前线程运行
+    // 不占用当前线程运行（port=0 时，OS 分配的端口在 start() 后可通过 port/https_port 读取）
     int start();
 
     // 停止服务
     int stop();
 
+    // 停止接收: 移除各事件循环的监听读事件并置为 draining (keep-alive 连接
+    // 处理完当前响应后关闭), 在途请求继续处理; 不关闭监听fd, 不停止事件循环。
+    // 注意: 仅单进程(多线程)模式支持。
+    int stopAccept();
+
+    // 优雅停止: 先停止接收新连接/请求, 等待在途请求处理完成(或超时)后再停止服务。
+    // @param timeout_ms: 等待在途连接排空的最长时间; 默认60s; 0表示不等待;
+    //        <0表示无限等待(不推荐: WebSocket/SSE等长连接可能永不关闭而一直阻塞)。
+    // 注意: 仅单进程(多线程)模式支持, 多进程模式(worker_processes>0)不支持。
+    int gracefulStop(int timeout_ms = 60000);
+
+};
+
+// HTTP服务端运行时统计 (计数为累积单调值, cur_connections除外)
+struct HttpServerStat {
+    std::atomic<uint64_t> cur_connections;   // 当前活跃连接数
+    std::atomic<uint64_t> total_connections; // 累积处理的连接数
+    std::atomic<uint64_t> total_requests;    // 累积完成的请求数
+    std::atomic<uint64_t> total_recv_bytes;  // 累积接收字节数
+    std::atomic<uint64_t> total_send_bytes;  // 累积发送字节数
 };
 
 // HTTP业务类

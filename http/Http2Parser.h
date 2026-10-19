@@ -6,18 +6,24 @@
 #include "http2def.h"
 #include "grpcdef.h"
 
+#include "nghttp2/nghttp2ver.h"
+#if NGHTTP2_VERSION_NUM >= 0x013c00 && defined(_MSC_VER)
+#ifndef NGHTTP2_NO_SSIZE_T
+#define NGHTTP2_NO_SSIZE_T
+#endif
+#elif defined(_MSC_VER)
+#pragma push_macro("ssize_t")
+#ifndef ssize_t
+// Older nghttp2 CMake builds use int for ssize_t on MSVC.
+#define ssize_t int
+#endif
+#endif
 #include "nghttp2/nghttp2.h"
+#if NGHTTP2_VERSION_NUM < 0x013c00 && defined(_MSC_VER)
+#pragma pop_macro("ssize_t")
+#endif
 
 enum http2_session_state {
-    H2_SEND_MAGIC,
-    H2_SEND_SETTINGS,
-    H2_SEND_PING,
-    H2_SEND_HEADERS,
-    H2_SEND_DATA_FRAME_HD,
-    H2_SEND_DATA,
-    H2_SEND_DONE,
-
-    H2_WANT_SEND,
     H2_WANT_RECV,
 
     H2_RECV_SETTINGS,
@@ -26,6 +32,14 @@ enum http2_session_state {
     H2_RECV_DATA,
 };
 
+// HTTP/2 parser adapter over nghttp2.
+//
+// LIMITATION: a single active stream per session. There is one `parsed` /
+// `submited` / `stream_id`, so header/data callbacks all target the same
+// message regardless of frame stream_id. This matches libhv's one-request-
+// per-connection HTTP usage (sync/async client, HttpHandler). True concurrent
+// multiplexing (multiple in-flight streams on one connection) is NOT supported
+// and would merge streams' data; do not rely on it.
 class Http2Parser : public HttpParser {
 public:
     static nghttp2_session_callbacks* cbs;
@@ -37,12 +51,21 @@ public:
     int stream_id;
     int stream_closed;
     int frame_type_when_stream_closed;
-    // http2_frame_hd + grpc_message_hd
-    // at least HTTP2_FRAME_HDLEN + GRPC_MESSAGE_HDLEN = 9 + 5 = 14
-    unsigned char                   frame_hdbuf[32];
+    // outgoing body cursor for the nghttp2 data_provider read callback.
+    // For gRPC, send_body holds the 5-byte-length-prefixed payload.
+    const char*                     send_buf;
+    size_t                          send_len;
+    size_t                          send_off;
+    std::string                     send_body;   // owns grpc-framed payload
+    bool                            is_grpc;
 
     Http2Parser(http_session_type type = HTTP_CLIENT);
     virtual ~Http2Parser();
+
+    static void initCallbacks();
+
+    // stage submited body into the send cursor (grpc-frames it when needed)
+    void prepareSendBody();
 
     virtual int GetSendData(char** data, size_t* len);
     virtual int FeedRecvData(const char* data, size_t len);
@@ -56,11 +79,15 @@ public:
     }
 
     virtual bool WantSend() {
-        return state <= H2_WANT_SEND;
+        // nghttp2 still has queued frames (DATA deferred by flow control,
+        // SETTINGS/PING ACK, WINDOW_UPDATE, trailers, ...) to write out.
+        return session && nghttp2_session_want_write(session);
     }
 
     virtual bool IsComplete() {
-        return stream_closed && (frame_type_when_stream_closed == HTTP2_DATA || frame_type_when_stream_closed == HTTP2_HEADERS);
+        return stream_closed && (frame_type_when_stream_closed == HTTP2_DATA ||
+                                 frame_type_when_stream_closed == HTTP2_HEADERS ||
+                                 frame_type_when_stream_closed == HTTP2_RST_STREAM);
     }
 
     virtual int GetError() {
